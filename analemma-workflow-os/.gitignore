@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# Node
+node_modules/
+dist/
+.next/
+
+# Coverage
+htmlcov/
+.coverage
+*.cover
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dev
+dev/
+
+# AWS
+.aws-sam/
