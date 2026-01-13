@@ -5,7 +5,7 @@ import codecs
 import time
 import uuid
 import re
-from typing import Any, Dict, Iterator, List
+from typing import Any, Dict, Iterator, List, Optional, Generator
 
 import boto3
 from botocore.exceptions import ClientError
@@ -19,16 +19,62 @@ logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 try:
     from src.common.auth_utils import validate_token, extract_owner_id_from_event
     from src.common.websocket_utils import get_connections_for_owner
+    from src.common.model_router import (
+        get_agentic_designer_config,
+        get_model_provider,
+        is_gemini_model,
+        ModelProvider,
+        ModelConfig,
+    )
 except ImportError:
     try:
         from src.common.auth_utils import validate_token, extract_owner_id_from_event
+        from src.common.model_router import (
+            get_agentic_designer_config,
+            get_model_provider,
+            is_gemini_model,
+            ModelProvider,
+            ModelConfig,
+        )
     except ImportError:
         def validate_token(*args, **kwargs):
             return {}
         def extract_owner_id_from_event(*args, **kwargs):
             raise Exception("Unauthorized: auth_utils not available")
+        def get_agentic_designer_config(*args, **kwargs):
+            return None
+        def get_model_provider(*args, **kwargs):
+            return None
+        def is_gemini_model(*args, **kwargs):
+            return False
+        ModelProvider = None
+        ModelConfig = None
     def get_connections_for_owner(owner_id):
         return []
+
+# Gemini 서비스 import
+try:
+    from src.services.llm.gemini_service import (
+        GeminiService,
+        GeminiConfig,
+        GeminiModel,
+        get_gemini_pro_service,
+        invoke_gemini_for_structure,
+    )
+    from src.services.llm.structure_tools import (
+        get_all_structure_tools,
+        get_gemini_system_instruction,
+        validate_structure_node,
+    )
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    GeminiService = None
+    get_gemini_pro_service = None
+    invoke_gemini_for_structure = None
+    get_all_structure_tools = None
+    get_gemini_system_instruction = None
+    validate_structure_node = None
 
 
 # Bedrock 클라이언트 (Lazy Loading)
@@ -84,10 +130,13 @@ def _mock_tool_response() -> Dict[str, Any]:
     return {"content": [{"tool_use": {"name": "create_workflow", "input": {"workflow_json": _mock_workflow_json()}}}]}
 
 
-# 모델 ID 정의
+# 모델 ID 정의 (Gemini Native 통합)
 MODEL_HAIKU = os.getenv("HAIKU_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
 MODEL_SONNET = os.getenv("SONNET_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
-MODEL_GEMINI = os.getenv("GEMINI_MODEL_ID", "gemini-1.5-pro-latest")
+MODEL_GEMINI_PRO = os.getenv("GEMINI_PRO_MODEL_ID", "gemini-1.5-pro")
+MODEL_GEMINI_FLASH = os.getenv("GEMINI_FLASH_MODEL_ID", "gemini-1.5-flash")
+# 레거시 호환성
+MODEL_GEMINI = os.getenv("GEMINI_MODEL_ID", MODEL_GEMINI_PRO)
 
 
 # 워크플로우 생성을 위한 도구 정의
@@ -438,6 +487,232 @@ SYSTEM_PROMPT = """
 """
 
 
+# ============================================================
+# Gemini Native 시스템 프롬프트 (구조적 추론 강화)
+# ============================================================
+def _get_gemini_system_prompt() -> str:
+    """
+    Gemini 전용 시스템 프롬프트 생성
+    
+    구조적 도구(Loop/Map/Parallel/Conditional) 명세를 포함하여
+    Gemini의 구조화 데이터 생성 능력을 극대화합니다.
+    """
+    structure_docs = ""
+    if get_gemini_system_instruction:
+        try:
+            structure_docs = get_gemini_system_instruction()
+        except Exception as e:
+            logger.warning(f"Failed to load structure tools documentation: {e}")
+    
+    return f"""
+당신은 Analemma OS의 워크플로우 설계 전문가입니다.
+당신의 출력은 오직 JSON Lines(JSONL) 형태의 "명령"들로만 구성되어야 합니다.
+어떠한 인간용 설명 텍스트도 출력하지 마십시오.
+
+[핵심 역할]
+사용자의 요청을 분석하여 최적의 워크플로우 구조를 설계합니다.
+**중요**: 단순히 노드를 나열하지 말고, 데이터의 특성과 처리 방식에 따라
+Loop, Map, Parallel, Conditional 구조가 필요한지 **먼저 판단**하세요.
+
+[구조적 사고 프로세스]
+1. 사용자 요청에서 **데이터 패턴** 분석:
+   - 컬렉션/배열 데이터가 있는가? → Loop 또는 Map 고려
+   - 독립적인 여러 작업이 있는가? → Parallel 고려
+   - 조건에 따라 다른 경로가 필요한가? → Conditional 고려
+   - 외부 API/서비스 호출이 있는가? → Retry/Catch 고려
+
+2. **구조 선택 기준**:
+   - 순차 처리 필요 (순서 중요) → for_each (Loop)
+   - 병렬 처리 가능 (순서 무관) → distributed_map (Map)
+   - 서로 다른 작업 동시 실행 → parallel
+   - 조건부 분기 → route_condition
+
+{structure_docs}
+
+[기본 노드 타입]
+1. "operator": Python 코드 실행 노드
+   - config.code: 실행할 Python 코드 (문자열)
+   - config.sets: 간단한 키-값 설정 (객체, 선택사항)
+
+2. "llm_chat": LLM 채팅 노드
+   - config.prompt_content: 프롬프트 템플릿 (문자열, 필수)
+   - config.model: 모델 ID (문자열, 선택사항)
+   - config.max_tokens: 최대 토큰 수 (숫자, 선택사항)
+
+3. "api_call": HTTP API 호출 노드
+   - config.url: API 엔드포인트 URL (문자열, 필수)
+   - config.method: HTTP 메소드 (문자열, 선택사항)
+
+4. "db_query": 데이터베이스 쿼리 노드
+   - config.query: SQL 쿼리 (문자열, 필수)
+
+[레이아웃 규칙]
+1. 모든 노드는 "position": {{"x": <숫자>, "y": <숫자>}} 필드를 포함
+2. X좌표는 150으로 고정
+3. 첫 번째 노드는 y: 50, 이후 100씩 증가
+
+[출력 규칙]
+- 각 라인은 완전한 JSON 객체
+- 허용 타입: "node", "edge", "structure", "status"
+- 완료 시: {{"type": "status", "data": "done"}}
+
+[출력 예시]
+{{"type": "node", "data": {{"id": "start", "type": "operator", "position": {{"x": 150, "y": 50}}, "data": {{"label": "Start"}}}}}}
+{{"type": "node", "data": {{"id": "loop_users", "type": "for_each", "config": {{"items_path": "state.users", "body_nodes": ["process_user"]}}, "position": {{"x": 150, "y": 150}}}}}}
+{{"type": "edge", "data": {{"source": "start", "target": "loop_users"}}}}
+{{"type": "status", "data": "done"}}
+"""
+
+
+def invoke_gemini_stream(
+    user_request: str,
+    current_workflow: Optional[Dict[str, Any]] = None,
+    system_prompt: Optional[str] = None
+) -> Generator[str, None, None]:
+    """
+    Gemini Native 스트리밍 호출
+    
+    구조적 도구를 활용한 워크플로우 생성
+    
+    Args:
+        user_request: 사용자 요청
+        current_workflow: 현재 워크플로우 상태
+        system_prompt: 커스텀 시스템 프롬프트 (None이면 기본 프롬프트 사용)
+    
+    Yields:
+        JSONL 형식의 응답 청크
+    """
+    if not GEMINI_AVAILABLE:
+        logger.warning("Gemini not available, falling back to Bedrock")
+        yield from invoke_bedrock_model_stream(
+            system_prompt or SYSTEM_PROMPT,
+            user_request
+        )
+        return
+    
+    # Mock 모드 처리
+    if _is_mock_mode():
+        logger.info("MOCK_MODE: Streaming synthetic Gemini response")
+        mock_wf = _mock_workflow_json()
+        for node in mock_wf.get("nodes", []):
+            yield json.dumps({"type": "node", "data": node}) + "\n"
+            time.sleep(0.1)
+        for edge in mock_wf.get("edges", []):
+            yield json.dumps({"type": "edge", "data": edge}) + "\n"
+            time.sleep(0.1)
+        yield json.dumps({"type": "status", "data": "done"}) + "\n"
+        return
+    
+    try:
+        # Gemini 서비스 초기화
+        service = get_gemini_pro_service()
+        
+        # 구조 도구 로드
+        structure_tools = []
+        if get_all_structure_tools:
+            try:
+                structure_tools = get_all_structure_tools()
+            except Exception as e:
+                logger.warning(f"Failed to load structure tools: {e}")
+        
+        # 시스템 프롬프트 설정
+        gemini_system = system_prompt or _get_gemini_system_prompt()
+        
+        # 프롬프트 구성
+        enhanced_prompt = f"""사용자 요청: {user_request}
+
+현재 워크플로우:
+{json.dumps(current_workflow or {}, ensure_ascii=False, indent=2)}
+
+위 요청을 분석하여 완전한 워크플로우를 생성해주세요.
+데이터 패턴을 먼저 분석하고, 필요한 경우 Loop/Map/Parallel/Conditional 구조를 사용하세요.
+각 노드와 엣지를 JSONL 형식으로 순차적으로 출력하고,
+마지막에 {{"type": "status", "data": "done"}}으로 완료를 알려주세요.
+"""
+        
+        # Gemini 스트리밍 호출
+        for chunk in service.invoke_model_stream(
+            user_prompt=enhanced_prompt,
+            system_instruction=gemini_system,
+            max_output_tokens=8192,
+            temperature=0.7
+        ):
+            # 구조 노드 유효성 검증
+            if validate_structure_node and chunk.strip():
+                try:
+                    parsed = json.loads(chunk.strip())
+                    if parsed.get("type") == "node":
+                        node_data = parsed.get("data", {})
+                        errors = validate_structure_node(node_data)
+                        if errors:
+                            logger.warning(f"Structure validation warnings: {errors}")
+                except json.JSONDecodeError:
+                    pass
+            
+            yield chunk
+            
+    except Exception as e:
+        logger.exception(f"Gemini streaming failed: {e}")
+        # Fallback to Bedrock
+        logger.info("Falling back to Bedrock streaming")
+        yield from invoke_bedrock_model_stream(
+            system_prompt or SYSTEM_PROMPT,
+            user_request
+        )
+
+
+def select_and_invoke_llm_stream(
+    user_request: str,
+    current_workflow: Optional[Dict[str, Any]] = None,
+    canvas_mode: str = "agentic-designer"
+) -> Generator[str, None, None]:
+    """
+    모델 라우터를 통해 최적의 LLM을 선택하고 스트리밍 호출
+    
+    Args:
+        user_request: 사용자 요청
+        current_workflow: 현재 워크플로우 상태
+        canvas_mode: Canvas 모드 ("agentic-designer" 또는 "co-design")
+    
+    Yields:
+        JSONL 형식의 응답 청크
+    """
+    # 모델 설정 조회
+    model_config = None
+    if get_agentic_designer_config:
+        try:
+            model_config = get_agentic_designer_config(user_request)
+        except Exception as e:
+            logger.warning(f"Failed to get model config: {e}")
+    
+    # Gemini 모델인지 확인
+    use_gemini = False
+    if model_config and is_gemini_model:
+        try:
+            use_gemini = is_gemini_model(model_config.model_id)
+        except Exception:
+            pass
+    
+    logger.info(f"Selected model: {model_config.model_id if model_config else 'default'}, use_gemini={use_gemini}")
+    
+    if use_gemini and GEMINI_AVAILABLE:
+        # Gemini Native 스트리밍
+        yield from invoke_gemini_stream(user_request, current_workflow)
+    else:
+        # Bedrock 스트리밍 (Claude/기타)
+        system_prompt = SYSTEM_PROMPT
+        enhanced_prompt = f"""사용자 요청: {user_request}
+
+현재 워크플로우:
+{json.dumps(current_workflow or {}, ensure_ascii=False, indent=2)}
+
+위 요청을 분석하여 완전한 워크플로우를 생성해주세요.
+각 노드와 엣지를 JSONL 형식으로 순차적으로 출력하고,
+마지막에 {{"type": "status", "data": "done"}}으로 완료를 알려주세요.
+"""
+        yield from invoke_bedrock_model_stream(system_prompt, enhanced_prompt)
+
+
 # PATCH(명령) 스트리밍용 시스템 프롬프트
 PATCH_SYSTEM_PROMPT = """
 당신은 기존 워크플로우를 수정하는 AI입니다. 당신의 출력은 오직 JSON Lines(JSONL) 형태의 '명령'들로만 구성되어야 합니다. 어떤 인간용 설명 텍스트도 출력하지 마십시오.
@@ -773,37 +1048,16 @@ def lambda_handler(event: Dict[str, Any], context: Any):
         
         # 워크플로우 생성 요청 처리
         if intent == "workflow":
-            # 스트리밍 응답 생성
+            # 스트리밍 응답 생성 (Gemini Native 우선)
             def workflow_generator():
                 try:
-                    # Mock 모드 처리
-                    if _is_mock_mode():
-                        mock_workflow = _mock_workflow_json()
-                        
-                        # 노드들을 순차적으로 스트리밍
-                        for node in mock_workflow.get("nodes", []):
-                            yield json.dumps({"type": "node", "data": node}) + "\n"
-                        
-                        # 엣지들을 순차적으로 스트리밍
-                        for edge in mock_workflow.get("edges", []):
-                            yield json.dumps({"type": "edge", "data": edge}) + "\n"
-                        
-                        # 완료 신호
-                        yield json.dumps({"type": "status", "data": "done"}) + "\n"
-                        return
-                    
-                    # 실제 Bedrock 스트리밍 호출
-                    system_prompt = SYSTEM_PROMPT
-                    enhanced_prompt = f"""사용자 요청: {user_request}
-
-위 요청을 분석하여 완전한 워크플로우를 생성해주세요. 
-각 노드와 엣지를 JSONL 형식으로 순차적으로 출력하고, 
-마지막에 {{"type": "status", "data": "done"}}으로 완료를 알려주세요.
-
-레이아웃 규칙을 준수하여 X=150, Y는 50부터 시작해서 100씩 증가시켜주세요."""
-                    
-                    # Bedrock 스트리밍 호출
-                    for chunk in invoke_bedrock_model_stream(system_prompt, enhanced_prompt):
+                    # Mock 모드 처리는 select_and_invoke_llm_stream 내부에서 처리됨
+                    # Gemini Native 또는 Bedrock 자동 선택
+                    for chunk in select_and_invoke_llm_stream(
+                        user_request=user_request,
+                        current_workflow=current_workflow,
+                        canvas_mode="agentic-designer"
+                    ):
                         yield chunk
                         
                 except Exception as e:
@@ -840,5 +1094,5 @@ def lambda_handler(event: Dict[str, Any], context: Any):
         return {"statusCode": 200, "body": json.dumps({"message": "Request processed", "intent": intent, "complexity": complexity})}
 
     except Exception as e:
-        logger.exception(f"Unexpected error in lambda_handlㅌer: {e}")
+        logger.exception(f"Unexpected error in lambda_handler: {e}")
         return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
