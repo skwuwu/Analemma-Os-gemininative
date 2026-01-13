@@ -140,3 +140,47 @@ def get_kinesis_client():
         _kinesis_client = boto3.client('kinesis')
         logger.debug("Kinesis client initialized")
     return _kinesis_client
+
+
+# Secrets Manager 클라이언트 (secrets_utils.py에서 사용)
+_secrets_client: Optional[Any] = None
+
+
+def get_secrets_client():
+    """
+    Secrets Manager 클라이언트 싱글톤
+    
+    Returns:
+        boto3.client('secretsmanager')
+    """
+    global _secrets_client
+    if _secrets_client is None:
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        _secrets_client = boto3.client('secretsmanager', region_name=region)
+        logger.debug("Secrets Manager client initialized")
+    return _secrets_client
+
+
+# Bedrock 클라이언트
+_bedrock_client: Optional[Any] = None
+
+
+def get_bedrock_client():
+    """
+    Bedrock Runtime 클라이언트 싱글톤
+    
+    Returns:
+        boto3.client('bedrock-runtime')
+    """
+    global _bedrock_client
+    if _bedrock_client is None:
+        from botocore.config import Config
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        config = Config(
+            retries={"max_attempts": 3, "mode": "standard"},
+            read_timeout=int(os.environ.get("BEDROCK_READ_TIMEOUT_SECONDS", "60")),
+            connect_timeout=int(os.environ.get("BEDROCK_CONNECT_TIMEOUT_SECONDS", "5")),
+        )
+        _bedrock_client = boto3.client('bedrock-runtime', region_name=region, config=config)
+        logger.debug("Bedrock client initialized")
+    return _bedrock_client

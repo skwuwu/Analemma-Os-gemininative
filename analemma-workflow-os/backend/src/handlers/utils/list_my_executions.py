@@ -11,6 +11,10 @@ from decimal import Decimal
 try:
     from src.common.aws_clients import get_dynamodb_resource
     from src.common.json_utils import DecimalEncoder
+    from src.common.pagination_utils import (
+        decode_pagination_token as decode_token,
+        encode_pagination_token as encode_token
+    )
     dynamodb = get_dynamodb_resource()
     _USE_COMMON_UTILS = True
 except ImportError:
@@ -23,42 +27,35 @@ logger.setLevel(logging.INFO)
 EXEC_TABLE = os.environ.get('EXECUTIONS_TABLE')
 OWNER_INDEX = os.environ.get('OWNER_INDEX')
 
-# Simple JSON + CORS headers used by all responses
-
-
 if EXEC_TABLE:
     table = dynamodb.Table(EXEC_TABLE)
 else:
     table = None
 
-# Fallback DecimalEncoder if common module not available
+# Fallback: 공통 모듈 import 실패 시에만 로컬 정의
 if not _USE_COMMON_UTILS:
     class DecimalEncoder(json.JSONEncoder):
-        """DynamoDB Decimal 타입을 JSON 호환되도록 변환"""
+        """DynamoDB Decimal 타입을 JSON 호환되도록 변환 (Fallback)"""
         def default(self, obj):
             if isinstance(obj, Decimal):
                 return float(obj) if obj % 1 else int(obj)
             return super(DecimalEncoder, self).default(obj)
 
+    def decode_token(token):
+        if not token:
+            return None
+        try:
+            return json.loads(base64.b64decode(token).decode('utf-8'))
+        except Exception:
+            return None
 
-def decode_token(token):
-    if not token:
-        return None
-    try:
-        decoded = base64.b64decode(token).decode('utf-8')
-        return json.loads(decoded)
-    except (json.JSONDecodeError, ValueError, TypeError):
-        return None
-
-
-def encode_token(obj):
-    if not obj:
-        return None
-    try:
-        s = json.dumps(obj)
-        return base64.b64encode(s.encode('utf-8')).decode('utf-8')
-    except Exception:
-        return None
+    def encode_token(obj):
+        if not obj:
+            return None
+        try:
+            return base64.b64encode(json.dumps(obj).encode('utf-8')).decode('utf-8')
+        except Exception:
+            return None
 
 
 def lambda_handler(event, context):

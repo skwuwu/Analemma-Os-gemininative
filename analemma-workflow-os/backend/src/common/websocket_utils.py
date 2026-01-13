@@ -13,6 +13,7 @@ from typing import List, Optional, Any, Union
 from botocore.exceptions import ClientError
 
 from .aws_clients import get_dynamodb_resource
+from .json_utils import DecimalEncoder  # 통합된 DecimalEncoder 사용
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -28,16 +29,7 @@ _dynamodb_resource = None
 MAX_CURRENT_THOUGHT_LENGTH = 200  # 타이핑 애니메이션용 최대 글자 수
 MAX_WEBSOCKET_PAYLOAD_BYTES = 32 * 1024  # 32KB (API Gateway 한도: 128KB)
 
-
-class DecimalEncoder(json.JSONEncoder):
-    """DynamoDB Decimal 타입을 JSON 호환되도록 변환 (float)"""
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            # 정수형 Decimal은 int로, 실수는 float로 변환
-            return int(obj) if obj % 1 == 0 else float(obj)
-        if isinstance(obj, set):
-            return list(obj)
-        return super(DecimalEncoder, self).default(obj)
+# NOTE: DecimalEncoder는 common.json_utils에서 import됨 (중복 제거됨)
 
 
 def get_connections_table():

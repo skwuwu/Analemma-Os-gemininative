@@ -13,6 +13,14 @@ from typing import Any, Dict, Optional
 from botocore.config import Config
 from botocore.exceptions import ReadTimeoutError
 
+# 공통 유틸리티 import
+try:
+    from src.common.constants import is_mock_mode as _common_is_mock_mode
+    from src.common.aws_clients import get_bedrock_client
+except ImportError:
+    _common_is_mock_mode = None
+    get_bedrock_client = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,6 +70,8 @@ class BedrockService:
 
     def is_mock_mode(self) -> bool:
         """Check if running in mock mode."""
+        if _common_is_mock_mode is not None:
+            return _common_is_mock_mode()
         return os.getenv("MOCK_MODE", "false").strip().lower() in {"true", "1", "yes", "on"}
 
     def invoke_model(

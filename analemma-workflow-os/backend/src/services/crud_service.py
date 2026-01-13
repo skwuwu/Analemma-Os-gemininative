@@ -21,6 +21,15 @@ from botocore.exceptions import ClientError
 from src.common.constants import DynamoDBConfig
 from boto3.dynamodb.conditions import Key, Attr
 
+# 통합된 공통 유틸리티 import
+try:
+    from src.common.json_utils import DecimalEncoder
+    from src.common.pagination_utils import decode_pagination_token, encode_pagination_token
+    from src.common.aws_clients import get_dynamodb_resource, get_s3_client
+    _USE_COMMON = True
+except ImportError:
+    _USE_COMMON = False
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -41,10 +50,9 @@ def _get_dynamodb():
     """DynamoDB 리소스를 지연 초기화하여 반환"""
     global _dynamodb
     if _dynamodb is None:
-        try:
-            from src.common.aws_clients import get_dynamodb_resource
+        if _USE_COMMON:
             _dynamodb = get_dynamodb_resource()
-        except ImportError:
+        else:
             import boto3
             _dynamodb = boto3.resource('dynamodb')
     return _dynamodb
@@ -54,45 +62,40 @@ def _get_s3_client():
     """S3 클라이언트를 지연 초기화하여 반환"""
     global _s3_client
     if _s3_client is None:
-        try:
-            from src.common.aws_clients import get_s3_client
+        if _USE_COMMON:
             _s3_client = get_s3_client()
-        except ImportError:
+        else:
             import boto3
             _s3_client = boto3.client('s3')
     return _s3_client
 
 
-class DecimalEncoder(json.JSONEncoder):
-    """DynamoDB Decimal 타입을 JSON 호환되도록 변환"""
-    def default(self, obj):
-        if isinstance(obj, Decimal):
-            return float(obj) if obj % 1 else int(obj)
-        if isinstance(obj, set):
-            return list(obj)
-        return super().default(obj)
+# Fallback: 공통 모듈 import 실패 시에만 로컬 정의
+if not _USE_COMMON:
+    class DecimalEncoder(json.JSONEncoder):
+        """DynamoDB Decimal 타입을 JSON 호환되도록 변환 (Fallback)"""
+        def default(self, obj):
+            if isinstance(obj, Decimal):
+                return float(obj) if obj % 1 else int(obj)
+            if isinstance(obj, set):
+                return list(obj)
+            return super().default(obj)
 
+    def decode_pagination_token(token):
+        if not token:
+            return None
+        try:
+            return json.loads(base64.b64decode(token).decode('utf-8'))
+        except Exception:
+            return None
 
-def decode_pagination_token(token: Optional[str]) -> Optional[Dict]:
-    """Base64 인코딩된 페이지네이션 토큰 디코딩"""
-    if not token:
-        return None
-    try:
-        decoded = base64.b64decode(token).decode('utf-8')
-        return json.loads(decoded)
-    except (json.JSONDecodeError, ValueError, TypeError):
-        return None
-
-
-def encode_pagination_token(obj: Optional[Dict]) -> Optional[str]:
-    """페이지네이션 토큰을 Base64로 인코딩"""
-    if not obj:
-        return None
-    try:
-        s = json.dumps(obj)
-        return base64.b64encode(s.encode('utf-8')).decode('utf-8')
-    except Exception:
-        return None
+    def encode_pagination_token(obj):
+        if not obj:
+            return None
+        try:
+            return base64.b64encode(json.dumps(obj).encode('utf-8')).decode('utf-8')
+        except Exception:
+            return None
 
 
 class ExecutionCRUDService:

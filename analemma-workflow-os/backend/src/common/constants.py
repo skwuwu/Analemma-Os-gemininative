@@ -103,6 +103,33 @@ class ModelPricing:
     COST_PRECISION = Decimal("0.000001")
 
 
+class LLMModels:
+    """
+    LLM 모델 ID 상수 통합
+    
+    Usage:
+        from src.common.constants import LLMModels
+        
+        model_id = LLMModels.CLAUDE_3_HAIKU
+    """
+    
+    # AWS Bedrock - Claude 모델
+    CLAUDE_3_HAIKU = os.getenv("HAIKU_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+    CLAUDE_3_SONNET = os.getenv("SONNET_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
+    CLAUDE_3_OPUS = os.getenv("OPUS_MODEL_ID", "anthropic.claude-3-opus-20240229-v1:0")
+    
+    # Google Gemini 모델
+    GEMINI_2_0_FLASH = os.getenv("GEMINI_FLASH_2_MODEL_ID", "gemini-2.0-flash")
+    GEMINI_1_5_PRO = os.getenv("GEMINI_PRO_MODEL_ID", "gemini-1.5-pro-latest")
+    GEMINI_1_5_FLASH = os.getenv("GEMINI_FLASH_MODEL_ID", "gemini-1.5-flash")
+    GEMINI_1_5_FLASH_8B = os.getenv("GEMINI_FLASH_8B_MODEL_ID", "gemini-1.5-flash-8b")
+    
+    # 기본 모델 별칭
+    DEFAULT_ANALYSIS = CLAUDE_3_HAIKU  # 빠른 분석용
+    DEFAULT_REASONING = GEMINI_1_5_PRO  # 복잡한 추론용
+    DEFAULT_REALTIME = GEMINI_1_5_FLASH  # 실시간 협업용
+
+
 class HTTPStatusCodes:
     """HTTP 상태 코드 상수"""
     

@@ -27,6 +27,17 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+# 공통 유틸리티 import
+try:
+    from src.common.constants import is_mock_mode, LLMModels
+    from src.common.secrets_utils import get_gemini_api_key
+    from src.common.aws_clients import get_dynamodb_resource, get_s3_client, get_bedrock_client
+    _USE_COMMON = True
+except ImportError:
+    _USE_COMMON = False
+    is_mock_mode = lambda: os.environ.get("MOCK_MODE", "false").lower() in {"true", "1", "yes", "on"}
+    get_gemini_api_key = None
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -188,22 +199,26 @@ GEMINI_FEWSHOT_EXTRACTION_SCHEMA = {
     "required": ["is_good_example", "example_quality_score"]
 }
 
-# AWS 클라이언트
-dynamodb = boto3.resource("dynamodb")
-instructions_table = dynamodb.Table(DISTILLED_INSTRUCTIONS_TABLE)
-s3_client = boto3.client("s3")
+# AWS 클라이언트 (공통 모듈 사용 시 캐시된 클라이언트 활용)
+if _USE_COMMON:
+    dynamodb = get_dynamodb_resource()
+    s3_client = get_s3_client()
+    bedrock_client = get_bedrock_client()
+else:
+    dynamodb = boto3.resource("dynamodb")
+    s3_client = boto3.client("s3")
+    bedrock_config = Config(
+        retries={"max_attempts": 2, "mode": "standard"},
+        read_timeout=30,
+        connect_timeout=5,
+    )
+    bedrock_client = boto3.client(
+        "bedrock-runtime",
+        region_name=BEDROCK_REGION,
+        config=bedrock_config
+    )
 
-# Bedrock 클라이언트 (Fallback)
-bedrock_config = Config(
-    retries={"max_attempts": 2, "mode": "standard"},
-    read_timeout=30,
-    connect_timeout=5,
-)
-bedrock_client = boto3.client(
-    "bedrock-runtime",
-    region_name=BEDROCK_REGION,
-    config=bedrock_config
-)
+instructions_table = dynamodb.Table(DISTILLED_INSTRUCTIONS_TABLE)
 
 # Gemini 클라이언트 (Lazy Initialization)
 _gemini_client = None
@@ -218,7 +233,12 @@ def _get_gemini_client():
     if _gemini_client is None and USE_GEMINI_NATIVE:
         try:
             import google.generativeai as genai
-            api_key = GEMINI_API_KEY or _get_gemini_api_key_from_secrets()
+            # 공통 유틸리티 사용 (사용 가능한 경우)
+            if get_gemini_api_key is not None:
+                api_key = get_gemini_api_key()
+            else:
+                api_key = GEMINI_API_KEY or _get_gemini_api_key_from_secrets()
+            
             if api_key:
                 genai.configure(api_key=api_key)
                 _gemini_client = genai
@@ -233,7 +253,15 @@ def _get_gemini_client():
 
 
 def _get_gemini_api_key_from_secrets() -> Optional[str]:
-    """AWS Secrets Manager에서 Gemini API 키 조회"""
+    """
+    AWS Secrets Manager에서 Gemini API 키 조회
+    
+    Note: 공통 secrets_utils 사용 불가 시 Fallback
+    """
+    # 공통 유틸리티 사용 가능하면 그쪽 사용
+    if get_gemini_api_key is not None:
+        return get_gemini_api_key()
+    
     try:
         secret_name = os.environ.get("GEMINI_SECRET_NAME", "backend-workflow-dev-gemini_api_key")
         secrets_client = boto3.client("secretsmanager", region_name=BEDROCK_REGION)

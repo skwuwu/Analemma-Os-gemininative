@@ -15,12 +15,19 @@ import os
 import time
 from typing import Dict, Any, Iterator, List, Optional
 
-logger = logging.getLogger(__name__)
+# 공통 유틸리티 import
+try:
+    from src.common.constants import is_mock_mode as _common_is_mock_mode, LLMModels
+    MODEL_HAIKU = LLMModels.CLAUDE_3_HAIKU
+    MODEL_SONNET = LLMModels.CLAUDE_3_SONNET
+    MODEL_GEMINI = LLMModels.GEMINI_1_5_PRO
+except ImportError:
+    _common_is_mock_mode = None
+    MODEL_HAIKU = os.getenv("HAIKU_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+    MODEL_SONNET = os.getenv("SONNET_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
+    MODEL_GEMINI = os.getenv("GEMINI_MODEL_ID", "gemini-1.5-pro-latest")
 
-# Model IDs
-MODEL_HAIKU = os.getenv("HAIKU_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
-MODEL_SONNET = os.getenv("SONNET_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
-MODEL_GEMINI = os.getenv("GEMINI_MODEL_ID", "gemini-1.5-pro-latest")
+logger = logging.getLogger(__name__)
 
 # Prompts
 ANALYSIS_PROMPT = """사용자 요청을 분석하여 두 가지를 판단해.
@@ -61,6 +68,8 @@ class DesignerService:
     
     def is_mock_mode(self) -> bool:
         """Check if mock mode is enabled."""
+        if _common_is_mock_mode is not None:
+            return _common_is_mock_mode()
         return os.getenv("MOCK_MODE", "true").strip().lower() in {"true", "1", "yes", "on"}
 
     def analyze_request(self, user_request: str) -> Dict[str, str]:
