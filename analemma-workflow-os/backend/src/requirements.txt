@@ -4,7 +4,8 @@ croniter
 pytest
 moto
 
-google-generativeai
+# Vertex AI SDK (Gemini Native)
+google-cloud-aiplatform>=1.38.0
 langgraph>=0.0.40
 openai
 jsonpath-ng

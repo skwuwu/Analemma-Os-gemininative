@@ -1,5 +1,5 @@
 """
-GeminiService - Google Gemini 1.5 Pro/Flash Native Integration
+GeminiService - Google Gemini via Vertex AI SDK
 
 Gemini의 특장점을 활용한 워크플로우 설계 서비스:
 - 1M+ 토큰 초장기 컨텍스트 지원
@@ -10,7 +10,8 @@ Gemini의 특장점을 활용한 워크플로우 설계 서비스:
 - Token Counter (자원 모니터링)
 - Exponential Backoff (Rate Limit 대응)
 
-GitHub Secrets의 GOOGLE_API_KEY를 사용하여 Google AI API 직접 호출
+Vertex AI SDK를 사용하여 GCP 인증 기반 Gemini API 호출
+GitHub Secrets: GCP_PROJECT_ID, GCP_LOCATION, GCP_SERVICE_ACCOUNT_KEY
 """
 
 import os
@@ -198,50 +199,97 @@ class GeminiConfig:
 _gemini_client = None
 
 
-def _get_api_key() -> str:
-    """Google AI API 키 조회 (Secrets Manager 또는 환경변수)"""
-    # 통합된 secrets_utils 사용 (사용 가능한 경우)
-    if get_gemini_api_key is not None:
-        api_key = get_gemini_api_key()
-        if api_key:
-            return api_key
+# ═══════════════════════════════════════════════════════════════════════════════
+# Vertex AI Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "")
+GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+GCP_SERVICE_ACCOUNT_KEY = os.getenv("GCP_SERVICE_ACCOUNT_KEY", "")  # JSON string
+
+_vertexai_initialized = False
+
+
+def _init_vertexai() -> bool:
+    """
+    Vertex AI SDK 초기화
     
-    # Fallback: 환경변수 직접 조회
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if api_key:
-        return api_key
+    GitHub Secrets를 통해 주입되는 환경변수:
+    - GCP_PROJECT_ID: GCP 프로젝트 ID
+    - GCP_LOCATION: Vertex AI 리전 (기본: us-central1)
+    - GCP_SERVICE_ACCOUNT_KEY: Service Account JSON (옵션, 없으면 ADC 사용)
+    """
+    global _vertexai_initialized
+    if _vertexai_initialized:
+        return True
     
-    # Fallback: AWS Secrets Manager 직접 조회 (Lambda 환경)
-    secret_name = os.getenv("GEMINI_SECRET_NAME", "backend-workflow-dev-gemini_api_key")
     try:
-        import boto3
-        client = boto3.client("secretsmanager", region_name=os.getenv("AWS_REGION", "us-east-1"))
-        response = client.get_secret_value(SecretId=secret_name)
-        secret = json.loads(response["SecretString"])
-        return secret.get("api_key", "")
+        import vertexai
+        
+        # Service Account JSON이 환경변수로 제공된 경우 임시 파일로 저장
+        if GCP_SERVICE_ACCOUNT_KEY:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                f.write(GCP_SERVICE_ACCOUNT_KEY)
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name
+                logger.debug(f"Service Account credentials written to {f.name}")
+        
+        project_id = GCP_PROJECT_ID
+        if not project_id:
+            # Fallback: AWS Secrets Manager에서 조회 (Lambda 환경)
+            try:
+                import boto3
+                secret_name = os.getenv("VERTEX_SECRET_NAME", "backend-workflow-dev-vertex_ai_config")
+                client = boto3.client("secretsmanager", region_name=os.getenv("AWS_REGION", "us-east-1"))
+                response = client.get_secret_value(SecretId=secret_name)
+                secret = json.loads(response["SecretString"])
+                project_id = secret.get("project_id", "")
+                
+                # Service Account JSON도 Secrets에서 가져올 수 있음
+                if secret.get("service_account_key"):
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                        f.write(json.dumps(secret["service_account_key"]))
+                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name
+            except Exception as e:
+                logger.warning(f"Failed to get Vertex AI config from Secrets Manager: {e}")
+        
+        if not project_id:
+            logger.error("GCP_PROJECT_ID not configured")
+            return False
+        
+        vertexai.init(project=project_id, location=GCP_LOCATION)
+        _vertexai_initialized = True
+        logger.info(f"Vertex AI initialized: project={project_id}, location={GCP_LOCATION}")
+        return True
+        
+    except ImportError:
+        logger.error("google-cloud-aiplatform package not installed")
+        return False
     except Exception as e:
-        logger.warning(f"Failed to get API key from Secrets Manager: {e}")
-        return ""
+        logger.error(f"Failed to initialize Vertex AI: {e}")
+        return False
 
 
 def get_gemini_client():
-    """Gemini 클라이언트 Lazy Initialization"""
+    """
+    Vertex AI GenerativeModel 클라이언트 Lazy Initialization
+    
+    Returns:
+        vertexai.generative_models 모듈 (GenerativeModel 생성용)
+    """
     global _gemini_client
     if _gemini_client is None:
+        if not _init_vertexai():
+            return None
         try:
-            import google.generativeai as genai
-            api_key = _get_api_key()
-            if not api_key:
-                logger.error("GOOGLE_API_KEY not configured")
-                return None
-            genai.configure(api_key=api_key)
-            _gemini_client = genai
-            logger.info("GeminiService: Client initialized successfully")
+            from vertexai import generative_models
+            _gemini_client = generative_models
+            logger.info("GeminiService: Vertex AI client initialized successfully")
         except ImportError:
-            logger.error("google-generativeai package not installed")
+            logger.error("google-cloud-aiplatform package not installed")
             return None
         except Exception as e:
-            logger.error(f"Failed to initialize Gemini client: {e}")
+            logger.error(f"Failed to initialize Vertex AI client: {e}")
             return None
     return _gemini_client
 

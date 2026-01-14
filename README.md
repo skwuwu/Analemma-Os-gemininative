@@ -145,10 +145,10 @@ flowchart TB
 
 | Aspect | Current State | Vertex AI Readiness |
 |--------|---------------|---------------------|
-| **Gemini API** | `google.generativeai` SDK | ✅ 1-line change to `vertexai` SDK |
-| **Context Caching** | Gemini API caching enabled | ✅ Vertex AI caching API compatible |
+| **Gemini API** | `vertexai` SDK (Vertex AI Native) | ✅ Production Ready |
+| **Context Caching** | Vertex AI caching enabled | ✅ CachedContent API |
 | **Model Routing** | Gemini 3 Pro/Flash selection | ✅ Same models on Vertex AI |
-| **Authentication** | API Key based | 🔄 Service Account migration ready |
+| **Authentication** | GCP Service Account | ✅ Enterprise IAM Ready |
 
 #### GCP Migration Roadmap
 

@@ -45,7 +45,11 @@ logger.setLevel(logging.INFO)
 DISTILLED_INSTRUCTIONS_TABLE = os.environ.get("DISTILLED_INSTRUCTIONS_TABLE", "DistilledInstructions")
 S3_BUCKET = os.environ.get("WORKFLOW_STATE_BUCKET", "")
 BEDROCK_REGION = os.environ.get("AWS_REGION", "us-east-1")
-GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+
+# Vertex AI 환경변수 (GitHub Secrets에서 주입)
+GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "")
+GCP_LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
+GCP_SERVICE_ACCOUNT_KEY = os.environ.get("GCP_SERVICE_ACCOUNT_KEY", "")  # JSON string
 
 # Fallback Model (Bedrock Haiku - 레거시 호환)
 HAIKU_MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
@@ -228,48 +232,61 @@ _context_cache_registry: Dict[str, Dict[str, Any]] = {}
 
 
 def _get_gemini_client():
-    """Gemini 클라이언트 싱글톤"""
+    """Vertex AI GenerativeModel 클라이언트 싱글톤"""
     global _gemini_client
     if _gemini_client is None and USE_GEMINI_NATIVE:
         try:
-            import google.generativeai as genai
-            # 공통 유틸리티 사용 (사용 가능한 경우)
-            if get_gemini_api_key is not None:
-                api_key = get_gemini_api_key()
-            else:
-                api_key = GEMINI_API_KEY or _get_gemini_api_key_from_secrets()
+            import vertexai
+            from vertexai import generative_models
             
-            if api_key:
-                genai.configure(api_key=api_key)
-                _gemini_client = genai
-                logger.info("Gemini client initialized for Instruction Distiller")
+            # Service Account JSON이 환경변수로 제공된 경우 임시 파일로 저장
+            if GCP_SERVICE_ACCOUNT_KEY:
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                    f.write(GCP_SERVICE_ACCOUNT_KEY)
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name
+            
+            project_id = GCP_PROJECT_ID
+            if not project_id:
+                # Fallback: AWS Secrets Manager에서 조회 (Lambda 환경)
+                project_id = _get_vertex_config_from_secrets()
+            
+            if project_id:
+                vertexai.init(project=project_id, location=GCP_LOCATION)
+                _gemini_client = generative_models
+                logger.info(f"Vertex AI initialized for Instruction Distiller: {project_id}")
             else:
-                logger.warning("GOOGLE_API_KEY not configured, falling back to Bedrock")
+                logger.warning("GCP_PROJECT_ID not configured, falling back to Bedrock")
         except ImportError:
-            logger.warning("google-generativeai not installed, falling back to Bedrock")
+            logger.warning("google-cloud-aiplatform not installed, falling back to Bedrock")
         except Exception as e:
-            logger.error(f"Failed to initialize Gemini client: {e}")
+            logger.error(f"Failed to initialize Vertex AI: {e}")
     return _gemini_client
 
 
-def _get_gemini_api_key_from_secrets() -> Optional[str]:
+def _get_vertex_config_from_secrets() -> Optional[str]:
     """
-    AWS Secrets Manager에서 Gemini API 키 조회
+    AWS Secrets Manager에서 Vertex AI 설정 조회
     
-    Note: 공통 secrets_utils 사용 불가 시 Fallback
+    Returns:
+        GCP Project ID (Secrets에서 조회) 또는 None
     """
-    # 공통 유틸리티 사용 가능하면 그쪽 사용
-    if get_gemini_api_key is not None:
-        return get_gemini_api_key()
-    
     try:
-        secret_name = os.environ.get("GEMINI_SECRET_NAME", "backend-workflow-dev-gemini_api_key")
+        secret_name = os.environ.get("VERTEX_SECRET_NAME", "backend-workflow-dev-vertex_ai_config")
         secrets_client = boto3.client("secretsmanager", region_name=BEDROCK_REGION)
         response = secrets_client.get_secret_value(SecretId=secret_name)
         secret = json.loads(response["SecretString"])
-        return secret.get("api_key", "")
+        
+        # Service Account JSON도 Secrets에서 가져올 수 있음
+        if secret.get("service_account_key"):
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                f.write(json.dumps(secret["service_account_key"]))
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name
+        
+        return secret.get("project_id", "")
     except Exception as e:
-        logger.warning(f"Failed to get Gemini API key from Secrets Manager: {e}")
+        logger.warning(f"Failed to get Vertex AI config from Secrets Manager: {e}")
         return None
 
 
@@ -315,13 +332,13 @@ def _get_or_create_instruction_cache(
         system_instruction = _build_cached_system_instruction(instructions, few_shot_example)
         
         # 캐시 생성 (Gemini 1.5+ Context Caching API)
-        # Note: 실제 API는 google.generativeai.caching 모듈 사용
+        # Note: Vertex AI caching 모듈 사용
         try:
-            from google.generativeai import caching
-            
+            from vertexai import caching
+            from vertexai.generative_models import Content, Part
+
             cache = caching.CachedContent.create(
-                model=GEMINI_2_FLASH_MODEL,
-                display_name=f"instructions_{workflow_id}_{node_id}",
+                model_name=GEMINI_2_FLASH_MODEL,
                 system_instruction=system_instruction,
                 ttl=f"{CONTEXT_CACHE_TTL_SECONDS}s",
             )
@@ -400,10 +417,10 @@ def invalidate_instruction_cache(owner_id: str, workflow_id: str, node_id: str) 
     if cache_key in _context_cache_registry:
         cached = _context_cache_registry.pop(cache_key)
         
-        # Gemini 캐시 삭제 시도
+        # Vertex AI 캐시 삭제 시도
         try:
-            from google.generativeai import caching
-            cache = caching.CachedContent.get(cached.get("cache_name", ""))
+            from vertexai import caching
+            cache = caching.CachedContent(cached_content_name=cached.get("cache_name", ""))
             cache.delete()
             logger.info(f"Context cache invalidated: {cache_key}")
         except Exception as e:
