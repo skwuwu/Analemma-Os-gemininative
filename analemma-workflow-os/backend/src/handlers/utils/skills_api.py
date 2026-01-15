@@ -115,17 +115,8 @@ BREAKING_CHANGE_FIELDS = {
 }
 logger.setLevel(logging.INFO)
 
-
-def _get_owner_id(event: Dict) -> Optional[str]:
-    """Extract owner ID from src.JWT claims."""
-    try:
-        return (event.get('requestContext', {})
-                .get('authorizer', {})
-                .get('jwt', {})
-                .get('claims', {})
-                .get('sub'))
-    except Exception:
-        return None
+# Import centralized auth utility
+from src.common.auth_utils import extract_owner_id_from_event
 
 
 def _response(status_code: int, body: Any, headers: Dict = None) -> Dict:
@@ -174,7 +165,7 @@ def lambda_handler(event, context):
     logger.info("Skills API: %s %s (skill_id=%s)", http_method, path, skill_id)
     
     # Get authenticated user
-    owner_id = _get_owner_id(event)
+    owner_id = extract_owner_id_from_event(event)
     if not owner_id:
         return _response(401, {'error': 'Authentication required'})
     

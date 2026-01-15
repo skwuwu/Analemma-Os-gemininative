@@ -1,17 +1,12 @@
 import hashlib
 import os
 import time
+from src.common.auth_utils import extract_owner_id_from_event
 
+# Backward compatibility alias
 def get_owner_id(event):
-    """JWT 토큰에서 owner_id 추출"""
-    try:
-        return (event.get('requestContext', {})
-                .get('authorizer', {})
-                .get('jwt', {})
-                .get('claims', {})
-                .get('sub'))
-    except Exception:
-        return None
+    """JWT 토큰에서 owner_id 추출 (레거시 호환용 - extract_owner_id_from_event 사용 권장)"""
+    return extract_owner_id_from_event(event)
 
 def get_current_timestamp():
     """현재 시간을 표준 Unix Timestamp(초 단위, 정수)로 반환"""

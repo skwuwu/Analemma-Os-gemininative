@@ -26,16 +26,7 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
-try:
-    from src.common.aws_clients import get_dynamodb_resource, get_s3_client
-except ImportError:
-    try:
-        from common.aws_clients import get_dynamodb_resource, get_s3_client
-    except ImportError:
-        def get_dynamodb_resource():
-            return boto3.resource('dynamodb')
-        def get_s3_client():
-            return boto3.client('s3')
+from src.common.aws_clients import get_dynamodb_resource, get_s3_client
 
 logger = logging.getLogger(__name__)
 

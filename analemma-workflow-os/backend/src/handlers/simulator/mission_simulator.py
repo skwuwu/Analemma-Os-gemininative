@@ -33,10 +33,10 @@ except ImportError:
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
 
-# AWS Clients (lazy initialization)
+# AWS Clients
+from src.common.aws_clients import get_dynamodb_resource, get_s3_client
+
 _stepfunctions_client = None
-_s3_client = None
-_dynamodb = None
 _cloudwatch_client = None
 _sqs_client = None
 _events_client = None
@@ -47,20 +47,6 @@ def get_stepfunctions_client():
     if _stepfunctions_client is None:
         _stepfunctions_client = boto3.client('stepfunctions')
     return _stepfunctions_client
-
-
-def get_s3_client():
-    global _s3_client
-    if _s3_client is None:
-        _s3_client = boto3.client('s3')
-    return _s3_client
-
-
-def get_dynamodb_resource():
-    global _dynamodb
-    if _dynamodb is None:
-        _dynamodb = boto3.resource('dynamodb')
-    return _dynamodb
 
 
 def get_cloudwatch_client():

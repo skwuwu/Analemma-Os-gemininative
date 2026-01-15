@@ -1941,6 +1941,50 @@ Resources:
             Enabled: true
 
   # --- Intelligent Instruction Distiller Functions ---
+  CorrectionApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-correction-api-v2"
+      PackageType: Image
+      ImageUri: !Ref BackendLambdaImageUri
+      ImageConfig:
+        Command: ["src.handlers.core.correction_api_handler.lambda_handler"]
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          CORRECTION_LOGS_TABLE: !Ref CorrectionLogsTable
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          GOOGLE_API_KEY: !Ref GoogleApiKey
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CorrectionLogsTable
+      Events:
+        LogCorrection:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /corrections
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+        GetRecentCorrections:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /corrections/recent
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+        SearchCorrections:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /corrections/search
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
   CorrectionQualityProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:

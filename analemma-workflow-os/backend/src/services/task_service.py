@@ -25,37 +25,17 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
-try:
-    from src.common.aws_clients import get_dynamodb_resource, get_s3_client
-    from src.common.constants import DynamoDBConfig
-    from src.models.task_context import (
-        TaskContext,
-        TaskStatus,
-        ArtifactType,
-        ArtifactPreview,
-        AgentThought,
-        convert_technical_status,
-        get_friendly_error_message,
-    )
-except ImportError:
-    from src.common.aws_clients import get_dynamodb_resource
-    # Fallback for get_s3_client
-    def get_s3_client():
-        return boto3.client('s3')
-    
-    # Fallback for DynamoDBConfig
-    class DynamoDBConfig:
-        EXECUTION_ID_INDEX = os.environ.get('EXECUTION_ID_INDEX', 'ExecutionIdIndex')
-    
-    from src.models.task_context import (
-        TaskContext,
-        TaskStatus,
-        ArtifactType,
-        ArtifactPreview,
-        AgentThought,
-        convert_technical_status,
-        get_friendly_error_message,
-    )
+from src.common.aws_clients import get_dynamodb_resource, get_s3_client
+from src.common.constants import DynamoDBConfig
+from src.models.task_context import (
+    TaskContext,
+    TaskStatus,
+    ArtifactType,
+    ArtifactPreview,
+    AgentThought,
+    convert_technical_status,
+    get_friendly_error_message,
+)
 
 # 비즈니스 메트릭스 계산 모듈 임포트
 try:

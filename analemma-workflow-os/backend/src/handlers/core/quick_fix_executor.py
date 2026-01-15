@@ -430,12 +430,10 @@ def _parse_request_body(event: dict) -> dict:
 
 def _extract_owner_id(event: dict, body: dict) -> str:
     """Extract owner_id from JWT claims or request body"""
-    # Try JWT claims first
-    request_context = event.get("requestContext", {})
-    authorizer = request_context.get("authorizer", {})
-    jwt_claims = authorizer.get("jwt", {}).get("claims", {})
+    from src.common.auth_utils import extract_owner_id_from_event
     
-    owner_id = jwt_claims.get("sub") or jwt_claims.get("cognito:username")
+    # Try JWT claims first
+    owner_id = extract_owner_id_from_event(event)
     if owner_id:
         return owner_id
     
