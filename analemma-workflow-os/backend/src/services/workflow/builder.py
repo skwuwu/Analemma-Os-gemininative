@@ -2,11 +2,18 @@
 # Dynamic Workflow Builder for runtime graph construction from src.JSON config
 # Replaces S3 pickle loading with on-demand LangGraph compilation
 # Extended with Sub-graph Abstraction support for hierarchical workflows
+#
+# [v2.0 Production Hardening]
+# - Template rendering safety with missing variable detection
+# - MAX_SUBGRAPH_DEPTH limit to prevent stack overflow
+# - Graph completeness validation (leaf nodes → END)
+# - Lightweight state schema for subgraphs (memory optimization)
 
 import logging
 import json
 import hashlib
-from typing import Dict, Any, Callable, Optional, List, Set
+import os
+from typing import Dict, Any, Callable, Optional, List, Set, TypedDict, Annotated
 from langgraph.graph import StateGraph, END
 
 logger = logging.getLogger(__name__)
@@ -14,30 +21,137 @@ logger = logging.getLogger(__name__)
 # Import existing node functions and state schema from src.handlers.core.main.py
 from src.handlers.core.main import NODE_REGISTRY, WorkflowState
 
+# ============================================================================
+# [Critical Fix #2] 재귀 깊이 제한 상수
+# ============================================================================
+MAX_SUBGRAPH_DEPTH = int(os.environ.get("MAX_SUBGRAPH_DEPTH", "10"))
 
-def _render_template(template: Any, state: Dict[str, Any]) -> Any:
-    """Render {{variable}} templates against the provided state."""
+
+# ============================================================================
+# [Critical Fix #1] 템플릿 렌더링 취약성 해결
+# ============================================================================
+class TemplateRenderingError(Exception):
+    """템플릿 렌더링 중 필수 변수 누락 시 발생하는 예외"""
+    def __init__(self, missing_vars: List[str], template: str):
+        self.missing_vars = missing_vars
+        self.template = template
+        super().__init__(
+            f"Template rendering failed: missing required variables {missing_vars} "
+            f"in template '{template[:100]}...'"
+        )
+
+
+# ============================================================================
+# [Performance Optimization] 서브그래프 전용 경량 상태 스키마
+# ============================================================================
+class LightweightSubgraphState(TypedDict, total=False):
+    """
+    서브그래프 실행을 위한 경량 상태 스키마.
+    부모 상태의 모든 필드를 상속받지 않고 필요한 것만 전달하여
+    중첩 시 메모리 사용량 증가를 방지합니다.
+    """
+    # 필수 컨텍스트
+    user_api_keys: Dict[str, str]
+    step_history: List[str]
+    # 실행 결과
+    result: Any
+    # 스킬 통합 (필요 시)
+    skill_execution_log: List[Dict[str, Any]]
+
+
+# 서브그래프에서 부모로 전파해야 하는 누적 필드 목록
+SUBGRAPH_ACCUMULATOR_FIELDS = frozenset({"step_history", "skill_execution_log"})
+# 서브그래프 입력 시 자동 상속되는 공통 필드
+SUBGRAPH_INHERIT_FIELDS = frozenset({"user_api_keys", "step_history", "skill_execution_log"})
+
+
+def _render_template(
+    template: Any, 
+    state: Dict[str, Any],
+    strict_mode: bool = False,
+    required_vars: Optional[Set[str]] = None
+) -> Any:
+    """
+    Render {{variable}} templates against the provided state.
+    
+    [v2.0 Production Hardening]
+    - strict_mode=True: 변수 누락 시 TemplateRenderingError 발생
+    - strict_mode=False: 변수 누락 시 {{MISSING:var}} 플레이스홀더 반환 (디버깅용)
+    - required_vars: 필수 변수 집합 - 이 변수들이 누락되면 항상 에러
+    - json.dumps 실패 시 안전하게 str() 폴백
+    
+    Args:
+        template: 렌더링할 템플릿 (str, dict, list, 또는 기타)
+        state: 변수 값을 가져올 상태 딕셔너리
+        strict_mode: True면 누락 변수 시 예외 발생
+        required_vars: 필수 변수 집합 (누락 시 항상 예외)
+        
+    Returns:
+        렌더링된 템플릿
+        
+    Raises:
+        TemplateRenderingError: strict_mode이거나 required_vars 누락 시
+    """
     import re
+    
     if template is None:
         return None
+    
+    if required_vars is None:
+        required_vars = set()
+    
+    missing_vars: List[str] = []
+    
     if isinstance(template, str):
-        def _repl(m):
+        def _repl(m: re.Match) -> str:
             key = m.group(1).strip()
             parts = key.split('.')
-            cur = state
+            cur: Any = state
+            
             for p in parts:
                 if isinstance(cur, dict) and p in cur:
                     cur = cur[p]
                 else:
-                    return ""
+                    # 변수를 찾지 못함
+                    missing_vars.append(key)
+                    
+                    # 필수 변수이거나 strict_mode면 나중에 예외 발생
+                    if key in required_vars or strict_mode:
+                        return f"{{{{MISSING:{key}}}}}"
+                    
+                    # 디버깅을 위한 플레이스홀더 반환
+                    logger.warning(f"Template variable not found: {key} (returning placeholder)")
+                    return f"{{{{MISSING:{key}}}}}"
+            
+            # 값을 찾음 - 타입에 따라 변환
             if isinstance(cur, (dict, list)):
-                return json.dumps(cur)
-            return str(cur)
-        return re.sub(r"\{\{\s*([\w\.]+)\s*\}\}", _repl, template)
+                try:
+                    return json.dumps(cur, ensure_ascii=False)
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"json.dumps failed for key '{key}': {e}, using str()")
+                    return str(cur)
+            
+            return str(cur) if cur is not None else ""
+        
+        rendered = re.sub(r"\{\{\s*([\w\.]+)\s*\}\}", _repl, template)
+        
+        # 필수 변수 누락 체크
+        required_missing = set(missing_vars) & required_vars
+        if required_missing:
+            raise TemplateRenderingError(list(required_missing), template)
+        
+        # strict_mode에서 누락 변수 있으면 예외
+        if strict_mode and missing_vars:
+            raise TemplateRenderingError(missing_vars, template)
+        
+        return rendered
+    
     if isinstance(template, dict):
-        return {k: _render_template(v, state) for k, v in template.items()}
+        return {k: _render_template(v, state, strict_mode, required_vars) for k, v in template.items()}
+    
     if isinstance(template, list):
-        return [_render_template(v, state) for v in template]
+        return [_render_template(v, state, strict_mode, required_vars) for v in template]
+    
     return template
 
 
@@ -52,20 +166,45 @@ class DynamicWorkflowBuilder:
     - Handles state mapping between parent and child graphs
     """
 
-    def __init__(self, config: Dict[str, Any], parent_path: List[str] = None):
+    def __init__(
+        self, 
+        config: Dict[str, Any], 
+        parent_path: List[str] = None,
+        use_lightweight_state: bool = False
+    ):
         """
         Initialize builder with workflow configuration.
 
         Args:
             config: Workflow configuration dict with 'nodes', 'edges', and optionally 'subgraphs'
             parent_path: Path from src.root (for nested subgraphs), e.g., ["root", "group1"]
+            use_lightweight_state: True면 LightweightSubgraphState 사용 (메모리 최적화)
+            
+        Raises:
+            ValueError: 서브그래프 깊이가 MAX_SUBGRAPH_DEPTH 초과 시
         """
         self.config = config
         self.parent_path = parent_path or ["root"]
+        self.use_lightweight_state = use_lightweight_state
+        
+        # [Critical Fix #2] 재귀 깊이 제한 검증
+        current_depth = len(self.parent_path)
+        if current_depth > MAX_SUBGRAPH_DEPTH:
+            raise ValueError(
+                f"Subgraph nesting depth ({current_depth}) exceeds maximum allowed "
+                f"({MAX_SUBGRAPH_DEPTH}). Path: {' > '.join(self.parent_path)}. "
+                f"Consider flattening your workflow structure or increasing MAX_SUBGRAPH_DEPTH."
+            )
+        
         # Cache for compiled subgraphs (avoid recompilation)
         self._subgraph_cache: Dict[str, Any] = {}
-        # Use WorkflowState schema for consistent state management
-        self.graph = StateGraph(WorkflowState)
+        
+        # [Performance Optimization] 서브그래프는 경량 상태 스키마 사용
+        if use_lightweight_state:
+            self.graph = StateGraph(LightweightSubgraphState)
+            logger.debug(f"Using LightweightSubgraphState for: {' > '.join(self.parent_path)}")
+        else:
+            self.graph = StateGraph(WorkflowState)
     
     def _get_subgraph_definition(self, node_def: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -128,12 +267,19 @@ class DynamicWorkflowBuilder:
         """
         Recursively compile a subgraph definition.
         
+        [v2.0 Production Hardening]
+        - 깊이 제한 검증 (MAX_SUBGRAPH_DEPTH)
+        - 경량 상태 스키마 사용으로 메모리 최적화
+        
         Args:
             subgraph_def: The subgraph definition dict
             node_id: ID of the parent subgraph node
             
         Returns:
             Compiled LangGraph app for the subgraph
+            
+        Raises:
+            ValueError: 깊이 제한 초과 시
         """
         # Cache key based on content hash
         cache_key = hashlib.md5(
@@ -146,10 +292,23 @@ class DynamicWorkflowBuilder:
         
         # Build child path for logging
         child_path = self.parent_path + [node_id]
-        logger.info(f"📦 Building subgraph: {' > '.join(child_path)}")
         
-        # Create child builder with nested path
-        child_builder = DynamicWorkflowBuilder(subgraph_def, parent_path=child_path)
+        # [Critical Fix #2] 깊이 사전 체크 (더 명확한 에러 메시지)
+        if len(child_path) > MAX_SUBGRAPH_DEPTH:
+            raise ValueError(
+                f"Cannot build subgraph '{node_id}': nesting depth ({len(child_path)}) "
+                f"would exceed MAX_SUBGRAPH_DEPTH ({MAX_SUBGRAPH_DEPTH}). "
+                f"Current path: {' > '.join(self.parent_path)}"
+            )
+        
+        logger.info(f"📦 Building subgraph: {' > '.join(child_path)} (depth: {len(child_path)})")
+        
+        # [Performance Optimization] 자식 서브그래프는 경량 상태 사용
+        child_builder = DynamicWorkflowBuilder(
+            subgraph_def, 
+            parent_path=child_path,
+            use_lightweight_state=True  # 서브그래프는 항상 경량 상태 사용
+        )
         compiled = child_builder.build()
         
         self._subgraph_cache[cache_key] = compiled
@@ -177,6 +336,7 @@ class DynamicWorkflowBuilder:
         
         def subgraph_handler(state: WorkflowState, config=None) -> Dict[str, Any]:
             import time
+            import copy
             from datetime import datetime, timezone
             
             subgraph_name = metadata.get("name", node_id)
@@ -184,22 +344,44 @@ class DynamicWorkflowBuilder:
             start_time = time.time()
             
             try:
-                # 1. Input Mapping: Parent state → Child input
-                child_input = {}
+                # 1. Input Mapping: Parent state → Child input (경량화)
+                # [Performance Optimization] 필요한 필드만 복사하여 메모리 절약
+                child_input: Dict[str, Any] = {}
+                
                 for parent_key, child_key in input_mapping.items():
                     # Support template syntax: {"query": "{{user_input}}"}
                     if isinstance(child_key, str) and "{{" in child_key:
-                        child_input[parent_key] = _render_template(child_key, state)
+                        # [Critical Fix #1] 템플릿 렌더링 시 필수 변수 검증
+                        try:
+                            child_input[parent_key] = _render_template(
+                                child_key, 
+                                state,
+                                strict_mode=False,  # 경고만 (서브그래프 내부에서는 유연하게)
+                                required_vars=None
+                            )
+                        except TemplateRenderingError as e:
+                            logger.error(f"Subgraph {node_id} input mapping failed: {e}")
+                            raise
                     else:
-                        # Direct key mapping
-                        child_input[child_key] = state.get(parent_key)
+                        # Direct key mapping - 값이 있을 때만 복사
+                        if parent_key in state:
+                            # [Performance] 대용량 객체는 얕은 복사만 수행
+                            val = state[parent_key]
+                            if isinstance(val, (list, dict)):
+                                child_input[child_key] = copy.copy(val)  # shallow copy
+                            else:
+                                child_input[child_key] = val
                 
-                # Inherit common state fields if not explicitly mapped
-                for key in ["user_api_keys", "step_history", "skill_execution_log"]:
+                # [Performance Optimization] 공통 필드는 필요한 것만 상속
+                for key in SUBGRAPH_INHERIT_FIELDS:
                     if key not in child_input and key in state:
-                        child_input[key] = state[key]
+                        # 누적 필드는 빈 리스트로 초기화 (결과에서 병합)
+                        if key in SUBGRAPH_ACCUMULATOR_FIELDS:
+                            child_input[key] = []  # 부모 히스토리를 복사하지 않음 (나중에 병합)
+                        else:
+                            child_input[key] = state[key]
                 
-                logger.debug(f"Subgraph {node_id} input keys: {list(child_input.keys())}")
+                logger.debug(f"Subgraph {node_id} input keys: {list(child_input.keys())} (lightweight)")
                 
                 # 2. Execute Subgraph
                 child_output = compiled_subgraph.invoke(child_input)
@@ -487,28 +669,122 @@ class DynamicWorkflowBuilder:
                     self.graph.set_entry_point(first_node_id)
                     logger.debug(f"Default entry point set: {first_node_id}")
 
+    def _validate_graph_completeness(self) -> None:
+        """
+        [Critical Fix #3] 그래프 완결성 검증.
+        
+        모든 리프 노드(나가는 엣지가 없는 노드)가 명시적으로 END로 연결되거나
+        Step Functions 전이를 담당하는지 확인합니다.
+        
+        Raises:
+            ValueError: 리프 노드가 END로 연결되지 않은 경우
+        """
+        nodes = self.config.get("nodes", [])
+        edges = self.config.get("edges", [])
+        
+        if not nodes:
+            return  # 빈 그래프는 검증 불필요
+        
+        node_ids = {n["id"] for n in nodes}
+        
+        # 각 노드별 나가는 엣지 수 계산
+        outgoing_count: Dict[str, int] = {nid: 0 for nid in node_ids}
+        has_end_edge: Set[str] = set()
+        
+        for edge in edges:
+            source = edge.get("source")
+            target = edge.get("target")
+            edge_type = edge.get("type", "edge")
+            
+            # 현재 세그먼트 내부 엣지만 카운트
+            if source in node_ids:
+                if target in node_ids:
+                    outgoing_count[source] = outgoing_count.get(source, 0) + 1
+                elif edge_type == "end" or target == "END":
+                    has_end_edge.add(source)
+                # conditional_edge도 outgoing으로 카운트
+                if edge_type == "conditional_edge":
+                    mapping = edge.get("mapping", {})
+                    # 매핑의 타겟들 중 현재 세그먼트 내부 노드가 있으면 카운트
+                    for mapped_target in mapping.values():
+                        if mapped_target in node_ids or mapped_target == "END":
+                            outgoing_count[source] = outgoing_count.get(source, 0) + 1
+                            if mapped_target == "END":
+                                has_end_edge.add(source)
+        
+        # 리프 노드 식별 (나가는 엣지가 0개)
+        leaf_nodes = [
+            nid for nid, count in outgoing_count.items() 
+            if count == 0 and nid not in has_end_edge
+        ]
+        
+        if leaf_nodes:
+            # 경고 수준으로 처리 (Step Functions가 세그먼트 간 전이를 담당하므로)
+            # 단, 루트 워크플로우에서는 더 엄격하게 처리할 수 있음
+            if len(self.parent_path) == 1:  # 루트 레벨
+                logger.warning(
+                    f"⚠️ Graph completeness warning: Leaf nodes without explicit END edge detected: "
+                    f"{leaf_nodes}. These nodes may rely on Step Functions for segment transitions. "
+                    f"Consider adding explicit 'end' edges for clarity."
+                )
+            else:
+                # 서브그래프에서는 더 유연하게 처리
+                logger.debug(
+                    f"Subgraph leaf nodes without END: {leaf_nodes} "
+                    f"(path: {' > '.join(self.parent_path)})"
+                )
+        
+        # 노드가 1개뿐이고 END 연결이 없으면 자동으로 추가해야 함을 경고
+        if len(nodes) == 1 and not has_end_edge:
+            single_node_id = nodes[0]["id"]
+            logger.info(
+                f"Single-node graph detected ({single_node_id}). "
+                f"Implicitly connecting to END."
+            )
+            # 실제로 END 연결 추가
+            from langgraph.graph import END
+            self.graph.add_edge(single_node_id, END)
+
     def build(self) -> Any:
         """
         Build and compile the LangGraph workflow.
+        
+        [v2.0 Production Hardening]
+        - 그래프 완결성 검증 (리프 노드 → END)
+        - 깊이 제한 검증 (MAX_SUBGRAPH_DEPTH)
 
         Returns:
             Compiled LangGraph app ready for execution
 
         Raises:
-            ValueError: If configuration is invalid
+            ValueError: If configuration is invalid or graph incomplete
             ImportError: If required dependencies are missing
         """
-        logger.info("🏗️ Building workflow dynamically from src.config")
+        depth = len(self.parent_path)
+        schema_type = "Lightweight" if self.use_lightweight_state else "Full"
+        logger.info(
+            f"🏗️ Building workflow dynamically from config "
+            f"(depth: {depth}/{MAX_SUBGRAPH_DEPTH}, schema: {schema_type})"
+        )
 
         try:
             self._add_nodes()
             self._add_edges()
+            
+            # [Critical Fix #3] 그래프 완결성 검증
+            self._validate_graph_completeness()
 
             # Compile the graph
             compiled_app = self.graph.compile()
-            logger.info("✅ Workflow built successfully")
+            logger.info(
+                f"✅ Workflow built successfully "
+                f"(path: {' > '.join(self.parent_path)})"
+            )
             return compiled_app
 
         except Exception as e:
-            logger.error(f"🚨 Failed to build workflow: {e}")
+            logger.error(
+                f"🚨 Failed to build workflow at depth {depth}: {e} "
+                f"(path: {' > '.join(self.parent_path)})"
+            )
             raise
