@@ -2547,6 +2547,39 @@ Resources:
         - AttributeName: sk
           KeyType: RANGE
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # --- Confirmation Tokens Table for Plan Briefing Approval ---
+  # 워크플로우 실행 전 사용자 승인을 위한 일회성 토큰 저장
+  # ═══════════════════════════════════════════════════════════════════════════
+  ConfirmationTokensTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "ConfirmationTokens-${StageName}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: workflow_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        # 사용자별 토큰 조회 (관리/정리용)
+        - IndexName: UserIdIndex
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: workflow_id
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   # --- NodeStats Table for ETA Calculation ---
   # 노드별 실행 시간 통계를 저장하여 정확한 ETA 계산에 활용
   NodeStatsTable:
@@ -3985,4 +4018,7 @@ Outputs:
   NodeStatsTableName:
     Description: NodeStats DynamoDB table for ETA calculation
     Value: !Ref NodeStatsTable
+  ConfirmationTokensTableName:
+    Description: Confirmation Tokens DynamoDB table for Plan Briefing approval
+    Value: !Ref ConfirmationTokensTable
 

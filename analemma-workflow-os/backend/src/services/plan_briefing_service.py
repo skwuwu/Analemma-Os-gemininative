@@ -550,7 +550,8 @@ class ConfirmationTokenService:
     
     def __init__(self):
         self.use_redis = os.environ.get('REDIS_URL') is not None
-        self.token_table = os.environ.get('CONFIRMATION_TOKENS_TABLE', 'ConfirmationTokens')
+        # 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+        self.token_table = os.environ.get('CONFIRMATION_TOKENS_TABLE', 'ConfirmationTokensTable')
         self._redis_client = None
         self._dynamodb_table = None
     

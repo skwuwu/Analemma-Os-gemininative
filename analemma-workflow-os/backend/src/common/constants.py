@@ -276,6 +276,8 @@ class DynamoDBConfig:
     CORRECTION_LOGS_TABLE = os.environ.get('CORRECTION_LOGS_TABLE', 'CorrectionLogsTable')
     DISTILLED_INSTRUCTIONS_TABLE = os.environ.get('DISTILLED_INSTRUCTIONS_TABLE', 'DistilledInstructionsTable')
     WORKFLOW_BRANCHES_TABLE = os.environ.get('WORKFLOW_BRANCHES_TABLE', 'WorkflowBranchesTable')
+    CONFIRMATION_TOKENS_TABLE = os.environ.get('CONFIRMATION_TOKENS_TABLE', 'ConfirmationTokensTable')
+    NODE_STATS_TABLE = os.environ.get('NODE_STATS_TABLE', 'NodeStatsTable')
     
     # ═══════════════════════════════════════════════════════════════════════════
     # GSI 이름 (template.yaml GlobalSecondaryIndexes.IndexName과 정확히 일치)
@@ -310,6 +312,9 @@ class DynamoDBConfig:
     
     # WorkflowBranchesTable GSI
     ROOT_THREAD_INDEX = os.environ.get('ROOT_THREAD_INDEX', 'root-thread-index')
+    
+    # ConfirmationTokensTable GSI
+    USER_ID_INDEX = os.environ.get('USER_ID_INDEX', 'UserIdIndex')
     
     # 배치 크기
     BATCH_WRITE_SIZE = 25
