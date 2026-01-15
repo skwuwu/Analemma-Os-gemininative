@@ -278,6 +278,7 @@ class DynamoDBConfig:
     WORKFLOW_BRANCHES_TABLE = os.environ.get('WORKFLOW_BRANCHES_TABLE', 'WorkflowBranchesTable')
     CONFIRMATION_TOKENS_TABLE = os.environ.get('CONFIRMATION_TOKENS_TABLE', 'ConfirmationTokensTable')
     NODE_STATS_TABLE = os.environ.get('NODE_STATS_TABLE', 'NodeStatsTable')
+    TASK_EVENTS_TABLE = os.environ.get('TASK_EVENTS_TABLE', 'TaskEventsTable')
     
     # ═══════════════════════════════════════════════════════════════════════════
     # GSI 이름 (template.yaml GlobalSecondaryIndexes.IndexName과 정확히 일치)
@@ -315,6 +316,9 @@ class DynamoDBConfig:
     
     # ConfirmationTokensTable GSI
     USER_ID_INDEX = os.environ.get('USER_ID_INDEX', 'UserIdIndex')
+    
+    # TaskEventsTable GSI
+    OWNER_ID_TIMESTAMP_INDEX = os.environ.get('OWNER_ID_TIMESTAMP_INDEX', 'OwnerIdTimestampIndex')
     
     # 배치 크기
     BATCH_WRITE_SIZE = 25

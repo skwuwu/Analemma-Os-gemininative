@@ -2580,6 +2580,43 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  # ═══════════════════════════════════════════════════════════════════════════
+  # --- Task Events Table for State Drift Prevention ---
+  # 중요 이벤트 영속화를 통해 WebSocket 연결 끊김 시에도 상태 복구 가능
+  # ═══════════════════════════════════════════════════════════════════════════
+  TaskEventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "TaskEvents-${StageName}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: task_id
+          AttributeType: S
+        - AttributeName: event_id
+          AttributeType: S
+        - AttributeName: owner_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: task_id
+          KeyType: HASH
+        - AttributeName: event_id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        # 소유자별 최근 이벤트 조회
+        - IndexName: OwnerIdTimestampIndex
+          KeySchema:
+            - AttributeName: owner_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   # --- NodeStats Table for ETA Calculation ---
   # 노드별 실행 시간 통계를 저장하여 정확한 ETA 계산에 활용
   NodeStatsTable:
@@ -4021,4 +4058,6 @@ Outputs:
   ConfirmationTokensTableName:
     Description: Confirmation Tokens DynamoDB table for Plan Briefing approval
     Value: !Ref ConfirmationTokensTable
-
+  TaskEventsTableName:
+    Description: Task Events DynamoDB table for WebSocket state recovery
+    Value: !Ref TaskEventsTable
