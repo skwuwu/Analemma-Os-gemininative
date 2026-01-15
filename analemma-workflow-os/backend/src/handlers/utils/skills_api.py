@@ -387,13 +387,21 @@ def handle_update_skill(repo: SkillRepository, owner_id: str, skill_id: str, eve
     [v2.1] Breaking Change 감지:
     - tool_definitions, input/output_schema 등 중요 필드 변경 시 경고
     - 기존 워크플로우 호환성 정보 반환
+    
+    [v2.2] Strict Mode:
+    - severity=high 변경 시 force_update=true 필수
+    - 엔터프라이즈 급 변경 관리
     """
     body, error = _parse_body(event)
     if error:
         return _response(400, {'error': error})
     
-    # Get version from src.body or query params
+    # [v2.2] Strict Mode 파라미터
     query_params = event.get('queryStringParameters') or {}
+    force_update = query_params.get('force_update', '').lower() in ('true', '1', 'yes')
+    strict_mode = os.environ.get('SKILL_UPDATE_STRICT_MODE', 'true').lower() in ('true', '1', 'yes')
+    
+    # Get version from src.body or query params
     version = body.get('version') or query_params.get('version')
     
     if not version:
@@ -424,6 +432,26 @@ def handle_update_skill(repo: SkillRepository, owner_id: str, skill_id: str, eve
     # [v2.1] Breaking Change 감지
     breaking_changes = _detect_breaking_changes(existing, updates)
     
+    # [v2.2] Strict Mode: high severity 변경 시 force_update 필수
+    if strict_mode and breaking_changes and not force_update:
+        high_severity_changes = {
+            field: info for field, info in breaking_changes.items()
+            if info.get('severity') == 'high'
+        }
+        
+        if high_severity_changes:
+            return _response(409, {
+                'error': 'Breaking changes require explicit confirmation',
+                'error_code': 'BREAKING_CHANGE_BLOCKED',
+                'breaking_changes': high_severity_changes,
+                'message': (
+                    'This update contains high-severity breaking changes that may '
+                    'break existing workflows. Add ?force_update=true to proceed.'
+                ),
+                'action': 'Add query parameter: ?force_update=true',
+                'affected_fields': list(high_severity_changes.keys())
+            })
+    
     try:
         updated = repo.update_skill(
             skill_id=skill_id,
@@ -432,10 +460,12 @@ def handle_update_skill(repo: SkillRepository, owner_id: str, skill_id: str, eve
             owner_id=owner_id  # Validates ownership
         )
         
-        logger.info("Updated skill: %s (owner=%s, breaking_changes=%s)", 
-                   skill_id, owner_id, list(breaking_changes.keys()))
+        logger.info(
+            "Updated skill: %s (owner=%s, breaking_changes=%s, force_update=%s)", 
+            skill_id, owner_id, list(breaking_changes.keys()), force_update
+        )
         
-        # [v2.1] Breaking Change 경고 포함
+        # [v2.1] Breaking Change 경고 포함 (medium severity는 경고만)
         response_body = updated
         if breaking_changes:
             response_body = {
@@ -443,10 +473,11 @@ def handle_update_skill(repo: SkillRepository, owner_id: str, skill_id: str, eve
                 '_warnings': {
                     'breaking_changes': breaking_changes,
                     'message': (
-                        '이 업데이트는 기존 워크플로우에 영향을 줄 수 있습니다. '
-                        '버전을 올리거나 기존 워크플로우를 테스트해 주세요.'
+                        'This update may affect existing workflows. '
+                        'Consider incrementing version or testing existing workflows.'
                     ),
-                    'recommendation': 'Consider incrementing version or testing existing workflows'
+                    'recommendation': 'Consider incrementing version or testing existing workflows',
+                    'force_update_used': force_update
                 }
             }
         
@@ -591,7 +622,69 @@ def handle_list_public(repo: SkillRepository, event: Dict) -> Dict:
 
 # =============================================================================
 # [v2.1] Gemini 시맨틱 스킬 검색
+# [v2.2] Vector DB RAG 검색 로드맵
 # =============================================================================
+
+# Search mode: 'context' (current) or 'rag' (production)
+# - context: All skills loaded into Gemini context (PoC, <1000 skills)
+# - rag: Vector DB similarity search + Gemini reranking (production, unlimited)
+SKILL_SEARCH_MODE = os.environ.get('SKILL_SEARCH_MODE', 'context')
+
+
+async def _search_skills_vector_db(
+    query: str,
+    owner_id: str,
+    scope: str,
+    top_k: int = 5
+) -> Optional[List[Dict]]:
+    """
+    [v2.2] Vector DB 기반 RAG 검색 (Production 로드맵).
+    
+    현재는 인터페이스만 정의, 실제 구현은 VectorSyncService 연동 필요.
+    
+    Architecture:
+    1. Query embedding via Gemini/Vertex AI
+    2. Similarity search in Pinecone/Milvus
+    3. Top-K retrieval + metadata filtering
+    4. Optional Gemini reranking for precision
+    
+    Benefits over context injection:
+    - O(log n) vs O(n) search complexity
+    - No token limit concerns
+    - Sub-100ms latency at scale
+    """
+    try:
+        # TODO: Production implementation
+        # from src.services.vector_sync_service import VectorSyncService
+        # vector_service = VectorSyncService()
+        # 
+        # # 1. Generate query embedding
+        # query_embedding = await vector_service.embed_text(query)
+        # 
+        # # 2. Search with scope filter
+        # filter_conditions = {}
+        # if scope == 'owned':
+        #     filter_conditions['owner_id'] = owner_id
+        # elif scope == 'public':
+        #     filter_conditions['visibility'] = 'public'
+        # 
+        # # 3. Retrieve similar skills
+        # results = await vector_service.search_skills(
+        #     embedding=query_embedding,
+        #     top_k=top_k * 2,  # Over-fetch for reranking
+        #     filters=filter_conditions
+        # )
+        # 
+        # # 4. Optional: Gemini reranking
+        # return await _rerank_with_gemini(query, results, top_k)
+        
+        logger.debug("Vector DB search not yet implemented, falling back to context mode")
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Vector DB search failed: {e}")
+        return None
+
 
 async def _search_skills_with_gemini(
     query: str, 
@@ -720,13 +813,23 @@ def _fallback_keyword_search(query: str, skills: List[Dict], top_k: int) -> List
 def handle_semantic_search(repo: SkillRepository, owner_id: str, event: Dict) -> Dict:
     """
     [v2.1] Gemini 시맨틱 스킬 검색.
+    [v2.2] Vector DB RAG 모드 지원.
     
-    GET /skills/search?q=<query>&scope=all|owned|public
+    GET /skills/search?q=<query>&scope=all|owned|public&mode=context|rag
     
-    예시:
-    - GET /skills/search?q=이메일 보내는 스킬
-    - GET /skills/search?q=PDF를 분석하는 도구
-    - GET /skills/search?q=고객 데이터 처리
+    Search Modes:
+    - context (default): Load all skills into Gemini context
+      - Best for: PoC, <1000 skills, highest accuracy
+      - Latency: 1-3s depending on skill count
+    
+    - rag (production roadmap): Vector DB similarity search
+      - Best for: Production, unlimited skills
+      - Latency: <100ms at scale
+    
+    Examples:
+    - GET /skills/search?q=send email tool
+    - GET /skills/search?q=PDF analyzer&scope=public
+    - GET /skills/search?q=customer data processor&mode=rag
     """
     query_params = event.get('queryStringParameters') or {}
     
@@ -735,6 +838,7 @@ def handle_semantic_search(repo: SkillRepository, owner_id: str, event: Dict) ->
         return _response(400, {'error': 'Query parameter "q" is required'})
     
     scope = query_params.get('scope', 'all')  # all, owned, public
+    search_mode = query_params.get('mode') or SKILL_SEARCH_MODE
     
     try:
         top_k = int(query_params.get('limit', 5))
@@ -742,7 +846,21 @@ def handle_semantic_search(repo: SkillRepository, owner_id: str, event: Dict) ->
     except (TypeError, ValueError):
         top_k = 5
     
-    # 검색 대상 스킬 수집
+    # [v2.2] RAG 모드 시도
+    if search_mode == 'rag':
+        rag_results = safe_run_async(_search_skills_vector_db(query, owner_id, scope, top_k))
+        if rag_results is not None:
+            return _response(200, {
+                'items': rag_results,
+                'count': len(rag_results),
+                'query': query,
+                'scope': scope,
+                'search_method': 'vector_db_rag'
+            })
+        # RAG 실패 시 context 모드로 폴백
+        logger.info("RAG search unavailable, falling back to context mode")
+    
+    # Context 모드: 모든 스킬 로드
     all_skills = []
     
     if scope in ('all', 'owned'):
@@ -765,6 +883,13 @@ def handle_semantic_search(repo: SkillRepository, owner_id: str, event: Dict) ->
             'message': 'No skills available to search'
         })
     
+    # 스킬 수 경고 (production에서는 RAG 권장)
+    if len(all_skills) > 100:
+        logger.warning(
+            f"Large skill set ({len(all_skills)} skills) in context mode. "
+            f"Consider switching to RAG mode for better performance."
+        )
+    
     # [v2.1] Gemini 시맨틱 검색 실행
     matched_skills = safe_run_async(_search_skills_with_gemini(query, all_skills, top_k))
     
@@ -773,5 +898,10 @@ def handle_semantic_search(repo: SkillRepository, owner_id: str, event: Dict) ->
         'count': len(matched_skills),
         'query': query,
         'scope': scope,
-        'search_method': 'gemini_semantic' if _get_gemini_model() else 'keyword_fallback'
+        'search_method': 'gemini_semantic' if _get_gemini_model() else 'keyword_fallback',
+        'total_skills_searched': len(all_skills),
+        '_hints': {
+            'rag_available': False,  # TODO: Set to True when implemented
+            'recommended_mode': 'rag' if len(all_skills) > 100 else 'context'
+        }
     })
