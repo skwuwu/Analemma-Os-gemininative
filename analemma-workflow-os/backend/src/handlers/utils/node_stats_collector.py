@@ -24,8 +24,8 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# 환경 변수
-NODE_STATS_TABLE = os.environ.get("NODE_STATS_TABLE", "NodeStats")
+# 환경 변수 - 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+NODE_STATS_TABLE = os.environ.get("NODE_STATS_TABLE", "NodeStatsTable")
 DECAY_FACTOR = Decimal("0.9")  # 기존 평균 가중치
 CURRENT_FACTOR = Decimal("0.1")  # 현재 값 가중치
 OUTLIER_THRESHOLD_MULTIPLIER = Decimal("3.0")  # 아웃라이어 임계값 (평균의 3배)

@@ -30,8 +30,8 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# 환경 변수
-EXECUTIONS_TABLE = os.environ.get("EXECUTIONS_TABLE", "ExecutionsTable")
+# 환경 변수 - 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+EXECUTIONS_TABLE = os.environ.get("EXECUTIONS_TABLE", "ExecutionsTableV3")
 S3_BUCKET = os.environ.get("WORKFLOW_STATE_BUCKET", "")
 PRESIGNED_URL_EXPIRY_SECONDS = int(os.environ.get("PRESIGNED_URL_EXPIRY_SECONDS", "3600"))  # 1시간
 

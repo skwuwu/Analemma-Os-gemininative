@@ -18,7 +18,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-USERS_TABLE = os.environ.get('USERS_TABLE', 'Users')
+# 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+USERS_TABLE = os.environ.get('USERS_TABLE', 'UsersTableV3')
 
 
 def lambda_handler(event, context):

@@ -51,7 +51,8 @@ def get_connections_table():
 
 def get_websocket_gsi():
     """WebSocket GSI 이름"""
-    return os.environ.get('WEBSOCKET_OWNER_ID_GSI', 'ownerId-index')
+    # 🚨 [Critical Fix] template.yaml의 실제 GSI 이름과 일치시킴
+    return os.environ.get('WEBSOCKET_OWNER_ID_GSI', 'OwnerIdConnectionIndex')
 
 
 def get_apigateway_client(endpoint_url: Optional[str] = None) -> Optional[Any]:

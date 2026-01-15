@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # GSI 이름 (notifications 테이블에 execution_id로 조회하기 위한 인덱스)
-EXECUTION_ID_GSI = os.environ.get('NOTIFICATION_EXECUTION_GSI', 'execution-id-index')
+# 🚨 [Critical Fix] template.yaml의 실제 GSI 이름과 일치시킴
+EXECUTION_ID_GSI = os.environ.get('EXECUTION_ID_INDEX', 'ExecutionIdIndex')
 
 # S3 버킷 (대용량 상태 데이터 오프로딩용)
 STATE_BUCKET = os.environ.get('STATE_BUCKET', os.environ.get('SKELETON_S3_BUCKET', ''))
