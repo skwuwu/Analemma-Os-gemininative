@@ -5,6 +5,10 @@ import urllib.request
 import urllib.error
 import boto3
 import copy
+import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Any, Optional, Tuple
 
 # 공통 모듈에서 AWS 클라이언트 및 유틸리티 가져오기
 try:
@@ -47,24 +51,128 @@ ses = boto3.client('ses') if os.environ.get('USE_SES', 'false').lower() in ('1',
 if not _USE_COMMON_UTILS:
     JSON_HEADERS = {'Content-Type': 'application/json'}
 
+# Webhook DLQ Table (선택적)
+WEBHOOK_DLQ_TABLE = os.environ.get('WEBHOOK_DLQ_TABLE')
+webhook_dlq_table = None
+if WEBHOOK_DLQ_TABLE:
+    try:
+        webhook_dlq_table = dynamodb.Table(WEBHOOK_DLQ_TABLE)
+    except Exception:
+        logger.warning(f"Failed to load webhook DLQ table: {WEBHOOK_DLQ_TABLE}")
+
+
+def _post_json_with_retry(
+    url: str, 
+    payload: Dict[str, Any], 
+    timeout: int = 30, 
+    headers: Optional[Dict[str, str]] = None,
+    max_retries: int = 3,
+    base_delay: float = 1.0
+) -> Tuple[bool, Optional[int], Optional[str]]:
+    """
+    [v2.1] Webhook POST with Exponential Backoff 재시도.
+    
+    Args:
+        url: Webhook URL
+        payload: POST 할 JSON 데이터
+        timeout: 요청 타임아웃 (초)
+        headers: 추가 헤더
+        max_retries: 최대 재시도 횟수
+        base_delay: 기본 대기 시간 (초)
+    
+    Returns:
+        (success, status_code, error_message)
+    """
+    data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    last_error = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            req = urllib.request.Request(url, data=data, method='POST')
+            req.add_header('Content-Type', 'application/json')
+            if headers:
+                for k, v in headers.items():
+                    req.add_header(k, v)
+            
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status_code = getattr(resp, 'status', 200)
+                return (True, status_code, None)
+                
+        except urllib.error.HTTPError as e:
+            last_error = f"HTTP {e.code}: {e.reason}"
+            # 4xx 에러는 재시도 불가 (Bad Request 등)
+            if 400 <= e.code < 500:
+                logger.warning(f"Webhook failed with client error (no retry): {last_error}")
+                return (False, e.code, last_error)
+                
+        except urllib.error.URLError as e:
+            last_error = f"URLError: {e.reason}"
+            
+        except Exception as e:
+            last_error = str(e)
+        
+        # 재시도 필요
+        if attempt < max_retries:
+            delay = base_delay * (2 ** attempt)  # Exponential backoff: 1, 2, 4쒈...
+            logger.warning(
+                f"Webhook attempt {attempt + 1}/{max_retries + 1} failed: {last_error}. "
+                f"Retrying in {delay:.1f}s..."
+            )
+            time.sleep(delay)
+    
+    logger.error(f"Webhook failed after {max_retries + 1} attempts: {last_error}")
+    return (False, None, last_error)
+
+
+def _save_to_webhook_dlq(
+    execution_arn: str,
+    callback_url: str,
+    payload: Dict[str, Any],
+    error_message: str,
+    owner_id: Optional[str] = None
+) -> bool:
+    """
+    [v2.1] Webhook 전송 실패 시 DLQ 테이블에 저장.
+    
+    나중에 재시도하거나 관리자가 수동으로 처리할 수 있습니다.
+    """
+    if not webhook_dlq_table:
+        logger.debug("Webhook DLQ table not configured, skipping DLQ save")
+        return False
+    
+    try:
+        import uuid
+        dlq_item = {
+            'dlqId': str(uuid.uuid4()),
+            'executionArn': execution_arn,
+            'callbackUrl': callback_url,
+            'payload': json.dumps(payload, ensure_ascii=False),
+            'errorMessage': error_message,
+            'ownerId': owner_id or 'unknown',
+            'createdAt': int(time.time()),
+            'status': 'pending',  # pending, retried, resolved
+            'retryCount': 0,
+            'ttl': int(time.time()) + (7 * 24 * 60 * 60)  # 7일 후 자동 삭제
+        }
+        
+        webhook_dlq_table.put_item(Item=dlq_item)
+        logger.info(f"Saved failed webhook to DLQ: {dlq_item['dlqId']} for {execution_arn}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to save webhook to DLQ: {e}")
+        return False
+
 
 def _post_json(url, payload, timeout=30, headers=None):
-    data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-    req = urllib.request.Request(url, data=data, method='POST')
-    req.add_header('Content-Type', 'application/json')
-    if headers:
-        for k, v in headers.items():
-            req.add_header(k, v)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return getattr(resp, 'status', None)
-
-
-def _describe_execution(execution_arn):
-    try:
-        return stepfunctions.describe_execution(executionArn=execution_arn)
-    except Exception:
-        logger.exception('Failed to describe execution %s', execution_arn)
-        return None
+    """
+    [Legacy] 기존 호환성 유지를 위한 래퍼.
+    새 코드는 _post_json_with_retry 사용 권장.
+    """
+    success, status_code, _ = _post_json_with_retry(url, payload, timeout, headers, max_retries=0)
+    if success:
+        return status_code
+    raise Exception(f"Failed to POST to {url}")
 
 
 def _update_db_status(owner_id, execution_arn, status, error=None):
@@ -273,13 +381,45 @@ def lambda_handler(event, context):
 
         # idempotency finalization handled by separate Finalizer Lambda
 
+        # [v2.1] Webhook with Exponential Backoff + DLQ
         if callback_url:
-            try:
-                status_code = _post_json(callback_url, webhook_payload)
-                push_result = {'pushed_webhook': True, 'status_code': status_code, 'callback_url': callback_url}
-                logger.info('Posted execution result for %s to %s (status=%s)', execution_arn, callback_url, status_code)
-            except Exception:
-                logger.exception('Failed to POST execution result for %s to %s', execution_arn, callback_url)
+            success, status_code, error_msg = _post_json_with_retry(
+                callback_url, 
+                webhook_payload,
+                timeout=30,
+                max_retries=3,
+                base_delay=1.0
+            )
+            
+            if success:
+                push_result = {
+                    'pushed_webhook': True, 
+                    'status_code': status_code, 
+                    'callback_url': callback_url
+                }
+                logger.info(
+                    'Posted execution result for %s to %s (status=%s)', 
+                    execution_arn, callback_url, status_code
+                )
+            else:
+                # 실패 시 DLQ에 저장
+                dlq_saved = _save_to_webhook_dlq(
+                    execution_arn=execution_arn,
+                    callback_url=callback_url,
+                    payload=webhook_payload,
+                    error_message=error_msg or 'Unknown error',
+                    owner_id=owner_id
+                )
+                push_result = {
+                    'pushed_webhook': False,
+                    'error': error_msg,
+                    'callback_url': callback_url,
+                    'saved_to_dlq': dlq_saved
+                }
+                logger.error(
+                    'Failed to POST execution result for %s to %s (saved_to_dlq=%s)', 
+                    execution_arn, callback_url, dlq_saved
+                )
         else:
             logger.info('No callback_url found for execution %s. Consider configuring EventBridge rule targets or adding callback info to workflow input.', execution_arn)
 
@@ -308,21 +448,62 @@ def lambda_handler(event, context):
         if apigw_management and connections_table and websocket_gsi and owner_id:
             connection_ids = get_connections_for_owner(owner_id)
             push_result_ws['connections'] = len(connection_ids)
+            
             if connection_ids:
                 payload_bytes = json.dumps(websocket_payload, ensure_ascii=False).encode('utf-8')
-                for conn_id in connection_ids:
+                
+                # [v2.1] 병렬 전송 (ThreadPoolExecutor)
+                # 여러 브라우저 탭에 연결된 사용자의 경우 순차 전송 대비 레이턴시 획기적 감소
+                def send_to_connection(conn_id: str) -> Tuple[str, bool, Optional[str]]:
+                    """Returns (conn_id, success, error_type)"""
                     try:
                         apigw_management.post_to_connection(ConnectionId=conn_id, Data=payload_bytes)
-                        logger.info("Pushed WebSocket notification to %s for owner %s", conn_id, owner_id)
-                        push_result_ws['pushed_websocket'] = True
+                        return (conn_id, True, None)
                     except apigw_management.exceptions.GoneException:
-                        logger.info("Stale connection %s found, deleting", conn_id)
-                        try:
-                            connections_table.delete_item(Key={'connectionId': conn_id})
-                        except Exception:
-                            logger.exception("Failed to delete stale connection %s", conn_id)
-                    except Exception:
-                        logger.exception("Failed to push to WebSocket connection %s", conn_id)
+                        return (conn_id, False, 'gone')
+                    except Exception as e:
+                        return (conn_id, False, str(e))
+                
+                # 최대 10개 동시 전송 (너무 많으면 Lambda 메모리/스레드 과부하)
+                max_workers = min(10, len(connection_ids))
+                success_count = 0
+                stale_connections = []
+                
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_conn = {
+                        executor.submit(send_to_connection, conn_id): conn_id 
+                        for conn_id in connection_ids
+                    }
+                    
+                    for future in as_completed(future_to_conn, timeout=10):
+                        conn_id, success, error_type = future.result()
+                        if success:
+                            success_count += 1
+                            logger.debug("Pushed WebSocket notification to %s", conn_id)
+                        elif error_type == 'gone':
+                            stale_connections.append(conn_id)
+                            logger.info("Stale connection %s detected", conn_id)
+                        else:
+                            logger.warning("Failed to push to %s: %s", conn_id, error_type)
+                
+                # Stale 연결 정리 (병렬 배치 삭제)
+                if stale_connections:
+                    with ThreadPoolExecutor(max_workers=min(5, len(stale_connections))) as cleanup_executor:
+                        for conn_id in stale_connections:
+                            cleanup_executor.submit(
+                                lambda cid: connections_table.delete_item(Key={'connectionId': cid}),
+                                conn_id
+                            )
+                    logger.info("Cleaned up %d stale connections", len(stale_connections))
+                
+                push_result_ws['pushed_websocket'] = success_count > 0
+                push_result_ws['success_count'] = success_count
+                push_result_ws['stale_cleaned'] = len(stale_connections)
+                
+                logger.info(
+                    "WebSocket push complete: %d/%d succeeded, %d stale cleaned for owner %s",
+                    success_count, len(connection_ids), len(stale_connections), owner_id
+                )
         else:
             if not owner_id:
                 logger.debug('No ownerId available in SFN input; skipping WebSocket push')
