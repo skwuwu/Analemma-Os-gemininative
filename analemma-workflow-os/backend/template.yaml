@@ -898,6 +898,8 @@ Resources:
           NOTIFICATION_TABLE: !Ref PendingNotificationsTableV3
           CONFIRMATION_TOKENS_TABLE: !Ref ConfirmationTokensTable
           WORKFLOW_BRANCHES_TABLE: !Ref WorkflowBranchesTable
+          SKELETON_S3_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+          ROOT_THREAD_INDEX: root-thread-index
           OPENAI_API_KEY: !Ref OpenAiApiKey
       Policies:
         - DynamoDBReadPolicy:
@@ -910,6 +912,8 @@ Resources:
             TableName: !Ref ConfirmationTokensTable
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkflowBranchesTable
+        - S3ReadPolicy:
+            BucketName: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
       Events:
         # Workflow Preview
         WorkflowPreviewEvent:
@@ -986,10 +990,11 @@ Resources:
       Timeout: 30
       Environment:
         Variables:
-          EXECUTION_TABLE: !Ref ExecutionsTableV3
-          NOTIFICATION_TABLE: !Ref PendingNotificationsTableV3
+          EXECUTIONS_TABLE: !Ref ExecutionsTableV3
+          PENDING_NOTIFICATIONS_TABLE: !Ref PendingNotificationsTableV3
           TASK_EVENTS_TABLE: !Ref TaskEventsTable
           EXECUTION_ID_INDEX: ExecutionIdIndex
+          OWNER_ID_TIMESTAMP_INDEX: OwnerIdTimestampIndex
           WORKFLOW_STATE_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
       Policies:
         - DynamoDBReadPolicy:
