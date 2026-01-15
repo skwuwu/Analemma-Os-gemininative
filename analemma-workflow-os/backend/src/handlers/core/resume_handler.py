@@ -41,22 +41,85 @@ else:
 
 # Use common convert_decimals or define fallback
 if not _USE_COMMON_UTILS:
-    def _convert_decimals(obj):
-        """Recursively convert Decimal objects returned by DynamoDB into native Python types
-
-        - Integers (no fractional part) -> int
-        - Otherwise -> float
-        - Preserve dicts/lists recursively
+    def _convert_decimals(obj, max_depth: int = 100):
         """
+        [v2.1] Stack-based Decimal 변환 (재귀 대신 반복문 사용).
+        
+        깊은 중첩 구조에서도 RecursionLimit에 걸리지 않습니다.
+        엔터프라이즈 급 복잡한 워크플로우에서도 안전합니다.
+        
+        Args:
+            obj: 변환할 객체
+            max_depth: 최대 처리 깊이 (무한 루프 방지)
+        
+        Returns:
+            Decimal이 int/float로 변환된 객체
+        """
+        # 단순 타입은 바로 처리
+        if obj is None or isinstance(obj, (str, int, float, bool)):
+            return obj
         if isinstance(obj, Decimal):
-            if obj == obj.to_integral_value():
-                return int(obj)
-            return float(obj)
+            return int(obj) if obj == obj.to_integral_value() else float(obj)
+        
+        # 복잡한 구조는 스택 기반으로 처리
+        # (object, parent, key_or_index) 형태로 스택에 저장
         if isinstance(obj, dict):
-            return {k: _convert_decimals(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [_convert_decimals(v) for v in obj]
-        return obj
+            result = {}
+            stack = [(obj, result, None, 0)]  # (source, target, key, depth)
+        elif isinstance(obj, list):
+            result = []
+            stack = [(obj, result, None, 0)]
+        else:
+            return obj
+        
+        while stack:
+            source, target, key, depth = stack.pop()
+            
+            if depth > max_depth:
+                logger.warning("_convert_decimals: max_depth %d exceeded, returning as-is", max_depth)
+                continue
+            
+            if isinstance(source, dict):
+                converted_dict = {} if key is None else {}
+                for k, v in source.items():
+                    if v is None or isinstance(v, (str, int, float, bool)):
+                        converted_dict[k] = v
+                    elif isinstance(v, Decimal):
+                        converted_dict[k] = int(v) if v == v.to_integral_value() else float(v)
+                    elif isinstance(v, dict):
+                        nested = {}
+                        converted_dict[k] = nested
+                        stack.append((v, nested, None, depth + 1))
+                    elif isinstance(v, list):
+                        nested = []
+                        converted_dict[k] = nested
+                        stack.append((v, nested, None, depth + 1))
+                    else:
+                        converted_dict[k] = v
+                
+                if key is None:
+                    target.update(converted_dict)
+                else:
+                    target[key] = converted_dict
+                    
+            elif isinstance(source, list):
+                for idx, v in enumerate(source):
+                    if v is None or isinstance(v, (str, int, float, bool)):
+                        target.append(v)
+                    elif isinstance(v, Decimal):
+                        target.append(int(v) if v == v.to_integral_value() else float(v))
+                    elif isinstance(v, dict):
+                        nested = {}
+                        target.append(nested)
+                        stack.append((v, nested, None, depth + 1))
+                    elif isinstance(v, list):
+                        nested = []
+                        target.append(nested)
+                        stack.append((v, nested, None, depth + 1))
+                    else:
+                        target.append(v)
+        
+        return result
 else:
     _convert_decimals = convert_decimals
 
@@ -294,10 +357,40 @@ def lambda_handler(event, context):
 
     except sfn.exceptions.TaskTimedOut:
         logging.error(f"Task가 이미 타임아웃됨: {conversation_id}")
-        return {"statusCode": 410, "headers": JSON_HEADERS, "body": json.dumps({"message": "Task timed out and can no longer be resumed"})}
+        # [v2.1] Actionable Message: 사용자가 취할 수 있는 행동을 안내
+        return {
+            "statusCode": 410, 
+            "headers": JSON_HEADERS, 
+            "body": json.dumps({
+                "message": "대기 시간이 초과되어 워크플로우가 자동 취소되었습니다.",
+                "action": "새 워크플로우를 시작해 주세요.",
+                "error_code": "TASK_TIMED_OUT",
+                "recoverable": False
+            }, ensure_ascii=False)
+        }
     except sfn.exceptions.TaskDoesNotExist:
         logging.error(f"존재하지 않는 Task: {conversation_id}")
-        return {"statusCode": 404, "headers": JSON_HEADERS, "body": json.dumps({"message": "Task does not exist. It may have been resumed or canceled already."})}
+        # [v2.1] Actionable Message: 이미 처리된 경우와 취소된 경우 구분
+        return {
+            "statusCode": 404, 
+            "headers": JSON_HEADERS, 
+            "body": json.dumps({
+                "message": "이 작업은 이미 처리되었거나 취소되었습니다.",
+                "action": "이미 응답하셨다면 결과를 확인해 주세요. 그렇지 않다면 새 워크플로우를 시작해 주세요.",
+                "error_code": "TASK_NOT_FOUND",
+                "recoverable": False
+            }, ensure_ascii=False)
+        }
     except Exception as e:
         logging.error(f"Step Functions 재개 실패: {str(e)}")
-        return {"statusCode": 500, "headers": JSON_HEADERS, "body": json.dumps({"message": "Failed to resume Step Functions execution"})}
+        # [v2.1] Actionable Message: 일시적 오류인지 안내
+        return {
+            "statusCode": 500, 
+            "headers": JSON_HEADERS, 
+            "body": json.dumps({
+                "message": "워크플로우 재개 중 오류가 발생했습니다.",
+                "action": "잠시 후 다시 시도해 주세요. 문제가 지속되면 관리자에게 문의해 주세요.",
+                "error_code": "RESUME_FAILED",
+                "recoverable": True
+            }, ensure_ascii=False)
+        }
