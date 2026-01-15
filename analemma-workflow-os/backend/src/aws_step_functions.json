@@ -175,7 +175,7 @@
           "Next": "HandleInitFailure"
         }
       ],
-      "Next": "CheckExpressWorkflowRequired"
+      "Next": "CheckLargeWorkflow"
     },
     "HandleInitFailure": {
       "Type": "Task",
@@ -206,9 +206,9 @@
       "Error": "InitializationFailed",
       "Cause": "Failed to initialize workflow state data"
     },
-    "CheckExpressWorkflowRequired": {
+    "CheckLargeWorkflow": {
       "Type": "Choice",
-      "Comment": "Check if workflow requires chunking due to complexity (Event History limit mitigation)",
+      "Comment": "Check if workflow is very large (>200 segments) and send monitoring warning",
       "Choices": [
         {
           "Variable": "$.state_data.total_segments",

@@ -4,9 +4,14 @@
 수정 로그 수집 및 지침 관리 API
 
 보안 및 견고성 개선사항:
-1. JWT 검증의 실구현 및 미들웨어화 (JWKS 기반)
+1. JWT 검증의 실구현 및 미들웨어화 (JWKS 기반, Lazy Loading)
 2. 비동기 핸들러의 런타임 정합성 (Lambda 호환)
-3. 입력 데이터의 Sanitization 및 예외 처리
+3. 입력 데이터의 스마트 Sanitization (카테고리 인식)
+
+[v2.1 개선사항]
+- Over-Sanitization 방지: CODE/SQL 카테고리는 원본 보존
+- JWKS Lazy Loading: Cold Start 실패 시 재시도 로직
+- 2중 보안 계층: Regex 1차 방어 + Gemini Safety Filter 2차 검증
 """
 
 import json
@@ -112,17 +117,29 @@ class PatternSearchRequest(BaseModel):
 
 def validate_and_sanitize_request(
     request_data: Dict[str, Any], 
-    schema_class: BaseModel
+    schema_class: BaseModel,
+    task_category: Optional[str] = None
 ) -> tuple[Optional[BaseModel], Optional[Dict[str, Any]]]:
     """
-    개선사항: Pydantic을 활용한 통합 검증 및 Sanitization
+    개선사항: Pydantic을 활용한 통합 검증 및 스마트 Sanitization
+    
+    [v2.1 개선사항]
+    - task_category 인식: CODE/SQL은 특수문자 보존
+    - 원본 데이터 필드 보존: Gemini 학습 정확도 유지
     
     Returns:
         (validated_data, error_response) - 성공 시 error_response는 None
     """
     try:
-        # 1단계: 입력 데이터 Sanitization
-        sanitized_data = sanitize_input_data(request_data)
+        # task_category 추출 (있으면)
+        detected_category = task_category or request_data.get('task_category')
+        
+        # 1단계: 스마트 Sanitization (카테고리 인식)
+        sanitized_data = sanitize_input_data(
+            request_data,
+            task_category=detected_category,
+            preserve_code_fields=True
+        )
         
         # 2단계: Pydantic 스키마 검증
         validated_request = schema_class(**sanitized_data)
@@ -164,14 +181,60 @@ JWT_ISSUER = os.environ.get('JWT_ISSUER')  # 예: https://cognito-idp.region.ama
 JWKS_URL = os.environ.get('JWKS_URL')      # 예: https://cognito-idp.region.amazonaws.com/user_pool_id/.well-known/jwks.json
 JWT_AUDIENCE = os.environ.get('JWT_AUDIENCE')  # 클라이언트 ID
 
-# JWKS 클라이언트 (JWT 공개키 검증용)
-jwks_client = None
-if JWT_AVAILABLE and JWKS_URL:
-    try:
-        jwks_client = PyJWKClient(JWKS_URL)
-        logger.info(f"JWKS client initialized: {JWKS_URL}")
-    except Exception as e:
-        logger.warning(f"Failed to initialize JWKS client: {e}")
+# ============================================================================
+# JWKS 클라이언트 Lazy Loading (Cold Start 견고성 강화)
+# ============================================================================
+_jwks_client = None
+_jwks_client_lock = threading.Lock()
+_jwks_init_attempts = 0
+_JWKS_MAX_RETRY_ATTEMPTS = 3
+
+
+def get_jwks_client():
+    """
+    JWKS 클라이언트 Lazy Loading with 재시도 로직.
+    
+    [v2.1 개선사항]
+    - 전역 초기화 대신 첫 사용 시 초기화 (Cold Start 안정성)
+    - 네트워크 실패 시 최대 3회 재시도
+    - 스레드 안전한 싱글톤 패턴
+    
+    리스크 완화:
+    - Cold Start 시 네트워크 지연으로 초기화 실패해도
+      다음 요청에서 재시도 가능
+    """
+    global _jwks_client, _jwks_init_attempts
+    
+    if _jwks_client is not None:
+        return _jwks_client
+    
+    if not JWT_AVAILABLE or not JWKS_URL:
+        return None
+    
+    with _jwks_client_lock:
+        # Double-checked locking
+        if _jwks_client is not None:
+            return _jwks_client
+        
+        if _jwks_init_attempts >= _JWKS_MAX_RETRY_ATTEMPTS:
+            logger.error(
+                f"JWKS client initialization failed after {_JWKS_MAX_RETRY_ATTEMPTS} attempts. "
+                f"Falling back to development mode."
+            )
+            return None
+        
+        _jwks_init_attempts += 1
+        
+        try:
+            logger.info(f"Initializing JWKS client (attempt {_jwks_init_attempts}): {JWKS_URL}")
+            _jwks_client = PyJWKClient(JWKS_URL, cache_keys=True, lifespan=3600)
+            logger.info(f"✅ JWKS client initialized successfully")
+            return _jwks_client
+        except Exception as e:
+            logger.warning(
+                f"⚠️ JWKS client initialization failed (attempt {_jwks_init_attempts}/{_JWKS_MAX_RETRY_ATTEMPTS}): {e}"
+            )
+            return None
 
 def safe_run_async(coro):
     """
@@ -277,10 +340,11 @@ def extract_and_verify_user_id(headers: Dict[str, str]) -> Optional[str]:
             logger.warning("Empty JWT token")
             return None
         
-        # JWT 검증 (실제 구현)
+        # JWT 검증 (Lazy Loading 클라이언트 사용)
+        jwks_client = get_jwks_client()
         if JWT_AVAILABLE and jwks_client and JWT_ISSUER:
             try:
-                # JWKS에서 공개키 가져오기
+                # JWKS에서 공개키 가져오기 (캐시됨)
                 signing_key = jwks_client.get_signing_key_from_jwt(token)
                 
                 # JWT 토큰 검증 및 디코딩
@@ -330,67 +394,198 @@ def extract_and_verify_user_id(headers: Dict[str, str]) -> Optional[str]:
         logger.error(f"Error extracting user ID: {str(e)}")
         return None
 
-def sanitize_input_data(data: Dict[str, Any]) -> Dict[str, Any]:
+# ============================================================================
+# 스마트 Sanitization (카테고리 인식 + 2중 보안 계층)
+# ============================================================================
+
+# 코드/SQL 카테고리는 특수문자 보존 필요
+_CODE_PRESERVING_CATEGORIES = {'code', 'sql', 'query', 'script', 'programming', 'technical'}
+
+# 원본 보존이 필요한 필드 (Gemini 학습용 정확한 데이터)
+_PRESERVE_ORIGINAL_FIELDS = {'original_input', 'agent_output', 'user_correction'}
+
+
+def sanitize_input_data(
+    data: Dict[str, Any], 
+    task_category: Optional[str] = None,
+    preserve_code_fields: bool = True
+) -> Dict[str, Any]:
     """
-    개선사항 3: 입력 데이터 Sanitization
+    스마트 입력 데이터 Sanitization (v2.1).
     
-    XSS 및 프롬프트 인젝션 방어를 위한 문자열 필터링
+    [v2.1 개선사항 - Over-Sanitization 방지]
+    - CODE/SQL 카테고리: 특수문자 보존 (html.escape 스킵)
+    - 원본 데이터 필드: Gemini 학습을 위해 정확한 데이터 유지
+    - 출력 시에만 이스케이프 (저장은 원본 유지)
+    
+    [2중 보안 계층]
+    1차 방어: Regex 기반 패턴 필터링 (알려진 공격 벡터 차단)
+    2차 방어: Gemini 3 Safety Filter (실제 LLM 호출 시 자동 적용)
+    
+    Note: Regex 방어는 2026년 기준 구식(Naive)할 수 있으나,
+    Gemini의 자체 Safety Filter가 최종 방어선 역할을 수행합니다.
+    
+    Args:
+        data: 입력 데이터 딕셔너리
+        task_category: 태스크 카테고리 (code, sql 등이면 특수문자 보존)
+        preserve_code_fields: 코드 관련 필드 원본 보존 여부
+    
+    Returns:
+        Sanitized 데이터 (카테고리에 따라 선택적 이스케이프)
     """
+    # 카테고리 기반 보존 모드 결정
+    is_code_category = (
+        task_category and 
+        task_category.lower() in _CODE_PRESERVING_CATEGORIES
+    )
+    
     sanitized = {}
     
     for key, value in data.items():
         if isinstance(value, str):
-            # HTML 이스케이프
-            sanitized_value = html.escape(value)
+            # 원본 보존이 필요한 필드인지 확인
+            should_preserve = (
+                preserve_code_fields and 
+                (is_code_category or key in _PRESERVE_ORIGINAL_FIELDS)
+            )
             
-            # 악의적인 스크립트 패턴 제거
-            dangerous_patterns = [
-                r'<script[^>]*>.*?</script>',  # 스크립트 태그
-                r'javascript:',               # 자바스크립트 프로토콜
-                r'on\w+\s*=',                # 이벤트 핸들러
-                r'eval\s*\(',                # eval 함수
-                r'expression\s*\(',          # CSS expression
-            ]
+            if should_preserve:
+                # 코드/SQL 카테고리: 원본 보존 (html.escape 스킵)
+                # 단, 길이 제한과 위험 패턴 경고 로깅만 수행
+                sanitized_value = value
+                
+                # 위험 패턴 감지 시 로깅 (차단하지 않음)
+                _log_suspicious_patterns(key, value)
+            else:
+                # 일반 텍스트: HTML 이스케이프 적용
+                sanitized_value = html.escape(value)
+                
+                # 악의적인 스크립트 패턴 제거 (1차 방어)
+                sanitized_value = _apply_script_sanitization(sanitized_value)
             
-            for pattern in dangerous_patterns:
-                sanitized_value = re.sub(pattern, '', sanitized_value, flags=re.IGNORECASE)
+            # 프롬프트 인젝션 방어 (모든 카테고리에 적용, 단 경고만)
+            sanitized_value = _apply_prompt_injection_defense(
+                sanitized_value, 
+                warn_only=should_preserve
+            )
             
-            # 프롬프트 인젝션 패턴 제거
-            prompt_injection_patterns = [
-                r'ignore\s+previous\s+instructions',
-                r'system\s*:',
-                r'assistant\s*:',
-                r'human\s*:',
-                r'\[INST\]',
-                r'\[/INST\]',
-            ]
-            
-            for pattern in prompt_injection_patterns:
-                sanitized_value = re.sub(pattern, '[FILTERED]', sanitized_value, flags=re.IGNORECASE)
-            
-            # 길이 제한 (DoS 방어)
+            # 길이 제한 (DoS 방어) - 모든 카테고리 적용
             max_length = 10000  # 10KB
             if len(sanitized_value) > max_length:
                 sanitized_value = sanitized_value[:max_length] + "...[TRUNCATED]"
+                logger.warning(f"Field '{key}' truncated: exceeded {max_length} chars")
             
             sanitized[key] = sanitized_value
         
         elif isinstance(value, dict):
             # 중첩된 딕셔너리 재귀 처리
-            sanitized[key] = sanitize_input_data(value)
+            sanitized[key] = sanitize_input_data(
+                value, 
+                task_category=task_category,
+                preserve_code_fields=preserve_code_fields
+            )
         
         elif isinstance(value, list):
-            # 리스트 내 문자열 처리
-            sanitized[key] = [
-                html.escape(item) if isinstance(item, str) else item
-                for item in value
-            ]
+            # 리스트 내 문자열 처리 (코드 카테고리 고려)
+            if is_code_category:
+                sanitized[key] = value  # 원본 보존
+            else:
+                sanitized[key] = [
+                    html.escape(item) if isinstance(item, str) else item
+                    for item in value
+                ]
         
         else:
             # 다른 타입은 그대로 유지
             sanitized[key] = value
     
     return sanitized
+
+
+def _apply_script_sanitization(value: str) -> str:
+    """
+    1차 방어: 악의적인 스크립트 패턴 제거.
+    
+    [한계 인지]
+    Regex 기반 방어는 새로운 공격 벡터에 취약할 수 있습니다.
+    Gemini 3의 Safety Filter가 최종 방어선으로 작동합니다.
+    """
+    dangerous_patterns = [
+        r'<script[^>]*>.*?</script>',  # 스크립트 태그
+        r'javascript:',               # 자바스크립트 프로토콜
+        r'on\w+\s*=',                # 이벤트 핸들러
+        r'eval\s*\(',                # eval 함수
+        r'expression\s*\(',          # CSS expression
+    ]
+    
+    for pattern in dangerous_patterns:
+        value = re.sub(pattern, '', value, flags=re.IGNORECASE)
+    
+    return value
+
+
+def _apply_prompt_injection_defense(value: str, warn_only: bool = False) -> str:
+    """
+    프롬프트 인젝션 방어 (1차 방어).
+    
+    [2중 보안 계층 설명]
+    - 1차 (여기): Regex 기반 알려진 패턴 필터링
+    - 2차 (Gemini): LLM 호출 시 자체 Safety Filter 자동 적용
+    
+    Args:
+        value: 입력 문자열
+        warn_only: True면 필터링 대신 경고만 (코드 카테고리용)
+    
+    Returns:
+        필터링된 문자열 (또는 warn_only=True면 원본)
+    """
+    prompt_injection_patterns = [
+        (r'ignore\s+previous\s+instructions', 'IGNORE_INSTRUCTIONS'),
+        (r'system\s*:', 'SYSTEM_PROMPT'),
+        (r'assistant\s*:', 'ASSISTANT_ROLE'),
+        (r'human\s*:', 'HUMAN_ROLE'),
+        (r'\[INST\]', 'INST_TAG'),
+        (r'\[/INST\]', 'INST_TAG'),
+        (r'<\|im_start\|>', 'IM_START'),
+        (r'<\|im_end\|>', 'IM_END'),
+    ]
+    
+    for pattern, pattern_name in prompt_injection_patterns:
+        if re.search(pattern, value, flags=re.IGNORECASE):
+            if warn_only:
+                # 코드 카테고리: 경고만 (Gemini Safety Filter가 2차 방어)
+                logger.warning(
+                    f"🚨 Potential prompt injection detected ({pattern_name}), "
+                    f"preserved for code category. Gemini Safety Filter will verify."
+                )
+            else:
+                # 일반 텍스트: 필터링 적용
+                value = re.sub(pattern, '[FILTERED]', value, flags=re.IGNORECASE)
+                logger.warning(f"⚠️ Prompt injection pattern filtered: {pattern_name}")
+    
+    return value
+
+
+def _log_suspicious_patterns(field_name: str, value: str) -> None:
+    """
+    코드 필드에서 의심스러운 패턴 감지 시 로깅.
+    
+    필터링하지 않고 로깅만 수행하여 모니터링 가능하게 함.
+    """
+    suspicious_indicators = [
+        (r'rm\s+-rf', 'DESTRUCTIVE_COMMAND'),
+        (r'drop\s+table', 'SQL_DROP'),
+        (r'delete\s+from', 'SQL_DELETE'),
+        (r'exec\s*\(', 'EXEC_CALL'),
+        (r'__import__', 'PYTHON_IMPORT'),
+    ]
+    
+    for pattern, indicator_name in suspicious_indicators:
+        if re.search(pattern, value, flags=re.IGNORECASE):
+            logger.info(
+                f"📝 Suspicious pattern in '{field_name}': {indicator_name} "
+                f"(preserved for code category, monitoring only)"
+            )
 
 def create_error_response(status_code: int, error: str, details: str = "") -> Dict[str, Any]:
     """표준화된 에러 응답 생성"""

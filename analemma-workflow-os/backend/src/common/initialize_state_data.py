@@ -451,7 +451,6 @@ def lambda_handler(event, context):
         # Distributed Mode Flag
         "distributed_mode": is_distributed_mode,
         "max_concurrency": max_concurrency,
-        "EXPRESS_WORKFLOW_ENABLED": False,
         
         # [Fix] MOCK_MODE 전달 - 시뮬레이터 E2E 테스트용 (HITP 자동 resume 등)
         "MOCK_MODE": mock_mode,
