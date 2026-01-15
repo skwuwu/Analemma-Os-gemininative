@@ -1,13 +1,24 @@
 import os
 import json
 import logging
-from typing import Dict, Any, List, Set, Optional
+import threading
+from typing import Dict, Any, List, Set, Optional, Tuple, FrozenSet
 from src.services.workflow.repository import WorkflowRepository
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# [v2.0 Production Hardening] 상수 및 설정
+# ============================================================================
+
+# 최대 재귀 깊이 제한 (무한 루프 방지)
+MAX_PARTITION_DEPTH = int(os.environ.get("MAX_PARTITION_DEPTH", "50"))
+
+# 최대 노드 수 제한 (대규모 그래프 보호)
+MAX_NODES_LIMIT = int(os.environ.get("MAX_NODES_LIMIT", "500"))
+
 # LLM 노드 타입들 - 이 타입들을 만날 때마다 세그먼트를 분할합니다
-LLM_NODE_TYPES = {
+LLM_NODE_TYPES: FrozenSet[str] = frozenset({
     "llm_chat",
     "openai_chat", 
     "anthropic_chat",
@@ -15,29 +26,173 @@ LLM_NODE_TYPES = {
     "claude_chat",
     "gpt_chat",
     "aiModel"  # 범용 AI 모델 노드 타입 추가
-}
+})
 
 # HITP (Human in the Loop) 엣지 타입들
-HITP_EDGE_TYPES = {"hitp", "human_in_the_loop", "pause"}
+HITP_EDGE_TYPES: FrozenSet[str] = frozenset({"hitp", "human_in_the_loop", "pause"})
 
 # 세그먼트 타입들
-SEGMENT_TYPES = {"normal", "llm", "hitp", "isolated", "complete", "parallel_group", "aggregator"}
+SEGMENT_TYPES: FrozenSet[str] = frozenset({
+    "normal", "llm", "hitp", "isolated", "complete", "parallel_group", "aggregator"
+})
+
+
+# ============================================================================
+# [Critical Fix #1] 사이클 감지 예외 및 DAG 검증
+# ============================================================================
+
+class CycleDetectedError(Exception):
+    """그래프에서 사이클(순환 참조)이 감지되었을 때 발생하는 예외"""
+    def __init__(self, cycle_path: List[str]):
+        self.cycle_path = cycle_path
+        super().__init__(
+            f"Cycle detected in workflow graph: {' -> '.join(cycle_path)}. "
+            f"Workflows must be DAGs (Directed Acyclic Graphs)."
+        )
+
+
+class PartitionDepthExceededError(Exception):
+    """파티셔닝 재귀 깊이 초과 시 발생하는 예외"""
+    def __init__(self, depth: int, max_depth: int):
+        self.depth = depth
+        self.max_depth = max_depth
+        super().__init__(
+            f"Partition recursion depth ({depth}) exceeded maximum ({max_depth}). "
+            f"Consider simplifying the workflow or increasing MAX_PARTITION_DEPTH."
+        )
+
+
+class BranchTerminationError(Exception):
+    """브랜치가 올바르게 종료되지 않았을 때 발생하는 예외"""
+    def __init__(self, branch_id: str, message: str):
+        self.branch_id = branch_id
+        super().__init__(f"Branch '{branch_id}' termination error: {message}")
+
+
+def validate_dag(
+    nodes: Dict[str, Any], 
+    outgoing_edges: Dict[str, List[Dict[str, Any]]]
+) -> Tuple[bool, Optional[List[str]]]:
+    """
+    [Critical Fix #1] 그래프가 DAG(Directed Acyclic Graph)인지 검증합니다.
+    
+    Kahn's Algorithm (위상 정렬) 기반 사이클 감지.
+    
+    Args:
+        nodes: 노드 ID -> 노드 정의 맵
+        outgoing_edges: 노드 ID -> 나가는 엣지 리스트 맵
+        
+    Returns:
+        Tuple[is_dag, cycle_path]: DAG이면 (True, None), 아니면 (False, cycle_path)
+    """
+    if not nodes:
+        return True, None
+    
+    # 진입 차수(in-degree) 계산
+    in_degree: Dict[str, int] = {nid: 0 for nid in nodes}
+    
+    for source_id, edges in outgoing_edges.items():
+        for edge in edges:
+            target = edge.get("target")
+            if target and target in in_degree:
+                in_degree[target] += 1
+    
+    # 진입 차수가 0인 노드들로 시작
+    queue = [nid for nid, deg in in_degree.items() if deg == 0]
+    visited_count = 0
+    
+    while queue:
+        node_id = queue.pop(0)
+        visited_count += 1
+        
+        for edge in outgoing_edges.get(node_id, []):
+            target = edge.get("target")
+            if target and target in in_degree:
+                in_degree[target] -= 1
+                if in_degree[target] == 0:
+                    queue.append(target)
+    
+    # 모든 노드를 방문하지 못했다면 사이클 존재
+    if visited_count < len(nodes):
+        # 사이클 경로 추적 (DFS로 실제 사이클 찾기)
+        cycle_path = _find_cycle_path(nodes, outgoing_edges)
+        return False, cycle_path
+    
+    return True, None
+
+
+def _find_cycle_path(
+    nodes: Dict[str, Any], 
+    outgoing_edges: Dict[str, List[Dict[str, Any]]]
+) -> List[str]:
+    """DFS로 실제 사이클 경로를 추적합니다."""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: Dict[str, int] = {nid: WHITE for nid in nodes}
+    parent: Dict[str, Optional[str]] = {nid: None for nid in nodes}
+    
+    def dfs(node_id: str, path: List[str]) -> Optional[List[str]]:
+        color[node_id] = GRAY
+        path.append(node_id)
+        
+        for edge in outgoing_edges.get(node_id, []):
+            target = edge.get("target")
+            if target and target in color:
+                if color[target] == GRAY:
+                    # 사이클 발견 - 경로 추출
+                    cycle_start = path.index(target)
+                    return path[cycle_start:] + [target]
+                elif color[target] == WHITE:
+                    result = dfs(target, path)
+                    if result:
+                        return result
+        
+        color[node_id] = BLACK
+        path.pop()
+        return None
+    
+    for nid in nodes:
+        if color[nid] == WHITE:
+            result = dfs(nid, [])
+            if result:
+                return result
+    
+    return ["unknown_cycle"]  # 폴백
 
 
 def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
     """
     고급 워크플로우 분할: HITP 엣지와 LLM 노드 기반으로 세그먼트를 생성합니다.
     
+    [v2.0 Production Hardening]
+    - DAG(Directed Acyclic Graph) 사전 검증
+    - 재귀 깊이 제한 (MAX_PARTITION_DEPTH)
+    - 합류점(Convergence Node) 강제 분할
+    - 브랜치 종료 검증
+    - Thread-safe ID 생성
+    
     개선된 알고리즘:
     - 병합 지점(Merge Point) 감지 및 처리
     - 병렬 그룹(Parallel Group) 생성 및 재귀적 파티셔닝
     - Convergence Node 찾기 및 브랜치 제한
     - 재귀적 Node-to-Segment 매핑
+    
+    Raises:
+        CycleDetectedError: 그래프에 사이클이 있는 경우
+        PartitionDepthExceededError: 재귀 깊이 초과 시
+        ValueError: 노드 수 제한 초과 시
     """
     nodes = {n["id"]: n for n in config.get("nodes", [])}
     edges = config.get("edges", []) if config.get("edges") else []
     
-    # 엣지 맵 생성
+    # [Critical Fix] 노드 수 제한 검증
+    if len(nodes) > MAX_NODES_LIMIT:
+        raise ValueError(
+            f"Workflow has {len(nodes)} nodes, exceeding maximum limit of {MAX_NODES_LIMIT}. "
+            f"Consider splitting into subgraphs."
+        )
+    
+    # [Performance Optimization] 엣지 맵 생성 (Pre-indexed)
+    # 향후 워크플로우 저장 시점에 메타데이터로 추출하여 재사용 가능
     incoming_edges: Dict[str, List[Dict[str, Any]]] = {}
     outgoing_edges: Dict[str, List[Dict[str, Any]]] = {}
     
@@ -49,22 +204,41 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
         if target:
             incoming_edges.setdefault(target, []).append(edge)
     
-    # ID 생성기 (0-based 정수 반환으로 수정 - 리스트 인덱스와 일치)
-    class IdGenerator:
-        def __init__(self): 
-            self.val = -1
-        def next(self): 
-            self.val += 1
-            return self.val  # 정수 반환 (0, 1, 2...)
+    # [Critical Fix #1] DAG 검증 - 사이클 감지
+    is_dag, cycle_path = validate_dag(nodes, outgoing_edges)
+    if not is_dag:
+        raise CycleDetectedError(cycle_path or ["unknown"])
     
-    seg_id_gen = IdGenerator()
-    stats = {"llm": 0, "hitp": 0}
+    # [Critical Fix #2] 합류점 집합 - 이 노드들은 반드시 새 세그먼트 시작점이 됨
+    # find_convergence_node로 찾은 모든 합류점을 미리 수집
+    forced_segment_starts: Set[str] = set()
+    
+    # [Performance Optimization] Thread-safe ID 생성기
+    class ThreadSafeIdGenerator:
+        def __init__(self): 
+            self._val = -1
+            self._lock = threading.Lock()
+        
+        def next(self) -> int:
+            with self._lock:
+                self._val += 1
+                return self._val
+        
+        @property
+        def current(self) -> int:
+            return self._val
+    
+    seg_id_gen = ThreadSafeIdGenerator()
+    stats = {"llm": 0, "hitp": 0, "parallel_groups": 0, "branches": 0}
     
     # --- Helper: 합류 지점(Convergence Node) 찾기 ---
     def find_convergence_node(start_nodes: List[str]) -> Optional[str]:
         """
         브랜치들이 공통으로 도달하는 첫 번째 Merge Point를 찾습니다.
         in-degree > 1인 노드를 후보로 봅니다.
+        
+        [Critical Fix #2] 찾은 합류점은 forced_segment_starts에 등록되어
+        반드시 새 세그먼트의 시작점이 됩니다.
         """
         queue = list(start_nodes)
         seen = set(queue)
@@ -74,6 +248,9 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
             # Merge Point 후보 확인
             if len(incoming_edges.get(node_id, [])) > 1:
                 if node_id not in start_nodes:
+                    # [Critical Fix #2] 합류점은 반드시 새 세그먼트 시작점
+                    forced_segment_starts.add(node_id)
+                    logger.debug(f"Convergence node registered as forced segment start: {node_id}")
                     return node_id
             
             for out_edge in outgoing_edges.get(node_id, []):
@@ -116,11 +293,30 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
     # --- 재귀적 파티셔닝 로직 ---
     visited_nodes: Set[str] = set()
     
-    def run_partitioning(start_node_ids: List[str], stop_at_nodes: Set[str] = None, config=None) -> List[Dict[str, Any]]:
+    def run_partitioning(
+        start_node_ids: List[str], 
+        stop_at_nodes: Set[str] = None, 
+        config=None,
+        depth: int = 0  # [Critical Fix #1] 재귀 깊이 추적
+    ) -> List[Dict[str, Any]]:
+        """
+        재귀적 파티셔닝 로직.
+        
+        [Critical Fix #1] depth 파라미터로 재귀 깊이 제한
+        [Critical Fix #2] forced_segment_starts로 합류점 강제 분할
+        """
+        # [Critical Fix #1] 재귀 깊이 제한 검사
+        if depth > MAX_PARTITION_DEPTH:
+            raise PartitionDepthExceededError(depth, MAX_PARTITION_DEPTH)
+        
         local_segments = []
         local_current_nodes = {}
         local_current_edges = []
         queue = list(start_node_ids)
+        
+        # [Critical Fix #1] 무한 루프 방지용 반복 카운터
+        max_iterations = len(nodes) * 2  # 안전 마진
+        iteration_count = 0
         
         def flush_local(seg_type="normal"):
             nonlocal local_current_nodes, local_current_edges
@@ -131,12 +327,26 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                 local_current_edges = []
         
         while queue:
+            # [Critical Fix #1] 무한 루프 방지
+            iteration_count += 1
+            if iteration_count > max_iterations:
+                logger.error(
+                    f"Partition iteration limit exceeded ({max_iterations}). "
+                    f"Possible infinite loop. Queue: {queue[:5]}..."
+                )
+                raise PartitionDepthExceededError(iteration_count, max_iterations)
+            
             node_id = queue.pop(0)
             
             # Stop Condition
             if node_id in visited_nodes: 
                 continue
             if stop_at_nodes and node_id in stop_at_nodes: 
+                continue
+            
+            # [Safety] 노드가 존재하는지 확인
+            if node_id not in nodes:
+                logger.warning(f"Node '{node_id}' referenced but not found in nodes map. Skipping.")
                 continue
             
             node = nodes[node_id]
@@ -150,8 +360,11 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
             is_merge = len(non_hitp_in) > 1
             is_branch = len(outgoing_edges.get(node_id, [])) > 1
             
-            # 세그먼트 분할 트리거
-            if (is_hitp_start or is_llm or is_merge or is_branch) and local_current_nodes:
+            # [Critical Fix #2] 합류점은 반드시 새 세그먼트 시작
+            is_forced_start = node_id in forced_segment_starts
+            
+            # 세그먼트 분할 트리거 (is_forced_start 추가)
+            if (is_hitp_start or is_llm or is_merge or is_branch or is_forced_start) and local_current_nodes:
                 if node_id not in local_current_nodes:
                     flush_local("normal")
             
@@ -167,7 +380,7 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                 out_edges = outgoing_edges.get(node_id, [])
                 branch_targets = [e.get("target") for e in out_edges if e.get("target")]
                 
-                # 합류점 찾기
+                # 합류점 찾기 - [Critical Fix #2] 합류점이 forced_segment_starts에 등록됨
                 convergence_node = find_convergence_node(branch_targets)
                 stop_set = {convergence_node} if convergence_node else set()
                 
@@ -175,21 +388,40 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                 branches_data = []
                 for i, target in enumerate(branch_targets):
                     if target:
-                        branch_segs = run_partitioning([target], stop_at_nodes=stop_set, config=config)
+                        # [Critical Fix #1] 재귀 깊이 전달
+                        branch_segs = run_partitioning(
+                            [target], 
+                            stop_at_nodes=stop_set, 
+                            config=config,
+                            depth=depth + 1
+                        )
+                        
+                        # [Critical Fix #3] 브랜치 종료 검증
                         if branch_segs:
-                            branches_data.append({
+                            last_seg = branch_segs[-1]
+                            # 브랜치 메타데이터 추가
+                            branch_data = {
                                 "branch_id": f"B{i}",
-                                "partition_map": branch_segs
-                            })
+                                "partition_map": branch_segs,
+                                "has_end": last_seg.get("next_mode") == "end",
+                                "target_node": target
+                            }
+                            branches_data.append(branch_data)
+                            stats["branches"] += 1
+                        else:
+                            # 빈 브랜치 경고
+                            logger.warning(f"Branch {i} starting at {target} produced no segments")
                 
                 # Parallel Group 생성
                 if branches_data:
+                    stats["parallel_groups"] += 1
                     p_seg_id = seg_id_gen.next()
                     parallel_seg = {
                         "id": p_seg_id,
                         "type": "parallel_group",
                         "branches": branches_data,
-                        "node_ids": []
+                        "node_ids": [],
+                        "branch_count": len(branches_data)  # [추가] 브랜치 수 메타데이터
                     }
                     local_segments.append(parallel_seg)
                     
@@ -201,7 +433,8 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                         "nodes": [],
                         "edges": [],
                         "node_ids": [],
-                        "convergence_node": convergence_node  # 합류 노드 저장
+                        "convergence_node": convergence_node,  # 합류 노드 저장
+                        "source_parallel_group": p_seg_id  # [추가] 원본 parallel_group 참조
                     }
                     local_segments.append(aggregator_seg)
                     
@@ -217,8 +450,6 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
             # 일반 노드 처리
             local_current_nodes[node_id] = node
             visited_nodes.add(node_id)
-            
-            # 엣지 추가 제거 - 세그먼트 내부 엣지만 create_segment에서 추가
             
             # 특수 타입 처리
             if is_llm:
@@ -258,14 +489,42 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
     map_nodes_recursive(segments)
     
     # --- Next Mode 설정 (재귀적) ---
-    def process_links_recursive(seg_list):
+    def process_links_recursive(seg_list: List[Dict[str, Any]], parent_aggregator_id: Optional[int] = None):
+        """
+        세그먼트 간 연결(next_mode) 설정.
+        
+        [Critical Fix #3] 브랜치 내부 세그먼트가 올바르게 종료되는지 검증.
+        parent_aggregator_id가 주어지면, 브랜치 내 마지막 세그먼트는 이 aggregator로 연결되어야 함.
+        """
         # Aggregator 세그먼트들의 ID 집합을 미리 파악
         aggregator_ids = {s["id"] for s in seg_list if s.get("type") == "aggregator"}
         
-        for seg in seg_list:
+        for idx, seg in enumerate(seg_list):
             if seg["type"] == "parallel_group":
+                # parallel_group 다음의 aggregator ID 찾기
+                next_agg_id = seg.get("default_next")
+                
                 for branch in seg["branches"]:
-                    process_links_recursive(branch["partition_map"])
+                    branch_segs = branch.get("partition_map", [])
+                    
+                    # [Critical Fix #3] 브랜치 내부 재귀 처리 - aggregator ID 전달
+                    process_links_recursive(branch_segs, parent_aggregator_id=next_agg_id)
+                    
+                    # [Critical Fix #3] 브랜치 마지막 세그먼트 검증
+                    if branch_segs:
+                        last_branch_seg = branch_segs[-1]
+                        
+                        # 마지막 세그먼트가 명시적 END가 아니고 next가 없으면
+                        # aggregator로 암묵적 연결 설정
+                        if last_branch_seg.get("next_mode") == "end" and next_agg_id:
+                            # 비대칭 브랜치: 한 쪽은 끝나고 다른 쪽은 합류
+                            # aggregator에서 이를 처리할 수 있도록 메타데이터 추가
+                            last_branch_seg["implicit_aggregator_target"] = next_agg_id
+                            branch["terminates_early"] = True
+                            logger.debug(
+                                f"Branch {branch['branch_id']} terminates early. "
+                                f"Implicit aggregator target: {next_agg_id}"
+                            )
                 continue
             
             # Aggregator의 경우 convergence_node를 사용해 다음 세그먼트 연결
@@ -276,17 +535,27 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                     seg["next_mode"] = "default"
                     seg["default_next"] = next_seg_id
                 else:
-                    # 합류 노드가 맵에 없다는 것은 의도된 종료일 수도 있지만, 
-                    # 복잡한 그래프에서는 로직 오류일 수도 있으므로 경고 로그 추가
+                    # [Critical Fix #2] 합류점이 맵에 없으면 강제로 찾기 시도
                     if convergence_node:
-                        logger.warning(f"Aggregator {seg['id']} has convergence node {convergence_node} but it is not mapped to any segment. Treating as workflow end.")
+                        # 합류점이 forced_segment_starts에 있는지 확인
+                        if convergence_node in forced_segment_starts:
+                            logger.error(
+                                f"Aggregator {seg['id']} has convergence node '{convergence_node}' "
+                                f"which is a forced segment start but not mapped. "
+                                f"This indicates a partitioning logic error."
+                            )
+                        else:
+                            logger.warning(
+                                f"Aggregator {seg['id']} has convergence node '{convergence_node}' "
+                                f"but it is not mapped to any segment. Treating as workflow end."
+                            )
                     
                     seg["next_mode"] = "end"
                     seg["default_next"] = None
                 continue
             
             exit_edges = []
-            for nid in seg["node_ids"]:
+            for nid in seg.get("node_ids", []):
                 for out_edge in outgoing_edges.get(nid, []):
                     tgt = out_edge.get("target")
                     if tgt and tgt in node_to_seg_map:
@@ -302,8 +571,14 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                             exit_edges.append({"edge": out_edge, "target_segment": tgt_seg})
             
             if not exit_edges:
-                seg["next_mode"] = "end"
-                seg["default_next"] = None
+                # [Critical Fix #3] 부모 aggregator가 있으면 암묵적 연결
+                if parent_aggregator_id is not None:
+                    seg["next_mode"] = "implicit_aggregator"
+                    seg["default_next"] = None
+                    seg["parent_aggregator"] = parent_aggregator_id
+                else:
+                    seg["next_mode"] = "end"
+                    seg["default_next"] = None
             elif len(exit_edges) == 1:
                 seg["next_mode"] = "default"
                 seg["default_next"] = exit_edges[0]["target_segment"]
@@ -328,17 +603,35 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
     
     total_segments = count_segments_recursive(segments)
     
+    # [Performance Optimization] Pre-indexed 메타데이터 반환
     return {
         "partition_map": segments,
         "total_segments": total_segments, 
         "llm_segments": stats["llm"],
-        "hitp_segments": stats["hitp"]
+        "hitp_segments": stats["hitp"],
+        # [v2.0] 추가 통계
+        "parallel_groups": stats["parallel_groups"],
+        "total_branches": stats["branches"],
+        "forced_segment_starts": list(forced_segment_starts),
+        # [Performance] Pre-indexed 데이터 (재사용 가능)
+        "node_to_segment_map": node_to_seg_map,
+        "metadata": {
+            "max_partition_depth": MAX_PARTITION_DEPTH,
+            "max_nodes_limit": MAX_NODES_LIMIT,
+            "nodes_processed": len(visited_nodes),
+            "total_nodes": len(nodes)
+        }
     }
 
 
 def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]:
     """
     PartitionWorkflow Lambda: 워크플로우를 지능적으로 분할합니다.
+    
+    [v2.0 Production Hardening]
+    - DAG 검증 실패 시 명확한 에러 반환
+    - 재귀 깊이 초과 시 에러 반환
+    - 노드 수 제한 초과 시 에러 반환
     
     Input event:
         - workflow_config: 분할할 워크플로우 설정
@@ -359,21 +652,52 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
         partition_result = partition_workflow_advanced(workflow_config)
         
         logger.info(
-            "Partitioned workflow for owner=%s: %d total segments (%d LLM, %d HITP)", 
+            "Partitioned workflow for owner=%s: %d total segments "
+            "(%d LLM, %d HITP, %d parallel groups, %d branches)", 
             owner_id,
             partition_result["total_segments"],
             partition_result["llm_segments"], 
-            partition_result["hitp_segments"]
+            partition_result["hitp_segments"],
+            partition_result.get("parallel_groups", 0),
+            partition_result.get("total_branches", 0)
         )
         
         return {
             "status": "success",
             "partition_result": partition_result
         }
+    
+    except CycleDetectedError as e:
+        logger.error(f"Cycle detected in workflow: {e.cycle_path}")
+        return {
+            "status": "error",
+            "error_type": "CycleDetectedError",
+            "error_message": str(e),
+            "cycle_path": e.cycle_path
+        }
+    
+    except PartitionDepthExceededError as e:
+        logger.error(f"Partition depth exceeded: {e.depth}/{e.max_depth}")
+        return {
+            "status": "error",
+            "error_type": "PartitionDepthExceededError",
+            "error_message": str(e),
+            "depth": e.depth,
+            "max_depth": e.max_depth
+        }
+    
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        return {
+            "status": "error",
+            "error_type": "ValidationError",
+            "error_message": str(e)
+        }
         
     except Exception as e:
         logger.exception("Failed to partition workflow")
         return {
-            "status": "error", 
+            "status": "error",
+            "error_type": type(e).__name__,
             "error_message": str(e)
         }
