@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 EXEC_TABLE = os.environ.get('EXECUTIONS_TABLE')
-OWNER_INDEX = os.environ.get('OWNER_INDEX')
+# 🚨 [Critical Fix] ExecutionsTableV3는 OwnerIdStartDateIndex GSI 사용
+OWNER_INDEX = os.environ.get('OWNER_INDEX', os.environ.get('OWNER_ID_START_DATE_INDEX', 'OwnerIdStartDateIndex'))
 
 if EXEC_TABLE:
     table = dynamodb.Table(EXEC_TABLE)

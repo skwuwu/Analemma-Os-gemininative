@@ -23,10 +23,11 @@ stepfunctions = boto3.client('stepfunctions')
 
 # 환경 변수
 EXEC_TABLE = os.environ.get('EXECUTIONS_TABLE')
-OWNER_INDEX = os.environ.get('OWNER_INDEX')
+# 🚨 [Critical Fix] ExecutionsTableV3는 OwnerIdStartDateIndex GSI 사용
+OWNER_INDEX = os.environ.get('OWNER_INDEX', os.environ.get('OWNER_ID_START_DATE_INDEX', 'OwnerIdStartDateIndex'))
 WEBSOCKET_ENDPOINT_URL = os.environ.get('WEBSOCKET_ENDPOINT_URL')
 WEBSOCKET_CONNECTIONS_TABLE = os.environ.get('WEBSOCKET_CONNECTIONS_TABLE')
-WEBSOCKET_OWNER_ID_GSI = os.environ.get('WEBSOCKET_OWNER_ID_GSI')
+WEBSOCKET_OWNER_ID_GSI = os.environ.get('WEBSOCKET_OWNER_ID_GSI', 'OwnerIdConnectionIndex')
 
 # 테이블 리소스 초기화
 table = dynamodb.Table(EXEC_TABLE) if EXEC_TABLE else None

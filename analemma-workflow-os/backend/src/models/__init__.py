@@ -4,21 +4,21 @@ Models package for backend application.
 Contains Pydantic models for checkpoints, plan briefing, task context and related features.
 """
 
-from .checkpoint import (
+from src.models.checkpoint import (
     CheckpointStatus,
     ExecutionCheckpoint,
     RollbackRequest,
     BranchInfo,
 )
 
-from .plan_briefing import (
+from src.models.plan_briefing import (
     RiskLevel,
     PlanStep,
     DraftResult,
     PlanBriefing,
 )
 
-from .task_context import (
+from src.models.task_context import (
     TaskStatus,
     ArtifactType,
     ArtifactPreview,

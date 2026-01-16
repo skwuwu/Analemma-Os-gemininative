@@ -12,8 +12,8 @@ from decimal import Decimal
 from typing import List, Optional, Any, Union
 from botocore.exceptions import ClientError
 
-from .aws_clients import get_dynamodb_resource
-from .json_utils import DecimalEncoder  # 통합된 DecimalEncoder 사용
+from src.common.aws_clients import get_dynamodb_resource
+from src.common.json_utils import DecimalEncoder  # 통합된 DecimalEncoder 사용
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

@@ -11,8 +11,8 @@ import os
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from botocore.exceptions import ClientError
-from ..models.correction_log import CorrectionLog, TaskCategory, CorrectionType
-from .metadata_extractor import MetadataExtractor
+from src.models.correction_log import CorrectionLog, TaskCategory, CorrectionType
+from src.services.metadata_extractor import MetadataExtractor
 from src.common.constants import DynamoDBConfig
 
 logger = logging.getLogger(__name__)

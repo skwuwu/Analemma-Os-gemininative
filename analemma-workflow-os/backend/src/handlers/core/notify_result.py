@@ -530,12 +530,16 @@ def lambda_handler(event, context):
                     pending_table = dynamodb.Table(pending_table_name)
 
                     # execution_id로 pending 알림 조회 (ExecutionIdIndex GSI 사용)
+                    # 🚨 [Critical Fix] GSI 스키마: HASH=ownerId, RANGE=execution_id
+                    # 둘 다 KeyConditionExpression에 포함해야 함
                     execution_id_index = DynamoDBConfig.EXECUTION_ID_INDEX
                     try:
                         from boto3.dynamodb.conditions import Key
                         response = pending_table.query(
                             IndexName=execution_id_index,
-                            KeyConditionExpression=Key('execution_id').eq(execution_id)
+                            KeyConditionExpression=(
+                                Key('ownerId').eq(owner_id) & Key('execution_id').eq(execution_id)
+                            )
                         )
 
                         # pending 상태의 알림들을 completed로 업데이트

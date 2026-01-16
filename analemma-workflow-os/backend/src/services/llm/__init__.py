@@ -9,7 +9,7 @@ Gemini Native 및 Bedrock 기반 LLM 서비스 모듈
 - bedrock_service: AWS Bedrock (Claude/Llama) 통합
 """
 
-from .gemini_service import (
+from src.services.llm.gemini_service import (
     GeminiService,
     GeminiConfig,
     GeminiModel,
@@ -18,7 +18,7 @@ from .gemini_service import (
     invoke_gemini_for_structure,
 )
 
-from .structure_tools import (
+from src.services.llm.structure_tools import (
     StructureType,
     StructureDefinition,
     get_all_structure_tools,
@@ -34,7 +34,7 @@ from .structure_tools import (
     SUBGRAPH_STRUCTURE,
 )
 
-from .bedrock_service import (
+from src.services.llm.bedrock_service import (
     BedrockService,
     AsyncLLMRequiredException,
 )

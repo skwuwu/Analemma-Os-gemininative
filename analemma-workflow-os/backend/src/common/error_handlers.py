@@ -14,12 +14,12 @@ AWS 서비스 및 외부 API 호출 시 발생하는 예외를 세분화하여 �
 import json
 from typing import Any, Dict, Optional
 from botocore.exceptions import ClientError, NoCredentialsError, EndpointConnectionError
-from .exceptions import (
+from src.common.exceptions import (
     ExternalServiceError, LLMServiceError, S3OperationError,
     ValidationError, AuthenticationError, RateLimitExceededError,
     QuotaExceededError
 )
-from .logging_utils import get_logger
+from src.common.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

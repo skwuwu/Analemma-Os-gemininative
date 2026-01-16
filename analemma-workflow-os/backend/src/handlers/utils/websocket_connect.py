@@ -181,8 +181,10 @@ def _send_pending_notifications(owner_id: str, connection_id: str, event: dict):
     - 최대 전송 개수 제한 (MAX_PENDING_NOTIFICATIONS)
     - 초과 시 요약 메시지 전송
     - post_to_connection 재시도 로직
+    
+    🚨 [Fix] 기본값을 실제 테이블 이름 형식과 일치시킴
     """
-    pending_table_name = os.environ.get('PENDING_NOTIFICATIONS_TABLE', 'PendingNotifications')
+    pending_table_name = os.environ.get('PENDING_NOTIFICATIONS_TABLE', 'PendingNotificationsTableV3')
     
     try:
         pending_table = dynamodb.Table(pending_table_name)

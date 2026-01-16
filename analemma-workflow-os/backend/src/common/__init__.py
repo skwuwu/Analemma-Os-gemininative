@@ -3,20 +3,20 @@
 백엔드 코드의 중복을 제거하고 재사용성을 높이기 위한 공통 함수들
 """
 
-from .websocket_utils import (
+from src.common.websocket_utils import (
     get_connections_for_owner,
     send_to_connection,
     broadcast_to_connections,
     notify_user,
     cleanup_stale_connection
 )
-from .auth_utils import (
+from src.common.auth_utils import (
     validate_token,
     extract_owner_id_from_token,
     extract_owner_id_from_event,
     require_authentication
 )
-from .aws_clients import (
+from src.common.aws_clients import (
     get_dynamodb_resource,
     get_dynamodb_table,
     get_s3_client,
@@ -26,7 +26,7 @@ from .aws_clients import (
     get_lambda_client,
     get_kinesis_client
 )
-from .exceptions import (
+from src.common.exceptions import (
     BaseAnalemmaError,
     ExecutionNotFound,
     ExecutionForbidden,
@@ -45,13 +45,13 @@ from .exceptions import (
     RateLimitExceededError,
     QuotaExceededError
 )
-from .json_utils import (
+from src.common.json_utils import (
     DecimalEncoder,
     convert_decimals,
     convert_to_dynamodb_format,
     dumps_decimal
 )
-from .http_utils import (
+from src.common.http_utils import (
     get_cors_headers,
     get_json_headers,
     JSON_HEADERS,
@@ -65,7 +65,7 @@ from .http_utils import (
     not_found_response,
     internal_error_response
 )
-from .logging_utils import (
+from src.common.logging_utils import (
     get_logger,
     get_tracer,
     get_metrics,
@@ -76,7 +76,7 @@ from .logging_utils import (
     log_workflow_event,
     log_execution_event
 )
-from .error_handlers import (
+from src.common.error_handlers import (
     handle_dynamodb_error,
     handle_s3_error,
     handle_stepfunctions_error,
@@ -86,7 +86,7 @@ from .error_handlers import (
     safe_external_call,
     handle_lambda_error
 )
-from .constants import (
+from src.common.constants import (
     TTLConfig,
     QuotaLimits,
     ModelPricing,

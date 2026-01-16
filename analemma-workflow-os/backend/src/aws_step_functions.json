@@ -632,7 +632,9 @@
         "payload_size_kb.$": "$.Payload.payload_size_kb",
         "compression_applied.$": "$.Payload.compression_applied",
         "llm_segments.$": "$.Payload.llm_segments",
-        "hitp_segments.$": "$.Payload.hitp_segments"
+        "hitp_segments.$": "$.Payload.hitp_segments",
+        "max_concurrency.$": "$.Payload.max_concurrency",
+        "distributed_mode.$": "$.Payload.distributed_mode"
       },
       "ResultPath": "$.state_data",
       "Retry": [

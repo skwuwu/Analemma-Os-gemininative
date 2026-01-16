@@ -1,0 +1,362 @@
+{
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "# 🚀 Analemma Workflow OS - Operations Dashboard\n**Real-time monitoring for serverless workflow orchestration**"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 1,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "📊 Lambda Invocations",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/Lambda", "Invocations", "FunctionName", "InstructionDistillerFunction", {"stat": "Sum", "period": 300}],
+          ["AWS/Lambda", "Invocations", "FunctionName", "AgenticDesignerFunction", {"stat": "Sum", "period": 300}],
+          ["AWS/Lambda", "Invocations", "FunctionName", "SegmentRunnerFunction", {"stat": "Sum", "period": 300}],
+          ["AWS/Lambda", "Invocations", "FunctionName", "LogicalAuditorFunction", {"stat": "Sum", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 1,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "❌ Lambda Errors",
+        "view": "timeSeries",
+        "stacked": true,
+        "metrics": [
+          ["AWS/Lambda", "Errors", "FunctionName", "InstructionDistillerFunction", {"stat": "Sum", "period": 300, "color": "#d62728"}],
+          ["AWS/Lambda", "Errors", "FunctionName", "AgenticDesignerFunction", {"stat": "Sum", "period": 300, "color": "#ff7f0e"}],
+          ["AWS/Lambda", "Errors", "FunctionName", "SegmentRunnerFunction", {"stat": "Sum", "period": 300, "color": "#9467bd"}],
+          ["AWS/Lambda", "Errors", "FunctionName", "LogicalAuditorFunction", {"stat": "Sum", "period": 300, "color": "#8c564b"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 1,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "⏱️ Lambda Duration (p95)",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/Lambda", "Duration", "FunctionName", "InstructionDistillerFunction", {"stat": "p95", "period": 300}],
+          ["AWS/Lambda", "Duration", "FunctionName", "AgenticDesignerFunction", {"stat": "p95", "period": 300}],
+          ["AWS/Lambda", "Duration", "FunctionName", "SegmentRunnerFunction", {"stat": "p95", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 7,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "## 🤖 LLM Service Metrics (External API Calls)"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 8,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "🌟 Gemini API Calls",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["Analemma", "gemini_distill_instructions_success", {"stat": "Sum", "period": 300, "color": "#2ca02c"}],
+          ["Analemma", "gemini_distill_instructions_error", {"stat": "Sum", "period": 300, "color": "#d62728"}],
+          ["Analemma", "gemini_compress_instructions_success", {"stat": "Sum", "period": 300, "color": "#1f77b4"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 8,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "🔶 Bedrock API Calls (Fallback)",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["Analemma", "bedrock_extract_instructions_success", {"stat": "Sum", "period": 300, "color": "#ff7f0e"}],
+          ["Analemma", "bedrock_extract_instructions_error", {"stat": "Sum", "period": 300, "color": "#d62728"}],
+          ["Analemma", "bedrock_consolidate_instructions_success", {"stat": "Sum", "period": 300, "color": "#17becf"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 8,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "📦 S3 & DynamoDB Operations",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["Analemma", "s3_get_object_success", {"stat": "Sum", "period": 300, "color": "#2ca02c"}],
+          ["Analemma", "s3_get_object_error", {"stat": "Sum", "period": 300, "color": "#d62728"}],
+          ["Analemma", "dynamodb_save_instructions_success", {"stat": "Sum", "period": 300, "color": "#1f77b4"}],
+          ["Analemma", "dynamodb_save_instructions_error", {"stat": "Sum", "period": 300, "color": "#ff7f0e"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 14,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "## 📈 Instruction Distillation Metrics"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 15,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "📝 Instructions Distilled",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["Analemma", "instructions_distilled_count", {"stat": "Sum", "period": 300}],
+          ["Analemma", "instructions_compressed_count", {"stat": "Sum", "period": 300}],
+          ["Analemma", "few_shot_examples_extracted", {"stat": "Sum", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 15,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "🔄 Conflict Resolution",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["Analemma", "conflicts_detected", {"stat": "Sum", "period": 300, "color": "#ff7f0e"}],
+          ["Analemma", "conflicts_auto_resolved", {"stat": "Sum", "period": 300, "color": "#2ca02c"}],
+          ["Analemma", "conflicts_manual_review", {"stat": "Sum", "period": 300, "color": "#d62728"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 21,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "## 🏃 Step Functions Executions"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 22,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "▶️ Executions Started",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/States", "ExecutionsStarted", "StateMachineArn", "${WorkflowStateMachineArn}", {"stat": "Sum", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 22,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "✅ Executions Succeeded",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${WorkflowStateMachineArn}", {"stat": "Sum", "period": 300, "color": "#2ca02c"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 22,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "❌ Executions Failed",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${WorkflowStateMachineArn}", {"stat": "Sum", "period": 300, "color": "#d62728"}],
+          ["AWS/States", "ExecutionsTimedOut", "StateMachineArn", "${WorkflowStateMachineArn}", {"stat": "Sum", "period": 300, "color": "#ff7f0e"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 28,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "## 💾 DynamoDB Tables"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 29,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "📖 Read Capacity",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "DistilledInstructionsTable", {"stat": "Sum", "period": 300}],
+          ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "WorkflowsTable", {"stat": "Sum", "period": 300}],
+          ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "ExecutionsTable", {"stat": "Sum", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 29,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "✏️ Write Capacity",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "DistilledInstructionsTable", {"stat": "Sum", "period": 300}],
+          ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "WorkflowsTable", {"stat": "Sum", "period": 300}],
+          ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", "ExecutionsTable", {"stat": "Sum", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 29,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "title": "⚠️ Throttled Requests",
+        "view": "timeSeries",
+        "stacked": true,
+        "metrics": [
+          ["AWS/DynamoDB", "ThrottledRequests", "TableName", "DistilledInstructionsTable", {"stat": "Sum", "period": 300, "color": "#d62728"}],
+          ["AWS/DynamoDB", "ThrottledRequests", "TableName", "WorkflowsTable", {"stat": "Sum", "period": 300, "color": "#ff7f0e"}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 35,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "## 🔍 API Gateway"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 36,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "📡 API Request Count",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/ApiGateway", "Count", "ApiName", "AnalemmaWorkflowApi", {"stat": "Sum", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 36,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "⏱️ API Latency (p95)",
+        "view": "timeSeries",
+        "stacked": false,
+        "metrics": [
+          ["AWS/ApiGateway", "Latency", "ApiName", "AnalemmaWorkflowApi", {"stat": "p95", "period": 300}],
+          ["AWS/ApiGateway", "IntegrationLatency", "ApiName", "AnalemmaWorkflowApi", {"stat": "p95", "period": 300}]
+        ],
+        "region": "${AWS::Region}",
+        "period": 300
+      }
+    }
+  ]
+}

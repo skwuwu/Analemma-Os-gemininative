@@ -37,8 +37,12 @@ logger.setLevel(logging.INFO)
 # 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
 EXECUTIONS_TABLE = os.environ.get('EXECUTIONS_TABLE')
 WORKFLOWS_TABLE = os.environ.get('WORKFLOWS_TABLE', 'WorkflowsTableV3')
-OWNER_INDEX = os.environ.get('OWNER_INDEX')
-NOTIFICATIONS_INDEX = os.environ.get('NOTIFICATIONS_INDEX')
+# 🚨 [Critical Fix] 테이블별로 다른 GSI 사용
+# ExecutionsTableV3: OwnerIdStartDateIndex
+# WorkflowsTableV3: OwnerIdNameIndexV2
+EXECUTIONS_OWNER_INDEX = os.environ.get('OWNER_INDEX', os.environ.get('OWNER_ID_START_DATE_INDEX', 'OwnerIdStartDateIndex'))
+WORKFLOWS_OWNER_INDEX = os.environ.get('WORKFLOWS_OWNER_INDEX', os.environ.get('OWNER_ID_NAME_INDEX', 'OwnerIdNameIndexV2'))
+NOTIFICATIONS_INDEX = os.environ.get('NOTIFICATIONS_INDEX', 'NotificationsIndex')
 SKELETON_S3_BUCKET = os.environ.get('SKELETON_S3_BUCKET')
 SKELETON_S3_PREFIX = os.environ.get('SKELETON_S3_PREFIX', '')
 
@@ -118,11 +122,11 @@ class ExecutionCRUDService:
         next_token: Optional[str] = None
     ) -> Tuple[List[Dict], Optional[str]]:
         """사용자의 실행 목록 조회"""
-        if not self.table or not OWNER_INDEX:
+        if not self.table or not EXECUTIONS_OWNER_INDEX:
             raise ValueError("Server misconfigured: missing table or index")
 
         query_params = {
-            'IndexName': OWNER_INDEX,
+            'IndexName': EXECUTIONS_OWNER_INDEX,
             'KeyConditionExpression': Key('ownerId').eq(owner_id),
             'ScanIndexForward': False,  # 최신순
             'Limit': min(limit, 100)
@@ -386,7 +390,7 @@ class NotificationCRUDService:
             # 1. Active workflows (RUNNING, PAUSED_FOR_HITP 등)
             if status != 'dismissed':
                 active_response = self.executions_table.query(
-                    IndexName=OWNER_INDEX,
+                    IndexName=EXECUTIONS_OWNER_INDEX,
                     KeyConditionExpression=Key('ownerId').eq(owner_id),
                     FilterExpression=Attr('status').is_in(['RUNNING', 'STARTED', 'PAUSED_FOR_HITP']),
                     Limit=limit

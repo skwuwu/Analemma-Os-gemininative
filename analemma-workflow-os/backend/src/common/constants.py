@@ -285,7 +285,8 @@ class DynamoDBConfig:
     # ⚠️ V2 접미사 제거: template.yaml에는 V2 없음
     # ═══════════════════════════════════════════════════════════════════════════
     # WorkflowsTableV3 GSI
-    OWNER_ID_NAME_INDEX = os.environ.get('OWNER_ID_NAME_INDEX', 'OwnerIdNameIndex')
+    # 🚨 [Critical Fix] dynamo_db_set.py와 일치시킴 (V2 접미사 사용)
+    OWNER_ID_NAME_INDEX = os.environ.get('OWNER_ID_NAME_INDEX', 'OwnerIdNameIndexV2')
     SCHEDULED_WORKFLOWS_INDEX = os.environ.get('SCHEDULED_WORKFLOWS_INDEX', 'ScheduledWorkflowsIndex')
     
     # ExecutionsTableV3 GSI

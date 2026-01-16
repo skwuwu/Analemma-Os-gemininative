@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 EXECUTIONS_TABLE = os.environ.get('EXECUTIONS_TABLE')
-NOTIFICATIONS_INDEX = os.environ.get('NOTIFICATIONS_INDEX')
+# 🚨 [Critical Fix] NotificationsIndex GSI 기본값 추가
+NOTIFICATIONS_INDEX = os.environ.get('NOTIFICATIONS_INDEX', 'NotificationsIndex')
 
 # Fallback definitions if common modules not available
 if not _USE_COMMON_UTILS:

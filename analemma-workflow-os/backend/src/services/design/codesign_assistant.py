@@ -20,31 +20,76 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Generator, Iterator, List, Optional
 
-# agentic_designer_handler 모듈에서 필요한 함수 import (handlers/core로 이동됨)
-from src.handlers.core.agentic_designer_handler import (
-    invoke_bedrock_model,
-    invoke_bedrock_model_stream,
-    invoke_claude,
-    MODEL_HAIKU,
-    MODEL_SONNET,
-    MODEL_GEMINI_PRO,
-    MODEL_GEMINI_FLASH,
-    _broadcast_to_connections,
-    _is_mock_mode,
-)
-from .graph_dsl import validate_workflow, normalize_workflow
-from .logical_auditor import audit_workflow, LogicalAuditor
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🚨 [Critical Fix] Import 경로 수정
+# 기존: agentic_designer_handler (함수들이 존재하지 않음)
+# 수정: 각 함수가 실제로 정의된 모듈에서 직접 import
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# LLM 클라이언트 함수들 (bedrock_client.py)
+try:
+    from src.services.llm.bedrock_client import (
+        invoke_bedrock_model,
+        invoke_bedrock_stream as invoke_bedrock_model_stream,
+        MODEL_HAIKU,
+        MODEL_SONNET,
+        MODEL_GEMINI_PRO,
+        MODEL_GEMINI_FLASH,
+        is_mock_mode as _is_mock_mode,
+    )
+    _LLM_CLIENT_AVAILABLE = True
+except ImportError:
+    _LLM_CLIENT_AVAILABLE = False
+    invoke_bedrock_model = None
+    invoke_bedrock_model_stream = None
+    MODEL_HAIKU = "anthropic.claude-3-haiku-20240307-v1:0"
+    MODEL_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
+    MODEL_GEMINI_PRO = "gemini-1.5-pro"
+    MODEL_GEMINI_FLASH = "gemini-1.5-flash"
+    _is_mock_mode = lambda: os.getenv("MOCK_MODE", "false").lower() in {"true", "1", "yes", "on"}
+
+# WebSocket 브로드캐스트 함수 (websocket_utils.py)
+try:
+    from src.common.websocket_utils import broadcast_to_connections as _broadcast_to_connections
+except ImportError:
+    def _broadcast_to_connections(*args, **kwargs):
+        pass  # No-op fallback
+
+# invoke_claude 래퍼 함수 (bedrock_client에 없으면 직접 정의)
+def invoke_claude(model_id: str, system_prompt: str, user_prompt: str, max_tokens: int = 1024):
+    """Claude 모델 호출 래퍼"""
+    if invoke_bedrock_model is None:
+        return {"content": [{"text": "[LLM client not available]"}]}
+    return invoke_bedrock_model(model_id, system_prompt, user_prompt, max_tokens)
+
+# Model Router - Thinking Level Control
+try:
+    from src.common.model_router import (
+        calculate_thinking_budget,
+        get_thinking_config_for_workflow,
+        ThinkingLevel,
+    )
+    _MODEL_ROUTER_AVAILABLE = True
+except ImportError:
+    _MODEL_ROUTER_AVAILABLE = False
+    calculate_thinking_budget = None
+    get_thinking_config_for_workflow = None
+    ThinkingLevel = None
+
+# 🚨 [Critical Fix] graph_dsl은 src/common/에 위치함 (src/services/design/ 아님)
+from src.common.graph_dsl import validate_workflow, normalize_workflow
+from src.services.design.logical_auditor import audit_workflow, LogicalAuditor
 
 # Gemini 서비스 import
 try:
-    from .llm.gemini_service import (
+    from src.services.design.llm.gemini_service import (
         GeminiService,
         GeminiConfig,
         GeminiModel,
         get_gemini_flash_service,
         get_gemini_pro_service,
     )
-    from .llm.structure_tools import (
+    from src.services.design.llm.structure_tools import (
         get_all_structure_tools,
         get_gemini_system_instruction,
         validate_structure_node,
@@ -875,6 +920,23 @@ def _stream_gemini_codesign(
     # Gemini Flash 서비스 (실시간 협업용)
     service = get_gemini_flash_service()
     
+    # ════════════════════════════════════════════════════════════════════════
+    # [Thinking Level Control] 동적 사고 예산 계산
+    # ════════════════════════════════════════════════════════════════════════
+    if _MODEL_ROUTER_AVAILABLE and enable_thinking:
+        thinking_budget_tokens, thinking_level, thinking_reason = calculate_thinking_budget(
+            canvas_mode="co-design",
+            current_workflow=context.current_workflow,
+            user_request=user_request,
+            recent_changes=getattr(context, 'recent_changes', None)
+        )
+        logger.info(f"Dynamic thinking budget: {thinking_level.value}={thinking_budget_tokens} tokens ({thinking_reason})")
+    else:
+        # Fallback: 기본값 사용
+        thinking_budget_tokens = 2048
+        thinking_level = None
+        thinking_reason = "Fallback default"
+    
     # [2단계] 통합 컨텍스트 (설계 + 실행 이력)
     full_context = context.get_integrated_context()
     tool_definitions = context.get_tool_definitions()
@@ -931,7 +993,7 @@ def _stream_gemini_codesign(
     pending_corrections: List[Dict[str, Any]] = []
     
     # ════════════════════════════════════════════════════════════════════
-    # Gemini 스트리밍 호출 (Thinking Mode 활성화)
+    # Gemini 스트리밍 호출 (Thinking Mode 활성화 - 동적 예산)
     # ════════════════════════════════════════════════════════════════════
     try:
         for chunk in service.invoke_model_stream(
@@ -940,7 +1002,7 @@ def _stream_gemini_codesign(
             max_output_tokens=4096,
             temperature=0.8,  # 협업 모드에서는 약간 높은 창의성
             enable_thinking=enable_thinking,  # Chain of Thought 활성화
-            thinking_budget_tokens=2048  # 사고 과정에 2K 토큰 할당
+            thinking_budget_tokens=thinking_budget_tokens  # 동적 사고 예산 (복잡도에 따라 1K~16K)
         ):
             chunk = chunk.strip()
             if not chunk:

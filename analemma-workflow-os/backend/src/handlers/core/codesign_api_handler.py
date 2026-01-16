@@ -19,6 +19,12 @@ import uuid
 from typing import Dict, Any, Optional, Generator, Callable
 from functools import wraps
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🚨 [Critical Fix] Import 경로 수정
+# 기존: agentic_designer_handler (함수들이 존재하지 않음)
+# 수정: 각 함수/상수가 실제로 정의된 모듈에서 직접 import
+# ═══════════════════════════════════════════════════════════════════════════════
+
 # 서비스 임포트
 try:
     from src.services.design.codesign_assistant import (
@@ -28,32 +34,59 @@ try:
         apply_suggestion,
         get_or_create_context
     )
-    from src.handlers.core.agentic_designer_handler import (
-        invoke_bedrock_model_stream,
-        SYSTEM_PROMPT,
+    # LLM 클라이언트 (bedrock_client.py에서 import)
+    from src.services.llm.bedrock_client import (
+        invoke_bedrock_stream as invoke_bedrock_model_stream,
         MODEL_SONNET,
-        _is_mock_mode,
-        _mock_workflow_json
+        is_mock_mode as _is_mock_mode,
+        get_mock_workflow as _mock_workflow_json,
     )
+    # 시스템 프롬프트 (prompts.py에서 import)
+    from src.services.design.prompts import SYSTEM_PROMPT
+    # 모델 라우터 및 인증
     from src.common.model_router import get_model_for_canvas_mode
     from src.common.auth_utils import extract_owner_id_from_event
-except ImportError:
-    from src.services.design.codesign_assistant import (
-        stream_codesign_response,
-        explain_workflow,
-        generate_suggestions,
-        apply_suggestion,
-        get_or_create_context
-    )
-    from src.handlers.core.agentic_designer_handler import (
-        invoke_bedrock_model_stream,
-        SYSTEM_PROMPT,
-        MODEL_SONNET,
-        _is_mock_mode,
-        _mock_workflow_json
-    )
-    from src.common.model_router import get_model_for_canvas_mode
-    from src.common.auth_utils import extract_owner_id_from_event
+    _IMPORTS_OK = True
+except ImportError as e:
+    import logging
+    logging.getLogger(__name__).warning(f"Import fallback activated: {e}")
+    _IMPORTS_OK = False
+    
+    # Fallback imports (개별적으로 시도)
+    try:
+        from src.services.design.codesign_assistant import (
+            stream_codesign_response,
+            explain_workflow,
+            generate_suggestions,
+            apply_suggestion,
+            get_or_create_context
+        )
+    except ImportError:
+        stream_codesign_response = None
+        explain_workflow = None
+        generate_suggestions = None
+        apply_suggestion = None
+        get_or_create_context = None
+    
+    # LLM 클라이언트 fallback
+    invoke_bedrock_model_stream = None
+    MODEL_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
+    _is_mock_mode = lambda: os.getenv("MOCK_MODE", "false").lower() in {"true", "1", "yes", "on"}
+    _mock_workflow_json = lambda: {"nodes": [], "edges": []}
+    
+    # 시스템 프롬프트 fallback
+    SYSTEM_PROMPT = "You are a workflow design assistant."
+    
+    try:
+        from src.common.model_router import get_model_for_canvas_mode
+    except ImportError:
+        get_model_for_canvas_mode = None
+    
+    try:
+        from src.common.auth_utils import extract_owner_id_from_event
+    except ImportError:
+        def extract_owner_id_from_event(*args, **kwargs):
+            raise Exception("Unauthorized: auth_utils not available")
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))

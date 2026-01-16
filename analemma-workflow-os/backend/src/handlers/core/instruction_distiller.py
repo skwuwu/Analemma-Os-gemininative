@@ -11,6 +11,7 @@ HITL 단계에서 사용자가 수정한 결과물을 분석하여
   2. LLM(Haiku)이 두 텍스트의 차이점(diff) 분석
   3. 추출된 지침을 DistilledInstructions 테이블에 저장
   4. 다음 실행부터 해당 지침 자동 반영
+  5. [신규] 충돌 감지 및 자동 해결 (InstructionConflictService)
 """
 
 import os
@@ -32,14 +33,67 @@ try:
     from src.common.constants import is_mock_mode, LLMModels
     from src.common.secrets_utils import get_gemini_api_key
     from src.common.aws_clients import get_dynamodb_resource, get_s3_client, get_bedrock_client
+    from src.common.logging_utils import (
+        get_logger as get_powertools_logger,
+        get_metrics,
+        get_tracer,
+        log_external_service_call,
+        log_business_event,
+        log_execution_context
+    )
     _USE_COMMON = True
+    _USE_POWERTOOLS = True
 except ImportError:
     _USE_COMMON = False
+    _USE_POWERTOOLS = False
     is_mock_mode = lambda: os.environ.get("MOCK_MODE", "false").lower() in {"true", "1", "yes", "on"}
     get_gemini_api_key = None
+    
+    # Fallback: 데코레이터 no-op
+    def log_external_service_call(service_name, operation):
+        def decorator(func):
+            return func
+        return decorator
+    
+    def log_execution_context(func):
+        return func
+    
+    def log_business_event(*args, **kwargs):
+        pass
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# 충돌 감지 서비스 import
+try:
+    from src.services.instruction_conflict_service import InstructionConflictService
+    _USE_CONFLICT_SERVICE = True
+except ImportError:
+    _USE_CONFLICT_SERVICE = False
+    InstructionConflictService = None
+
+# Model Router - Thinking Level Control
+try:
+    from src.common.model_router import (
+        calculate_thinking_budget,
+        get_thinking_config_for_workflow,
+        ThinkingLevel,
+        THINKING_BUDGET_MAP,
+    )
+    _USE_THINKING_CONTROL = True
+except ImportError:
+    _USE_THINKING_CONTROL = False
+    calculate_thinking_budget = None
+    ThinkingLevel = None
+    THINKING_BUDGET_MAP = {}
+
+# 로거 설정 (Powertools 사용 가능 시 구조화된 로깅)
+if _USE_COMMON and _USE_POWERTOOLS:
+    logger = get_powertools_logger(__name__)
+    tracer = get_tracer()
+    metrics = get_metrics()
+else:
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    tracer = None
+    metrics = None
 
 # 환경 변수 - 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
 DISTILLED_INSTRUCTIONS_TABLE = os.environ.get("DISTILLED_INSTRUCTIONS_TABLE", "DistilledInstructionsTable")
@@ -229,6 +283,25 @@ _gemini_client = None
 
 # Context Cache 저장소 (workflow_id#node_id -> cache_name)
 _context_cache_registry: Dict[str, Dict[str, Any]] = {}
+
+# 충돌 감지 서비스 (Lazy Initialization)
+_conflict_service: Optional[InstructionConflictService] = None
+
+
+def _get_conflict_service() -> Optional[InstructionConflictService]:
+    """InstructionConflictService 싱글톤 인스턴스 반환"""
+    global _conflict_service
+    if _conflict_service is None and _USE_CONFLICT_SERVICE:
+        try:
+            _conflict_service = InstructionConflictService(
+                dynamodb_resource=dynamodb,
+                instructions_table_name=DISTILLED_INSTRUCTIONS_TABLE,
+                enable_semantic_validation=USE_GEMINI_NATIVE  # Gemini 사용 시 의미적 검증 활성화
+            )
+            logger.info("InstructionConflictService initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize InstructionConflictService: {e}")
+    return _conflict_service
 
 
 def _get_gemini_client():
@@ -611,6 +684,7 @@ def _compress_instructions(
         return instructions[:target_count]
 
 
+@log_execution_context
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     HITL 승인 이벤트를 처리하여 지침을 증류합니다.
@@ -645,6 +719,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         node_id = detail["node_id"]
         workflow_id = detail.get("workflow_id", "unknown")
         owner_id = detail.get("owner_id", "unknown")
+        
+        # 비즈니스 이벤트: 증류 시작
+        log_business_event(
+            "instruction_distillation_started",
+            workflow_id=workflow_id,
+            node_id=node_id,
+            owner_id=owner_id,
+            execution_id=execution_id
+        )
         
         # S3에서 원본 및 수정본 로드
         original_output = _load_from_s3_ref(detail["original_output_ref"])
@@ -703,6 +786,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             invalidate_instruction_cache(owner_id, workflow_id, node_id)
             
             logger.info(f"Distilled {len(distilled_instructions)} instructions for {node_id} (diff_score={semantic_diff_score:.2f})")
+            
+            # 비즈니스 이벤트: 증류 성공
+            log_business_event(
+                "instruction_distillation_completed",
+                workflow_id=workflow_id,
+                node_id=node_id,
+                owner_id=owner_id,
+                distilled_count=len(distilled_instructions),
+                semantic_diff_score=semantic_diff_score,
+                has_few_shot=few_shot_example is not None
+            )
+            
+            # 커스텀 메트릭 기록 (Powertools 사용 시)
+            if metrics:
+                metrics.add_metric(name="instructions_distilled_count", unit="Count", value=len(distilled_instructions))
+                if few_shot_example:
+                    metrics.add_metric(name="few_shot_examples_extracted", unit="Count", value=1)
+            
             return {
                 "statusCode": 200,
                 "body": json.dumps({
@@ -718,9 +819,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Error in instruction distillation: {e}", exc_info=True)
+        
+        # 비즈니스 이벤트: 증류 실패
+        log_business_event(
+            "instruction_distillation_failed",
+            error_type=type(e).__name__,
+            error_message=str(e)
+        )
+        
         return {"statusCode": 500, "body": str(e)}
 
 
+@log_external_service_call("s3", "get_object")
 def _load_from_s3_ref(s3_ref: str) -> Optional[str]:
     """
     S3 참조에서 콘텐츠 로드
@@ -799,6 +909,7 @@ def _distill_instructions(
     return _distill_with_bedrock(original_output, corrected_output, node_id, workflow_id, existing_instructions)
 
 
+@log_external_service_call("gemini", "distill_instructions")
 def _distill_with_gemini(
     original_output: str,
     corrected_output: str,
@@ -1075,6 +1186,7 @@ def _check_instruction_conflicts(
         return False, instructions
 
 
+@log_external_service_call("bedrock", "extract_instructions")
 def _extract_new_instructions(
     original_output: str,
     corrected_output: str,
@@ -1236,6 +1348,7 @@ def _consolidate_instructions(
     return existing_instructions
 
 
+@log_external_service_call("dynamodb", "save_instructions")
 def _save_distilled_instructions(
     workflow_id: str,
     node_id: str,
@@ -1315,6 +1428,45 @@ def _save_distilled_instructions(
         elif existing_few_shot:
             final_few_shot = existing_few_shot
         
+        # ═══════════════════════════════════════════════════════════════════════
+        # [신규] 충돌 감지 서비스 통합
+        # ═══════════════════════════════════════════════════════════════════════
+        conflict_service = _get_conflict_service()
+        conflict_resolved = False
+        
+        if conflict_service and final_instructions:
+            try:
+                # 각 새 지침에 대해 충돌 검사 수행
+                for struct_inst in structured_instructions:
+                    inst_text = struct_inst.get("text", "")
+                    metadata_signature = {
+                        "workflow_id": workflow_id,
+                        "node_id": node_id,
+                        "owner_id": owner_id
+                    }
+                    
+                    # 충돌 감지 및 자동 해결 시도
+                    result = conflict_service.create_instruction_with_conflict_check(
+                        user_id=owner_id,
+                        instruction_text=inst_text,
+                        metadata_signature=metadata_signature,
+                        category=None,  # 카테고리는 선택적
+                        context_scope=f"workflow#{workflow_id}#node#{node_id}",
+                        source_correction_ids=[execution_id]
+                    )
+                    
+                    if result and hasattr(result, 'requires_manual_review') and result.requires_manual_review:
+                        logger.warning(
+                            f"Instruction conflict requires manual review: {inst_text[:50]}..."
+                        )
+                    elif result:
+                        conflict_resolved = True
+                        logger.info(f"Instruction conflict resolved automatically: {inst_text[:50]}...")
+                        
+            except Exception as e:
+                logger.error(f"Conflict service error (non-fatal): {e}")
+                # 충돌 서비스 실패는 치명적이지 않음 - 기존 로직으로 계속 진행
+        
         item = {
             "pk": pk,
             "sk": sk,
@@ -1328,6 +1480,8 @@ def _save_distilled_instructions(
             "is_active": True,
             "version": 1,
             "usage_count": 0,
+            "conflict_checked": conflict_service is not None,  # 충돌 검사 수행 여부
+            "conflict_resolved": conflict_resolved,  # 충돌 자동 해결 여부
         }
         
         # ② Few-shot 예시 저장
@@ -1735,3 +1889,78 @@ def _format_instructions_block(instructions: List[str]) -> str:
     formatted_lines.append("위 지침을 모든 응답에 적용하세요.")
     
     return "\n".join(formatted_lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Thinking Level Control 통합 API
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_distillation_thinking_config(
+    owner_id: str,
+    workflow_id: str,
+    node_id: str,
+    user_request: str = "",
+    current_workflow: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    지침 증류 작업을 위한 Thinking Level 설정을 반환합니다.
+    
+    지침의 수, 충돌 여부, 워크플로우 복잡도를 기반으로
+    적절한 Thinking Budget을 계산합니다.
+    
+    Args:
+        owner_id: 사용자 ID
+        workflow_id: 워크플로우 ID
+        node_id: 노드 ID
+        user_request: 사용자 요청
+        current_workflow: 현재 워크플로우 상태
+    
+    Returns:
+        {
+            "enable_thinking": bool,
+            "thinking_budget_tokens": int,
+            "thinking_level": str,
+            "reasoning": str
+        }
+    """
+    if not _USE_THINKING_CONTROL:
+        return {
+            "enable_thinking": False,
+            "thinking_budget_tokens": 0,
+            "thinking_level": "disabled",
+            "reasoning": "Thinking control not available"
+        }
+    
+    # 기존 지침 수 확인
+    existing_instructions = get_active_instructions(owner_id, workflow_id, node_id)
+    instruction_count = len(existing_instructions)
+    
+    # 지침이 많을수록 더 깊은 사고 필요
+    if instruction_count >= 8:
+        override_level = ThinkingLevel.DEEP
+        reason = f"Many existing instructions ({instruction_count})"
+    elif instruction_count >= 4:
+        override_level = ThinkingLevel.STANDARD
+        reason = f"Some existing instructions ({instruction_count})"
+    else:
+        override_level = None  # 자동 계산
+        reason = None
+    
+    # Thinking Budget 계산
+    budget, level, reasoning = calculate_thinking_budget(
+        canvas_mode="co-design",  # 지침 증류는 Co-design 수준
+        current_workflow=current_workflow or {},
+        user_request=user_request,
+        conflict_detected=instruction_count > 5,  # 지침 많으면 충돌 가능성
+        override_level=override_level
+    )
+    
+    final_reasoning = f"{reason}: {reasoning}" if reason else reasoning
+    
+    return {
+        "enable_thinking": True,
+        "thinking_budget_tokens": budget,
+        "thinking_level": level.value,
+        "reasoning": final_reasoning,
+        "instruction_count": instruction_count
+    }

@@ -36,8 +36,8 @@ except ImportError:
     JWT_AVAILABLE = False
     logging.warning("PyJWT not available - using mock authentication for development")
 
-from .services.correction_service import CorrectionService
-from .models.correction_log import TaskCategory, CorrectionLog, CorrectionType
+from src.services.correction_service import CorrectionService
+from src.models.correction_log import TaskCategory, CorrectionLog, CorrectionType
 
 # Pydantic 요청 스키마 정의 (개선사항: 스키마 기반 검증)
 class CorrectionLogRequest(BaseModel):

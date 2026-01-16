@@ -83,10 +83,11 @@ class CheckpointService:
             state_bucket: 상태 데이터 S3 버킷
         """
         self.executions_table_name = executions_table or os.environ.get(
-            'EXECUTION_TABLE', 'executions'
+            'EXECUTIONS_TABLE', os.environ.get('EXECUTION_TABLE', 'ExecutionsTableV3')
         )
+        # 🚨 [Fix] 환경변수명 통일: PENDING_NOTIFICATIONS_TABLE 우선, NOTIFICATION_TABLE 폴백
         self.notifications_table_name = notifications_table or os.environ.get(
-            'NOTIFICATION_TABLE', 'notifications'
+            'PENDING_NOTIFICATIONS_TABLE', os.environ.get('NOTIFICATION_TABLE', 'PendingNotificationsTableV3')
         )
         self.state_bucket = state_bucket or STATE_BUCKET
         self._executions_table = None

@@ -8,7 +8,7 @@ import json
 import os
 from typing import Any, Dict, Optional
 
-from .json_utils import DecimalEncoder
+from src.common.json_utils import DecimalEncoder
 
 
 def get_cors_headers(origin: Optional[str] = None) -> Dict[str, str]:

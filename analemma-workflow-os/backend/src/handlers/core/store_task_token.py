@@ -137,16 +137,19 @@ def _send_hitp_notification(owner_id, conversation_id, execution_id, context_inf
         pending_table_name = os.environ.get('PENDING_NOTIFICATIONS_TABLE')
         if pending_table_name:
             pending_table = dynamodb.Table(pending_table_name)
+            # 🚨 [Fix] timestamp를 밀리초(ms)로 저장하여 list_notifications.py와 일치시킴
+            current_time = int(time.time())
             notification_item = {
                 'ownerId': owner_id,
                 'notificationId': str(uuid.uuid4()),
-                'timestamp': int(time.time()),
+                'timestamp': current_time * 1000,  # 밀리초 단위 (프론트엔드 호환)
+                'timestamp_seconds': current_time,  # 초 단위 (백엔드 호환)
                 'notification': notification_payload,
                 'status': 'pending',  # pending = 미읽음, sent = 읽음
                 'type': 'hitp_pause',
                 'conversation_id': conversation_id,
                 'execution_id': execution_id,
-                'ttl': int(time.time()) + TTLConfig.PENDING_NOTIFICATION  # 30일 보관
+                'ttl': current_time + TTLConfig.PENDING_NOTIFICATION  # 30일 보관
             }
             pending_table.put_item(Item=notification_item)
             logger.info(f"💾 영구 알림 저장 완료: owner={owner_id}, notification_id={notification_item['notificationId']}")
@@ -333,19 +336,25 @@ def lambda_handler(event, context):
             # Store the full workflow_config and other state so resume can reconstruct
             # the execution context reliably. Previously only 'workflow_name' was
             # stored which caused resume to miss required fields like workflow_config.
+            # 🚨 [Critical Fix] state_data에서도 fallback으로 값을 가져옴
+            state_data = payload.get('state_data') or {}
             context_info = {
-                'workflow_config': payload.get('workflow_config'),
-                'workflowId': payload.get('workflowId'),
-                'workflow_name': payload.get('workflow_config', {}).get('name'),
-                'segment_to_run': payload.get('segment_to_run'),
-                'total_segments': payload.get('total_segments'),
-                'partition_map': payload.get('partition_map'),
-                'current_state': payload.get('current_state'),
+                'workflow_config': payload.get('workflow_config') or state_data.get('workflow_config'),
+                'workflowId': payload.get('workflowId') or state_data.get('workflowId'),
+                'workflow_name': (payload.get('workflow_config') or state_data.get('workflow_config') or {}).get('name'),
+                'segment_to_run': payload.get('segment_to_run') if payload.get('segment_to_run') is not None else state_data.get('segment_to_run'),
+                'total_segments': payload.get('total_segments') or state_data.get('total_segments'),
+                'partition_map': payload.get('partition_map') or state_data.get('partition_map'),
+                'current_state': payload.get('current_state') or state_data.get('current_state'),
                 # preserve state history if present so resume can reconstruct past snapshots
-                'state_history': payload.get('state_history') or (payload.get('state_data') or {}).get('state_history'),
-                'state_s3_path': payload.get('state_s3_path'),
-                'idempotency_key': payload.get('idempotency_key'),
-                'execution_name': payload.get('execution_name')
+                'state_history': payload.get('state_history') or state_data.get('state_history'),
+                'state_s3_path': payload.get('state_s3_path') or state_data.get('state_s3_path'),
+                'idempotency_key': payload.get('idempotency_key') or state_data.get('idempotency_key'),
+                'execution_name': payload.get('execution_name'),
+                # 🚨 [Critical Fix] 추가 필드 보존
+                'ownerId': owner_id,
+                'max_concurrency': payload.get('max_concurrency') or state_data.get('max_concurrency'),
+                'distributed_mode': payload.get('distributed_mode') or state_data.get('distributed_mode'),
             }
             if context and hasattr(context, 'aws_request_id'):
                 context_info['request_id'] = context.aws_request_id
