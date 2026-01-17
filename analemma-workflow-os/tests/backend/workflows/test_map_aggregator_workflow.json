@@ -1,6 +1,6 @@
 {
     "workflow_name": "Map Aggregator Test",
-    "description": "Map State와 Aggregator 로직 검증 (병렬 실행 후 결과 집계)",
+    "description": "Map State and Aggregator logic verification (result aggregation after parallel execution)",
     "nodes": [
         {
             "id": "parallel_node",
@@ -45,7 +45,7 @@
             "id": "validator_node",
             "type": "operator",
             "config": {
-                "code": "if 'branch_A_result' in state and 'branch_B_result' in state:\n    state['TEST_RESULT'] = '✅ SUCCESS: 모든 브랜치 결과 집계됨'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: 일부 데이터 누락'"
+                "code": "if 'branch_A_result' in state and 'branch_B_result' in state:\n    state['TEST_RESULT'] = '✅ SUCCESS: All branch results aggregated'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: Some data missing'"
             }
         }
     ],

@@ -2,25 +2,25 @@
 pytest configuration for backend tests.
 Located outside backend/ to avoid triggering deployments.
 
-🚨 Import 경로 우선순위:
-1. backend/src - common 패키지의 Source of Truth
-2. backend/apps/backend - backend 패키지 (Lambda 메인 코드)
-3. backend/apps/backend/backend - Lambda 핸들러 직접 import
+🚨 Import path priority:
+1. backend/src - Source of Truth for common packages
+2. backend/apps/backend - backend package (Lambda main code)
+3. backend/apps/backend/backend - Direct Lambda handler import
 """
 import sys
 import os
 from pathlib import Path
 
-# 프로젝트 루트 경로
+# Project root path
 PROJECT_ROOT = Path(__file__).parent.parent
 
-# 백엔드 소스 경로들
+# Backend source paths
 BACKEND_SRC = PROJECT_ROOT / "backend" / "src"
 BACKEND_APPS = PROJECT_ROOT / "backend" / "apps" / "backend"
 BACKEND_HANDLERS = PROJECT_ROOT / "backend" / "apps" / "backend" / "backend"
 
 def pytest_configure(config):
-    # 1. backend/src 최우선 등록 (common 패키지)
+    # 1. Register backend/src first (common package)
     if str(BACKEND_SRC) not in sys.path:
         sys.path.insert(0, str(BACKEND_SRC))
     

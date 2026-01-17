@@ -4,8 +4,8 @@ import time
 import logging
 import boto3
 
-# [1순위 최적화] Pre-compilation: DB에서 partition_map 로드
-# 런타임 파티셔닝은 fallback으로만 사용
+# [Priority 1 Optimization] Pre-compilation: Load partition_map from DB
+# Runtime partitioning used only as fallback
 try:
     from src.services.workflow.partition_service import partition_workflow_advanced
     _HAS_PARTITION = True
@@ -17,14 +17,14 @@ except ImportError:
         _HAS_PARTITION = False
         partition_workflow_advanced = None
 
-# DynamoDB 클라이언트 (웜 스타트 최적화)
+# DynamoDB client (warm start optimization)
 try:
     from src.common.aws_clients import get_dynamodb_resource
     _dynamodb = get_dynamodb_resource()
 except ImportError:
     _dynamodb = boto3.resource('dynamodb')
 
-# 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+# 🚨 [Critical Fix] Match default values with template.yaml
 WORKFLOWS_TABLE = os.environ.get('WORKFLOWS_TABLE', 'WorkflowsTableV3')
 
 logger = logging.getLogger(__name__)
@@ -39,30 +39,30 @@ def _calculate_dynamic_concurrency(
     owner_id: str
 ) -> int:
     """
-    워크플로우 복잡도와 사용자 티어 기반으로 동적 동시성 계산
+    Calculate dynamic concurrency based on workflow complexity and user tier
     
-    🚨 [Critical] 규격 명확화:
-    이 함수가 반환하는 max_concurrency는 **청크 내부의 병렬 처리량**을 결정합니다.
+    🚨 [Critical] Specification clarification:
+    The max_concurrency returned by this function determines **parallel processing capacity within chunks**.
     
-    - Distributed Map의 MaxConcurrency는 ASL에서 1로 고정 (상태 연속성 보장)
-    - 이 값은 각 청크 내에서 병렬 브랜치 실행 시 사용됨
-    - ProcessSegmentChunk 내부의 병렬 그룹 처리에 적용
+    - Distributed Map's MaxConcurrency is fixed at 1 in ASL (ensures state continuity)
+    - This value is used for parallel branch execution within each chunk
+    - Applied to parallel group processing within ProcessSegmentChunk
     
     Args:
-        total_segments: 총 세그먼트 수
-        llm_segments: LLM 세그먼트 수
-        hitp_segments: HITP 세그먼트 수
-        partition_map: 파티션 맵
-        owner_id: 사용자 ID
+        total_segments: Total number of segments
+        llm_segments: Number of LLM segments
+        hitp_segments: Number of HITP segments
+        partition_map: Partition map
+        owner_id: User ID
         
     Returns:
-        int: 계산된 청크 내부 MaxConcurrency 값 (5-50 범위)
-             ※ Distributed Map 자체의 MaxConcurrency와는 별개
+        int: Calculated chunk-internal MaxConcurrency value (range 5-50)
+             ※ Separate from Distributed Map's own MaxConcurrency
     """
-    # 기본값
+    # Default value
     base_concurrency = 15
     
-    # 1. 병렬 브랜치 수 계산
+    # 1. Calculate number of parallel branches
     max_parallel_branches = 0
     if partition_map:
         for segment in partition_map:
@@ -70,27 +70,27 @@ def _calculate_dynamic_concurrency(
                 branches = segment.get('branches', [])
                 max_parallel_branches = max(max_parallel_branches, len(branches))
     
-    # 2. 워크플로우 복잡도 기반 조정
+    # 2. Adjust based on workflow complexity
     calculated_concurrency = base_concurrency # [Safety] Initialize default
     
     if max_parallel_branches == 0:
-        # 병렬 브랜치가 없으면 기본값 사용
+        # Use default value if no parallel branches
         calculated_concurrency = base_concurrency
     elif max_parallel_branches <= 5:
 
-        # 소규모 병렬 (5개 이하): 모두 동시 실행
+        # Small-scale parallel (5 or fewer): Execute all concurrently
         calculated_concurrency = max_parallel_branches
     elif max_parallel_branches <= 10:
-        # 중규모 병렬 (6-10개): 80% 동시 실행
+        # Medium-scale parallel (6-10): Execute 80% concurrently
         calculated_concurrency = int(max_parallel_branches * 0.8)
     elif max_parallel_branches <= 20:
-        # 대규모 병렬 (11-20개): 60% 동시 실행
+        # Large-scale parallel (11-20): Execute 60% concurrently
         calculated_concurrency = int(max_parallel_branches * 0.6)
     else:
-        # 초대규모 병렬 (21개 이상): 최대 30개로 제한
+        # Ultra-large-scale parallel (21+): Limit to maximum 30
         calculated_concurrency = min(30, int(max_parallel_branches * 0.5))
     
-    # 3. 사용자 티어 기반 조정 (선택적)
+    # 3. Adjust based on user tier (optional)
     try:
         user_table = _dynamodb.Table(os.environ.get('USERS_TABLE', 'UsersTableV3'))
         user_response = user_table.get_item(Key={'userId': owner_id})
@@ -99,12 +99,12 @@ def _calculate_dynamic_concurrency(
         if user_item:
             subscription_plan = user_item.get('subscription_plan', 'free')
             
-            # 티어별 배수 적용
+            # Apply tier multipliers
             tier_multipliers = {
-                'free': 0.5,      # 50% 제한
+                'free': 0.5,      # 50% limit
                 'basic': 0.75,    # 75%
                 'pro': 1.0,       # 100%
-                'enterprise': 1.5 # 150% (최대 50까지)
+                'enterprise': 1.5 # 150% (up to 50 max)
             }
             
             multiplier = tier_multipliers.get(subscription_plan, 1.0)
@@ -114,9 +114,9 @@ def _calculate_dynamic_concurrency(
     except Exception as e:
         logger.warning(f"Failed to load user tier for concurrency calculation: {e}")
     
-    # 4. 🛡️ [Concurrency Protection] OS 레벨 상한 클램핑
-    # 계정 동시성 한도(10)에 맞춰 전체 시스템 안정성 보장
-    MAX_OS_LIMIT = 2  # 계정 Concurrency 10 제한 대응 (상향 요청 완료 시 증가 예정)
+    # 4. 🛡️ [Concurrency Protection] OS-level upper limit clamping
+    # Ensure overall system stability according to account concurrency limit (10)
+    MAX_OS_LIMIT = 2  # Response to account concurrency limit of 10 (to be increased upon approval request)
     clamped_concurrency = min(calculated_concurrency, MAX_OS_LIMIT)
     
     if calculated_concurrency > MAX_OS_LIMIT:
@@ -125,7 +125,7 @@ def _calculate_dynamic_concurrency(
             f"to OS limit {MAX_OS_LIMIT}"
         )
     
-    # 5. 최종 범위 제한 (1 ~ MAX_OS_LIMIT)
+    # 5. Final range limit (1 ~ MAX_OS_LIMIT)
     final_concurrency = max(1, clamped_concurrency)
     
     logger.info(
@@ -140,8 +140,8 @@ def _calculate_dynamic_concurrency(
 
 def _load_workflow_config(owner_id: str, workflow_id: str) -> dict:
     """
-    Workflows 테이블에서 workflow config를 로드.
-    subgraphs를 포함한 전체 config를 가져옴.
+    Load workflow config from Workflows table.
+    Retrieve full config including subgraphs.
     """
     if not owner_id or not workflow_id:
         return None
@@ -155,11 +155,11 @@ def _load_workflow_config(owner_id: str, workflow_id: str) -> dict:
         item = response.get('Item')
         if item and item.get('config'):
             config = item.get('config')
-            # JSON string이면 파싱
+            # Parse if JSON string
             if isinstance(config, str):
                 import json
                 config = json.loads(config)
-            logger.info(f"Loaded workflow config from src.DB: {workflow_id}")
+            logger.info(f"Loaded workflow config from DB: {workflow_id}")
             return {
                 'config': config,
                 'partition_map': item.get('partition_map'),
@@ -175,8 +175,8 @@ def _load_workflow_config(owner_id: str, workflow_id: str) -> dict:
 
 def _load_precompiled_partition(owner_id: str, workflow_id: str) -> dict:
     """
-    Workflows 테이블에서 pre-compiled partition_map 로드.
-    저장 시점에 계산된 partition_map을 가져옴.
+    Load pre-compiled partition_map from Workflows table.
+    Retrieve partition_map calculated at save time.
     """
     if not owner_id or not workflow_id:
         return None
@@ -189,7 +189,7 @@ def _load_precompiled_partition(owner_id: str, workflow_id: str) -> dict:
         )
         item = response.get('Item')
         if item and item.get('partition_map'):
-            logger.info(f"Loaded pre-compiled partition_map from src.DB: {item.get('total_segments', 0)} segments")
+            logger.info(f"Loaded pre-compiled partition_map from DB: {item.get('total_segments', 0)} segments")
             return item
         return None
     except Exception as e:
@@ -200,45 +200,45 @@ def _load_precompiled_partition(owner_id: str, workflow_id: str) -> dict:
 def lambda_handler(event, context):
     """
     Initializes state data.
-    [1순위 최적화] Pre-compiled partition_map을 DB에서 로드.
-    Fallback: 런타임 계산 (하위 호환성 유지)
+    [Priority 1 Optimization] Load pre-compiled partition_map from DB.
+    Fallback: Runtime calculation (maintain backward compatibility)
     
-    [서브그래프 지원] workflow_config에 subgraphs가 포함되어 있으면
-    DynamicWorkflowBuilder에서 재귀적으로 빌드됨.
+    [Subgraph Support] If workflow_config includes subgraphs,
+    DynamicWorkflowBuilder will build recursively.
     """
     logger.info("Initializing state data")
     
     # [FIX] 1. Move initialization to top (prevent NameError in S3 Metadata)
     current_time = int(time.time())
     
-    # 1. 입력 데이터 추출
+    # 1. Extract input data
     raw_input = event.get('input', event)
     if not isinstance(raw_input, dict):
         raw_input = {}
         
-    # [FIX] 변수 명시적 초기화 (UnboundLocalError 및 Missing Field 방지)
-    # SFN에서 $.field_name 참조 시 에러를 방지하기 위해 키가 항상 존재해야 함
+    # [FIX] Explicit variable initialization (prevent UnboundLocalError and Missing Field)
+    # Keys must always exist to prevent errors when SFN references $.field_name
     partition_map_s3_path = ""
     manifest_s3_path = ""
     state_s3_path = ""
     
-    # 2. Config 결정 우선순위 정교화
+    # 2. Refine config determination priority
     workflow_config = raw_input.get('test_workflow_config') or raw_input.get('workflow_config')
     owner_id = raw_input.get('ownerId', "")
     workflow_id = raw_input.get('workflowId', "")
     idempotency_key = raw_input.get('idempotency_key', "")
     quota_reservation_id = raw_input.get('quota_reservation_id', "")
     
-    # [Fix] MOCK_MODE 추출 - 시뮬레이터 E2E 테스트용
+    # [Fix] Extract MOCK_MODE - for simulator E2E testing
     mock_mode = raw_input.get('MOCK_MODE', 'false')
     
-    # [Robustness Fix] workflow_config가 없으면 DB에서 로드 (test_config 없을 때)
+    # [Robustness Fix] Load from DB if workflow_config missing (when test_config absent)
     if not workflow_config and workflow_id and owner_id:
-        logger.info(f"workflow_config missing in input, loading from src.DB: {workflow_id}")
+        logger.info(f"workflow_config missing in input, loading from DB: {workflow_id}")
         db_data = _load_workflow_config(owner_id, workflow_id)
         if db_data and db_data.get('config'):
             workflow_config = db_data.get('config')
-            # DB에서 partition_map도 함께 로드된 경우 사용
+            # Also load partition_map from DB if available
             if db_data.get('partition_map'):
                 event['_db_partition_map'] = db_data.get('partition_map')
                 event['_db_total_segments'] = db_data.get('total_segments')
@@ -247,12 +247,12 @@ def lambda_handler(event, context):
         else:
             logger.warning(f"Workflow not found in DB: {workflow_id}")
 
-    # workflow_config가 여전히 없으면 빈 딕셔너리로 설정하여 crash 방지
+    # Set to empty dict if workflow_config still missing to prevent crash
     if not workflow_config:
         workflow_config = {}
         logger.warning("Proceeding with empty workflow_config (risk of later failure)")
 
-    # 3. MOCK_MODE: 강제 파티셔닝 (DB 데이터 없음 대비)
+    # 3. MOCK_MODE: Force partitioning (prepare for no DB data)
     if raw_input.get('test_workflow_config'):
          if not _HAS_PARTITION:
              logger.warning("MOCK_MODE but partition logic unavailable!")
@@ -268,29 +268,29 @@ def lambda_handler(event, context):
              except Exception as e:
                  logger.error(f"MOCK_MODE partitioning failed: {e}")
 
-    # 2. 파티셔닝 (우선순위: 입력 > DB pre-compiled > 런타임 계산)
+    # 2. Partitioning (priority: input > DB pre-compiled > runtime calculation)
     partition_map = None
     total_segments = 0
     llm_segments = 0
     hitp_segments = 0
     
-    # 2a. 입력에 이미 partition_map이 있다면 사용 (재시도/Child Workflow)
+    # 2a. Use partition_map if already in input (retry/Child Workflow)
     if raw_input.get('partition_map'):
-        logger.info("Using provided partition_map from src.input")
+        logger.info("Using provided partition_map from input")
         partition_map = raw_input.get('partition_map')
         total_segments = raw_input.get('total_segments', len(partition_map))
         llm_segments = raw_input.get('llm_segments', 0)
         hitp_segments = raw_input.get('hitp_segments', 0)
     
-    # 2a-1. config 로드 시 함께 가져온 partition_map 사용
+    # 2a-1. Use partition_map loaded with config
     if not partition_map and event.get('_db_partition_map'):
-        logger.info("Using partition_map from src.DB config load")
+        logger.info("Using partition_map from DB config load")
         partition_map = event.get('_db_partition_map')
         total_segments = event.get('_db_total_segments', len(partition_map) if partition_map else 0)
         llm_segments = event.get('_db_llm_segments', 0)
         hitp_segments = event.get('_db_hitp_segments', 0)
     
-    # 2b. DB에서 pre-compiled partition_map 로드 (1순위 최적화)
+    # 2b. Load pre-compiled partition_map from DB (priority 1 optimization)
     if not partition_map:
         precompiled = _load_precompiled_partition(owner_id, workflow_id)
         if precompiled:
@@ -299,7 +299,7 @@ def lambda_handler(event, context):
             llm_segments = precompiled.get('llm_segments_count', 0)
             hitp_segments = precompiled.get('hitp_segments_count', 0)
     
-    # 2c. Fallback: 런타임 계산 (기존 로직, 하위 호환성)
+    # 2c. Fallback: Runtime calculation (existing logic, maintain backward compatibility)
     if not partition_map:
         if not _HAS_PARTITION:
             raise RuntimeError("partition_workflow_advanced not available and no pre-compiled partition_map found")
@@ -315,7 +315,7 @@ def lambda_handler(event, context):
             logger.error(f"Partitioning failed: {e}")
             raise RuntimeError(f"Failed to partition workflow: {str(e)}")
 
-    # 🎯 [단일화 전략] 실행할 세그먼트 리스트(segment_manifest) 생성
+    # 🎯 [Unification Strategy] Create segment_manifest (list of segments to execute)
     segment_manifest = []
     for idx, segment in enumerate(partition_map):
         segment_manifest.append({
@@ -326,21 +326,21 @@ def lambda_handler(event, context):
             "type": segment.get("type", "normal")
         })
     
-    # 🚨 [Critical Fix] 분산 모드 감지 및 대용량 데이터 S3 오프로딩
-    is_distributed_mode = total_segments > 300  # 분산 모드 임계값
-    partition_map_for_return = partition_map  # 기본값: 전체 반환
+    # 🚨 [Critical Fix] Detect distributed mode and offload large data to S3
+    is_distributed_mode = total_segments > 300  # Distributed mode threshold
+    partition_map_for_return = partition_map  # Default: return all
     
     # AWS Clients
     s3_client = None
     bucket = os.environ.get('WORKFLOW_STATE_BUCKET')
     
-    # S3 업로드 필요 시에만 boto3 클라이언트 초기화
+    # Initialize boto3 client only when S3 upload needed
     if bucket and owner_id and workflow_id:
         if len(segment_manifest) > 50 or is_distributed_mode:
             import boto3
             s3_client = boto3.client('s3')
 
-    # 1. Manifest Offloading (50개 초과 시)
+    # 1. Manifest Offloading (when exceeding 50 items)
     if len(segment_manifest) > 50 and s3_client:
         try:
             manifest_key = f"workflow-manifests/{owner_id}/{workflow_id}/segment_manifest.json"
@@ -354,17 +354,17 @@ def lambda_handler(event, context):
             logger.info(f"Segment manifest uploaded to S3: {manifest_s3_path}")
         except Exception as e:
             logger.warning(f"Failed to upload segment manifest to S3: {e}")
-            # 실패 시 manifest_s3_path는 초기값 "" 유지됨
+            # Keep manifest_s3_path as initial value "" on failure
 
-    # 2. Partition Map Offloading (분산 모드)
-    # 🚨 [Critical Fix] 분산 모드에서 partition_map 크기 최적화
+    # 2. Partition Map Offloading (distributed mode)
+    # 🚨 [Critical Fix] Optimize partition_map size in distributed mode
     if is_distributed_mode:
         partition_map_json = json.dumps(partition_map, ensure_ascii=False)
         partition_map_size_kb = len(partition_map_json.encode('utf-8')) / 1024
         
         logger.info(f"Distributed mode detected: {total_segments} segments, partition_map size: {partition_map_size_kb:.1f}KB")
         
-        # 100KB 이상의 partition_map은 S3로 오프로딩
+        # Offload partition_map larger than 100KB to S3
         if partition_map_size_kb > 100 and s3_client:
             try:
                 partition_map_key = f"workflow-partitions/{owner_id}/{workflow_id}/partition_map.json"
@@ -383,33 +383,33 @@ def lambda_handler(event, context):
                 partition_map_s3_path = f"s3://{bucket}/{partition_map_key}"
                 logger.info(f"Large partition_map offloaded to S3: {partition_map_s3_path}")
                 
-                # 🚨 [Critical] 분산 모드에서는 partition_map 제외
+                # 🚨 [Critical] Exclude partition_map in distributed mode
                 partition_map_for_return = None
                 
             except Exception as e:
                 logger.warning(f"Failed to offload partition_map to S3: {e}")
-                # S3 실패 시 경고하고 인라인으로 폴백
+                # Warn and fallback to inline on S3 failure
                 logger.warning(f"Proceeding with inline partition_map ({partition_map_size_kb:.1f}KB)")
         else:
             logger.info(f"partition_map size acceptable for inline return: {partition_map_size_kb:.1f}KB")
 
-    # 3. 초기 상태 구성
+    # 3. Initial state configuration
     current_time = int(time.time())
     
-    # S3 경로가 있으면 current_state를 null로, 아니면 initial_state 사용
+    # Set current_state to null if S3 path exists, otherwise use initial_state
     initial_state_s3_path = workflow_config.get('initial_state_s3_path')
     if initial_state_s3_path:
-        # Large payload: S3에서 로드 (segment_runner에서 처리)
+        # Large payload: Load from S3 (handled by segment_runner)
         current_state = None
         state_s3_path = initial_state_s3_path
         input_value = initial_state_s3_path
     else:
         # Inline state
         current_state = workflow_config.get('initial_state', {})
-        # state_s3_path = "" # 위에서 이미 초기화됨
+        # state_s3_path = "" # Already initialized above
         input_value = current_state
     
-    # 4. 동적 동시성 계산 (Map 상태 최적화)
+    # 4. Dynamic concurrency calculation (Map state optimization)
     max_concurrency = _calculate_dynamic_concurrency(
         total_segments=total_segments,
         llm_segments=llm_segments,
@@ -432,14 +432,14 @@ def lambda_handler(event, context):
         "idempotency_key": idempotency_key,
         "quota_reservation_id": quota_reservation_id,
         
-        # 🚨 [Critical Fix] 분산 모드에서 partition_map 조건부 반환
+        # 🚨 [Critical Fix] Conditional partition_map return in distributed mode
         "total_segments": total_segments,
         "partition_map": partition_map_for_return,
-        "partition_map_s3_path": partition_map_s3_path,  # 항상 존재 (최소 "")
+        "partition_map_s3_path": partition_map_s3_path,  # Always exists (minimum "")
         
-        # manifest_s3_path가 있으면 segment_manifest는 None으로 (페이로드 최적화)
+        # Set segment_manifest to None if manifest_s3_path exists (payload optimization)
         "segment_manifest": segment_manifest if manifest_s3_path == "" else None,
-        "segment_manifest_s3_path": manifest_s3_path,    # 항상 존재 (최소 "")
+        "segment_manifest_s3_path": manifest_s3_path,    # Always exists (minimum "")
         
         # Metadata
         "state_durations": {},
@@ -453,7 +453,7 @@ def lambda_handler(event, context):
         "distributed_mode": is_distributed_mode,
         "max_concurrency": max_concurrency,
         
-        # [Fix] MOCK_MODE 전달 - 시뮬레이터 E2E 테스트용 (HITP 자동 resume 등)
+        # [Fix] Pass MOCK_MODE - for simulator E2E testing (HITP auto resume, etc.)
         "MOCK_MODE": mock_mode,
         
         # 🚨 [Critical Fix] Loop Control Parameters

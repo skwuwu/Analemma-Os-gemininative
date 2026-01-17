@@ -40,7 +40,7 @@ class TestTaskContextLogic:
         payload = task.to_websocket_payload()
         
         assert payload["task_id"] == "task-1"
-        assert payload["display_status"] == "진행 중" # Mapped value
+        assert payload["display_status"] == "In Progress" # Mapped value
         assert payload["thought"] == "Processing..."
         assert payload["progress"] == 50
         assert payload["agent_name"] == "TestAgent"
@@ -64,7 +64,7 @@ class TestTaskContextLogic:
         # Verify websocket payload reflects interruption
         payload = task.to_websocket_payload()
         assert payload["is_interruption"] == True
-        assert payload["display_status"] == "승인 대기"
+        assert payload["display_status"] == "Pending Approval"
 
     def test_clear_pending_decision(self):
         """Test clearing decision resumes status."""

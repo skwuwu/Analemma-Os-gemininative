@@ -10,21 +10,21 @@ from src.constructs import Construct
 
 class ServerlessWorkflowDatabaseStack(Stack):
     """
-    [개선됨] 단일 책임 원칙: DynamoDB 테이블과 데이터 레이어만 정의
+    [Improved] Single Responsibility Principle: Define only DynamoDB tables and data layer
     
-    이전 이름: ServerlessWorkflowStack
-    새 이름: ServerlessWorkflowDatabaseStack
+    Previous name: ServerlessWorkflowStack
+    New name: ServerlessWorkflowDatabaseStack
     
-    책임:
-    - DynamoDB 테이블 정의 (Workflows, TaskTokens, Users)
-    - GSI 및 인덱스 설정
-    - 테이블 암호화 및 TTL 설정
-    - Cross-stack reference를 위한 ARN 출력
+    Responsibilities:
+    - Define DynamoDB tables (Workflows, TaskTokens, Users)
+    - Set up GSI and indexes
+    - Table encryption and TTL settings
+    - ARN output for cross-stack reference
     
-    제외된 책임 (별도 스택으로 이동):
-    - Lambda 함수들 (ComputeStack/ApiStack으로)
-    - EventBridge 규칙들 (ComputeStack으로)
-    - Step Functions (ComputeStack으로)
+    Excluded responsibilities (moved to separate stack):
+    - Lambda functions (to ComputeStack/ApiStack)
+    - EventBridge rules (to ComputeStack)
+    - Step Functions (to ComputeStack)
     """
 
     def __init__(
@@ -43,9 +43,9 @@ class ServerlessWorkflowDatabaseStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # =====================================================================
-        # 1. Workflows Table: 워크플로우 설계를 저장하는 핵심 테이블
+        # 1. Workflows Table: Core table for storing workflow designs
         # =====================================================================
-        # 사용자가 생성한 워크플로우의 JSON 설계도와 메타데이터를 저장합니다.
+        # Stores JSON blueprints and metadata of user-created workflows.
         # NOTE: `is_scheduled` is stored as STRING ("true"/"false") because
         # DynamoDB does not allow BOOLEAN types as key attributes (GSI PK/SK
         # must be STRING, NUMBER or BINARY). Keep this in mind when writing
@@ -68,14 +68,14 @@ class ServerlessWorkflowDatabaseStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # --- Global Secondary Index (GSI) 추가 ---
-        # [개선됨] 샤딩 기반 스케줄러 GSI: 대규모 확장성을 위한 "핫 파티션" 방지
-        # 중앙 스케줄러 람다가 "지금 실행해야 할" 워크플로우를 효율적으로 찾기 위해 사용합니다.
+        # --- Add Global Secondary Index (GSI) ---
+        # [Improved] Sharding-based scheduler GSI: Prevent "hot partitions" for large-scale scalability
+        # Used by central scheduler lambda to efficiently find workflows that "should run now".
         # 
-        # 샤딩 전략:
-        # - PK: schedule_shard_id ("shard_0" ~ "shard_9", 워크플로우 저장 시 랜덤 할당)
-        # - SK: next_run_time (실행 시각)
-        # - 스케줄러는 10개 샤드를 병렬 쿼리하여 읽기 부하를 분산시킵니다.
+        # Sharding strategy:
+        # - PK: schedule_shard_id ("shard_0" ~ "shard_9", randomly assigned when saving workflow)
+        # - SK: next_run_time (execution time)
+        # - Scheduler queries 10 shards in parallel to distribute read load.
         workflows_table.add_global_secondary_index(
             index_name="ScheduledWorkflowsIndexV2",
             partition_key=dynamodb.Attribute(
@@ -105,15 +105,15 @@ class ServerlessWorkflowDatabaseStack(Stack):
         )
 
         # -----------------------------------------------------------------
-        # [제거됨] MergeCallback Lambda는 ComputeStack/ApiStack으로 이동
-        # Lambda 함수들은 별도의 스택에서 정의하고, 이 테이블들을
-        # Cross-stack reference로 참조하도록 구성하는 것이 좋습니다.
+        # [Removed] MergeCallback Lambda moved to ComputeStack/ApiStack
+        # Lambda functions should be defined in separate stacks and
+        # reference these tables via cross-stack references.
         # -----------------------------------------------------------------
 
         # =====================================================================
-        # 2. Task Tokens Table: Human-in-the-Loop(HITP) 상태 저장용 테이블
+        # 2. Task Tokens Table: Table for storing Human-in-the-Loop(HITP) state
         # =====================================================================
-        # Step Functions가 일시 중지될 때 생성되는 TaskToken을 임시로 저장합니다.
+        # Temporarily stores TaskTokens created when Step Functions are paused.
         # Optionally use a customer-managed KMS key for stronger data-at-rest
         # protection for TaskTokens, which contain sensitive taskToken values.
         task_tokens_encryption = dynamodb.TableEncryption.AWS_MANAGED
@@ -195,9 +195,9 @@ class ServerlessWorkflowDatabaseStack(Stack):
         )
 
         # =====================================================================
-        # 3. Users Table: 사용자 정보 저장용 테이블
+        # 3. Users Table: Table for storing user information
         # =====================================================================
-        # 기본적인 사용자 정보를 저장합니다. 필요에 따라 GSI 등을 추가할 수 있습니다.
+        # Stores basic user information. GSI etc. can be added as needed.
         users_table = dynamodb.Table(
             self,
             "UsersTable",
@@ -210,16 +210,16 @@ class ServerlessWorkflowDatabaseStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # --- CloudFormation Outputs: Cross-stack reference 지원 ---
-        # 다른 스택(ComputeStack, ApiStack)에서 이 테이블들을 참조할 수 있도록
-        # 테이블 이름과 ARN을 모두 출력합니다.
+        # --- CloudFormation Outputs: Support for cross-stack references ---
+        # Output both table names and ARNs so that other stacks
+        # (ComputeStack, ApiStack) can reference these tables.
         
-        # Table Names (기존 호환성 유지)
+        # Table Names (maintain existing compatibility)
         CfnOutput(self, "WorkflowsTableName", value=workflows_table.table_name)
         CfnOutput(self, "TaskTokensTableName", value=task_tokens_table.table_name) 
         CfnOutput(self, "UsersTableName", value=users_table.table_name)
         
-        # Table ARNs (Cross-stack reference용)
+        # Table ARNs (for cross-stack references)
         CfnOutput(self, "WorkflowsTableArn", value=workflows_table.table_arn,
                  export_name="DatabaseStack-WorkflowsTableArn")
         CfnOutput(self, "TaskTokensTableArn", value=task_tokens_table.table_arn,
@@ -227,7 +227,7 @@ class ServerlessWorkflowDatabaseStack(Stack):
         CfnOutput(self, "UsersTableArn", value=users_table.table_arn,
                  export_name="DatabaseStack-UsersTableArn")
         
-        # GSI Names (스케줄러 등에서 사용)
+        # GSI Names (used by scheduler etc.)
         CfnOutput(self, "ScheduledWorkflowsIndexName", value="ScheduledWorkflowsIndexV2",
                  export_name="DatabaseStack-ScheduledWorkflowsIndexName")
         CfnOutput(self, "OwnerIdNameIndexName", value="OwnerIdNameIndexV2",
@@ -236,17 +236,17 @@ class ServerlessWorkflowDatabaseStack(Stack):
                  export_name="DatabaseStack-ExecutionIdIndexName")
 
         # -----------------------------------------------------------------
-        # [개선됨] Lambda와 EventBridge는 별도 스택에서 정의
+        # [Improved] Lambda and EventBridge defined in separate stacks
         # -----------------------------------------------------------------
-        # 이전에 여기서 정의되던 SchedulerFunction은 이제 ComputeStack에서
-        # 정의하고, 아래 테이블 ARN들을 Cross-stack reference로 가져와 사용합니다:
+        # The SchedulerFunction previously defined here is now defined in ComputeStack
+        # and uses the table ARNs below via cross-stack references:
         # 
         # Example in ComputeStack:
         # from src.aws_cdk import Fn
         # workflows_table_arn = Fn.import_value("DatabaseStack-WorkflowsTableArn")
         # workflows_table = dynamodb.Table.from_table_arn(self, "ImportedWorkflowsTable", workflows_table_arn)
         # 
-        # SchedulerFunction 샤딩 쿼리 예시:
+        # SchedulerFunction sharding query example:
         # for shard_id in range(10):  # shard_0 ~ shard_9
         #     response = table.query(
         #         IndexName="ScheduledWorkflowsIndex",

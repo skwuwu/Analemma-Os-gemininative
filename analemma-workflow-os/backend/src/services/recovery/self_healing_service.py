@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 METRIC_NAMESPACE = "Analemma/Engine"
 
 def put_custom_metric(metric_name: str, value: float, dimensions: list[dict] | None = None) -> None:
-    """CloudWatch에 커스텀 매트릭을 발행합니다."""
+    """Publish custom metrics to CloudWatch."""
     try:
         cloudwatch = boto3.client("cloudwatch")
         metric_data = {

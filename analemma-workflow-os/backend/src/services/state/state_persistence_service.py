@@ -49,7 +49,7 @@ class StatePersistenceService:
         self._s3_client = None
         self._dynamodb = None
         self._state_bucket = state_bucket or os.environ.get('WORKFLOW_STATE_BUCKET')
-        # 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+        # 🚨 [Critical Fix] Match default values with template.yaml
         self._workflows_table = workflows_table or os.environ.get('WORKFLOWS_TABLE', 'WorkflowsTableV3')
 
     @property
@@ -68,13 +68,13 @@ class StatePersistenceService:
 
     def set_bucket(self, bucket_name: str) -> None:
         """
-        [v2.3] 상태 버킷을 동적으로 설정.
+        [v2.3] Dynamically set state bucket.
         
-        핸들러에서 프라이벗 멤버에 직접 접근하는 대신
-        이 메서드를 사용하여 캡슐화 원칙을 준수.
+        Instead of directly accessing private members from handlers
+        use this method to follow encapsulation principles.
         
         Args:
-            bucket_name: S3 버킷 이름
+            bucket_name: S3 bucket name
         """
         if bucket_name:
             self._state_bucket = bucket_name

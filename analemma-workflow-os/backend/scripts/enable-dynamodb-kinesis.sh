@@ -7,7 +7,7 @@ REGION=$3
 
 echo "Enabling Kinesis streaming destination for table '$TABLE_NAME' to stream '$STREAM_ARN'..."
 
-# 이미 활성화되어 있는지 확인 (선택 사항이지만 로그를 위해)
+# Check if already enabled (optional but for logging)
 EXISTING=$(aws dynamodb describe-kinesis-streaming-destination \
     --table-name "$TABLE_NAME" \
     --region "$REGION" \

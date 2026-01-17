@@ -1,6 +1,6 @@
 """
-공통 유틸리티 모듈
-백엔드 코드의 중복을 제거하고 재사용성을 높이기 위한 공통 함수들
+Common utility module
+Common functions to eliminate duplication in backend code and increase reusability
 """
 
 from src.common.websocket_utils import (

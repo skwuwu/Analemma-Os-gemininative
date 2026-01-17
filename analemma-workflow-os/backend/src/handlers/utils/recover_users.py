@@ -25,7 +25,7 @@ import logging
 import boto3
 from botocore.exceptions import ClientError
 
-# 공통 모듈에서 AWS 클라이언트 가져오기
+# Import AWS clients from common module
 try:
     from src.common.aws_clients import get_dynamodb_resource
     _dynamodb_from_common = get_dynamodb_resource()

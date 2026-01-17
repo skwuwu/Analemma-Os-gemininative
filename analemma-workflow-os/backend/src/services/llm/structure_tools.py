@@ -1,21 +1,21 @@
 """
-Structure Tools - 워크플로우 구조적 도구 정의
+Structure Tools - Workflow Structural Tools Definition
 
-Gemini의 구조적 추론 능력을 극대화하기 위한 도구 정의:
-- Loop: 반복 처리 구조
-- Map: 병렬 분산 처리 구조
-- Parallel: 동시 실행 구조
-- Conditional: 조건부 분기 구조
-- SubGraph: 중첩 워크플로우 구조
+Gemini is maximized for structural reasoning by defining tools:
+- Loop: Sequential processing structure
+- Map: Parallel distributed processing structure
+- Parallel: Concurrent execution structure
+- Conditional: Conditional branching structure
+- SubGraph: Nested workflow structure
 
-각 도구는 JSON Schema 형식으로 정의되어 Gemini가
-정확한 구조를 생성하도록 유도합니다.
+Each tool is defined in JSON Schema format to guide Gemini in generating accurate structures.
 """
 
 import json
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
+from pydantic import BaseModel, Field
 
 
 class StructureType(Enum):
@@ -27,10 +27,10 @@ class StructureType(Enum):
     SUBGRAPH = "subgraph"
     RETRY = "retry"
     CATCH = "catch"
+    WAIT_FOR_APPROVAL = "wait_for_approval"
 
 
-@dataclass
-class StructureDefinition:
+class StructureDefinition(BaseModel):
     """구조 도구 정의"""
     name: str
     type: StructureType
@@ -38,33 +38,34 @@ class StructureDefinition:
     schema: Dict[str, Any]
     examples: List[Dict[str, Any]]
     use_cases: List[str]
+    ui_hints: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ============================================================
-# 1. Loop 구조 - 반복 처리
+# 1. Loop structure - Sequential processing
 # ============================================================
 LOOP_STRUCTURE = StructureDefinition(
     name="loop",
     type=StructureType.LOOP,
-    description="데이터 컬렉션을 순차적으로 반복 처리하는 구조. 각 아이템에 대해 동일한 처리 로직을 적용합니다.",
+    description="A structure that sequentially processes a collection of data, applying the same processing logic to each item.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: loop_1)"
+                "description": "Unique node ID (e.g., loop_1)"
             },
             "type": {
                 "type": "string",
                 "const": "for_each",
-                "description": "노드 타입 (고정값: for_each)"
+                "description": "Node type (fixed value: for_each)"
             },
             "data": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "UI에 표시될 노드 이름"},
-                    "description": {"type": "string", "description": "노드 설명"}
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "Node description"}
                 }
             },
             "config": {
@@ -73,32 +74,32 @@ LOOP_STRUCTURE = StructureDefinition(
                 "properties": {
                     "items_path": {
                         "type": "string",
-                        "description": "반복할 아이템 배열의 상태 경로 (예: state.items, state.users)"
+                        "description": "State path of the item array to iterate (e.g., state.items, state.users)"
                     },
                     "item_key": {
                         "type": "string",
                         "default": "current_item",
-                        "description": "각 반복에서 현재 아이템을 저장할 상태 키"
+                        "description": "State key to store the current item in each iteration"
                     },
                     "index_key": {
                         "type": "string",
                         "default": "current_index",
-                        "description": "현재 인덱스를 저장할 상태 키"
+                        "description": "State key to store the current index"
                     },
                     "body_nodes": {
                         "type": "array",
-                        "description": "반복 내에서 실행할 노드 ID 목록",
+                        "description": "List of node IDs to execute within the loop",
                         "items": {"type": "string"}
                     },
                     "max_iterations": {
                         "type": "integer",
                         "default": 1000,
-                        "description": "최대 반복 횟수 (무한 루프 방지)"
+                        "description": "Maximum number of iterations (prevents infinite loops)"
                     },
                     "continue_on_error": {
                         "type": "boolean",
                         "default": False,
-                        "description": "오류 발생 시 다음 아이템으로 계속 진행 여부"
+                        "description": "Whether to continue to the next item if an error occurs"
                     }
                 }
             },
@@ -113,52 +114,57 @@ LOOP_STRUCTURE = StructureDefinition(
     },
     examples=[
         {
-            "id": "loop_process_users",
+            "id": "loop_process_items",
             "type": "for_each",
-            "data": {"label": "사용자 처리 루프", "description": "각 사용자에 대해 이메일 발송"},
+            "data": {"label": "Process Items Loop", "description": "Process each item in the collection"},
             "config": {
-                "items_path": "state.users",
-                "item_key": "current_user",
-                "body_nodes": ["send_email", "log_result"],
+                "items_path": "state.items",
+                "item_key": "current_item",
+                "body_nodes": ["process_item", "log_result"],
                 "continue_on_error": True
             },
             "position": {"x": 200, "y": 150}
         }
     ],
     use_cases=[
-        "사용자 목록을 순회하며 각각에 대해 처리",
-        "파일 목록을 하나씩 처리",
-        "API 응답의 배열 데이터를 순차 처리",
-        "배치 작업에서 각 레코드를 순서대로 처리"
-    ]
+        "Process each item in a collection sequentially",
+        "Handle a list of files one by one",
+        "Process array data from API responses",
+        "Process each record in batch operations"
+    ],
+    ui_hints={
+        "suggested_width": 200,
+        "color_code": "#4CAF50",
+        "icon": "loop"
+    }
 )
 
 
 # ============================================================
-# 2. Map 구조 - 병렬 분산 처리
+# 2. Map structure - Parallel distributed processing
 # ============================================================
 MAP_STRUCTURE = StructureDefinition(
     name="map",
     type=StructureType.MAP,
-    description="데이터 컬렉션을 병렬로 동시 처리하는 구조. AWS Step Functions의 Distributed Map과 호환됩니다.",
+    description="A structure that processes a collection of data in parallel. Compatible with AWS Step Functions Distributed Map.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: map_1)"
+                "description": "Unique node ID (e.g., map_1)"
             },
             "type": {
                 "type": "string",
                 "const": "distributed_map",
-                "description": "노드 타입 (고정값: distributed_map)"
+                "description": "Node type (fixed value: distributed_map)"
             },
             "data": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "UI에 표시될 노드 이름"},
-                    "description": {"type": "string", "description": "노드 설명"}
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "Node description"}
                 }
             },
             "config": {
@@ -167,35 +173,35 @@ MAP_STRUCTURE = StructureDefinition(
                 "properties": {
                     "items_path": {
                         "type": "string",
-                        "description": "병렬 처리할 아이템 배열의 상태 경로"
+                        "description": "State path of the item array for parallel processing"
                     },
                     "processor_node": {
                         "type": "string",
-                        "description": "각 아이템을 처리할 노드 ID"
+                        "description": "Node ID to process each item"
                     },
                     "max_concurrency": {
                         "type": "integer",
                         "default": 40,
-                        "description": "최대 동시 실행 수 (1-1000)"
+                        "description": "Maximum concurrent executions (1-1000)"
                     },
                     "tolerated_failure_percentage": {
                         "type": "number",
                         "default": 0,
-                        "description": "허용 가능한 실패 비율 (0-100)"
+                        "description": "Allowed failure percentage (0-100)"
                     },
                     "tolerated_failure_count": {
                         "type": "integer",
                         "default": 0,
-                        "description": "허용 가능한 실패 횟수"
+                        "description": "Allowed failure count"
                     },
                     "result_path": {
                         "type": "string",
                         "default": "$.map_results",
-                        "description": "결과를 저장할 상태 경로"
+                        "description": "State path to store results"
                     },
                     "batch_size": {
                         "type": "integer",
-                        "description": "배치 크기 (지정 시 배치 단위로 처리)"
+                        "description": "Batch size (process in batches if specified)"
                     }
                 }
             },
@@ -212,7 +218,7 @@ MAP_STRUCTURE = StructureDefinition(
         {
             "id": "map_process_documents",
             "type": "distributed_map",
-            "data": {"label": "문서 병렬 처리", "description": "대량의 문서를 동시에 분석"},
+            "data": {"label": "Document Parallel Processing", "description": "Analyze large volumes of documents simultaneously"},
             "config": {
                 "items_path": "state.documents",
                 "processor_node": "analyze_document",
@@ -224,39 +230,39 @@ MAP_STRUCTURE = StructureDefinition(
         }
     ],
     use_cases=[
-        "대량의 이미지를 동시에 처리",
-        "수천 개의 API 호출을 병렬로 실행",
-        "분산 데이터 분석 작업",
-        "대규모 ETL 파이프라인"
+        "Process large images simultaneously",
+        "Execute thousands of API calls in parallel",
+        "Perform distributed data analysis",
+        "Handle large-scale ETL pipelines"
     ]
 )
 
 
 # ============================================================
-# 3. Parallel 구조 - 동시 실행 (서로 다른 작업)
+# 3. Parallel structure - Concurrent execution (different tasks)
 # ============================================================
 PARALLEL_STRUCTURE = StructureDefinition(
     name="parallel",
     type=StructureType.PARALLEL,
-    description="서로 다른 여러 작업을 동시에 실행하는 구조. 각 브랜치는 독립적으로 실행됩니다.",
+    description="A structure that executes multiple different tasks simultaneously. Each branch runs independently.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: parallel_1)"
+                "description": "Unique node ID (e.g., parallel_1)"
             },
             "type": {
                 "type": "string",
                 "const": "parallel",
-                "description": "노드 타입 (고정값: parallel)"
+                "description": "Node type (fixed value: parallel)"
             },
             "data": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "UI에 표시될 노드 이름"},
-                    "description": {"type": "string", "description": "노드 설명"}
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "Node description"}
                 }
             },
             "config": {
@@ -265,17 +271,17 @@ PARALLEL_STRUCTURE = StructureDefinition(
                 "properties": {
                     "branches": {
                         "type": "array",
-                        "description": "병렬로 실행할 브랜치 정의",
+                        "description": "Branch definitions for parallel execution",
                         "items": {
                             "type": "object",
                             "required": ["id", "nodes"],
                             "properties": {
-                                "id": {"type": "string", "description": "브랜치 ID"},
-                                "name": {"type": "string", "description": "브랜치 이름"},
+                                "id": {"type": "string", "description": "Branch ID"},
+                                "name": {"type": "string", "description": "Branch name"},
                                 "nodes": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "이 브랜치에서 실행할 노드 ID 목록"
+                                    "description": "List of node IDs to execute in this branch"
                                 }
                             }
                         }
@@ -283,13 +289,13 @@ PARALLEL_STRUCTURE = StructureDefinition(
                     "wait_for_all": {
                         "type": "boolean",
                         "default": True,
-                        "description": "모든 브랜치 완료를 대기할지 여부"
+                        "description": "Whether to wait for all branches to complete"
                     },
                     "result_merge_strategy": {
                         "type": "string",
                         "enum": ["merge", "array", "first"],
                         "default": "merge",
-                        "description": "결과 병합 전략"
+                        "description": "Result merge strategy"
                     }
                 }
             },
@@ -306,12 +312,12 @@ PARALLEL_STRUCTURE = StructureDefinition(
         {
             "id": "parallel_fetch_data",
             "type": "parallel",
-            "data": {"label": "데이터 동시 수집", "description": "여러 소스에서 동시에 데이터 수집"},
+            "data": {"label": "Concurrent Data Collection", "description": "Collect data from multiple sources simultaneously"},
             "config": {
                 "branches": [
-                    {"id": "branch_api", "name": "API 데이터", "nodes": ["fetch_api"]},
-                    {"id": "branch_db", "name": "DB 데이터", "nodes": ["query_db"]},
-                    {"id": "branch_cache", "name": "캐시 데이터", "nodes": ["check_cache"]}
+                    {"id": "branch_api", "name": "API Data", "nodes": ["fetch_api"]},
+                    {"id": "branch_db", "name": "DB Data", "nodes": ["query_db"]},
+                    {"id": "branch_cache", "name": "Cache Data", "nodes": ["check_cache"]}
                 ],
                 "wait_for_all": True,
                 "result_merge_strategy": "merge"
@@ -320,39 +326,39 @@ PARALLEL_STRUCTURE = StructureDefinition(
         }
     ],
     use_cases=[
-        "여러 API에서 동시에 데이터 수집",
-        "데이터베이스와 캐시를 동시에 조회",
-        "여러 서비스에 동시 알림 발송",
-        "다중 소스 데이터 통합"
+        "Collect data from multiple APIs simultaneously",
+        "Query databases and caches concurrently",
+        "Send notifications to multiple services at once",
+        "Integrate data from multiple sources"
     ]
 )
 
 
 # ============================================================
-# 4. Conditional 구조 - 조건부 분기
+# 4. Conditional structure - Conditional branching
 # ============================================================
 CONDITIONAL_STRUCTURE = StructureDefinition(
     name="conditional",
     type=StructureType.CONDITIONAL,
-    description="조건에 따라 다른 경로로 분기하는 구조. if-else, switch-case 패턴을 지원합니다.",
+    description="A structure that branches to different paths based on conditions. Supports if-else and switch-case patterns.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: cond_1)"
+                "description": "Unique node ID (e.g., cond_1)"
             },
             "type": {
                 "type": "string",
                 "const": "route_condition",
-                "description": "노드 타입 (고정값: route_condition)"
+                "description": "Node type (fixed value: route_condition)"
             },
             "data": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "UI에 표시될 노드 이름"},
-                    "description": {"type": "string", "description": "노드 설명"}
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "Node description"}
                 }
             },
             "config": {
@@ -361,33 +367,33 @@ CONDITIONAL_STRUCTURE = StructureDefinition(
                 "properties": {
                     "conditions": {
                         "type": "array",
-                        "description": "조건 목록 (순서대로 평가)",
+                        "description": "List of conditions (evaluated in order)",
                         "items": {
                             "type": "object",
                             "required": ["id", "expression", "target_node"],
                             "properties": {
-                                "id": {"type": "string", "description": "조건 ID"},
-                                "name": {"type": "string", "description": "조건 이름"},
+                                "id": {"type": "string", "description": "Condition ID"},
+                                "name": {"type": "string", "description": "Condition name"},
                                 "expression": {
                                     "type": "string",
-                                    "description": "Python 표현식 (예: state.score > 80)"
+                                    "description": "Python expression (e.g., state.score > 80)"
                                 },
                                 "target_node": {
                                     "type": "string",
-                                    "description": "조건이 참일 때 이동할 노드 ID"
+                                    "description": "Node ID to move to if condition is true"
                                 }
                             }
                         }
                     },
                     "default_node": {
                         "type": "string",
-                        "description": "모든 조건이 거짓일 때 이동할 기본 노드 ID"
+                        "description": "Default node ID if all conditions are false"
                     },
                     "evaluation_mode": {
                         "type": "string",
                         "enum": ["first_match", "all_match"],
                         "default": "first_match",
-                        "description": "평가 모드 (first_match: 첫 번째 일치, all_match: 모든 일치)"
+                        "description": "Evaluation mode (first_match: first true, all_match: all true)"
                     }
                 }
             },
@@ -404,12 +410,12 @@ CONDITIONAL_STRUCTURE = StructureDefinition(
         {
             "id": "cond_quality_check",
             "type": "route_condition",
-            "data": {"label": "품질 검사 분기", "description": "점수에 따라 다른 처리 경로로 분기"},
+            "data": {"label": "Quality Check Branch", "description": "Branch based on score to different processing paths"},
             "config": {
                 "conditions": [
-                    {"id": "high_quality", "name": "고품질", "expression": "state.score >= 90", "target_node": "approve"},
-                    {"id": "medium_quality", "name": "중품질", "expression": "state.score >= 70", "target_node": "review"},
-                    {"id": "low_quality", "name": "저품질", "expression": "state.score < 70", "target_node": "reject"}
+                    {"id": "high_quality", "name": "High Quality", "expression": "state.score >= 90", "target_node": "approve"},
+                    {"id": "medium_quality", "name": "Medium Quality", "expression": "state.score >= 70", "target_node": "review"},
+                    {"id": "low_quality", "name": "Low Quality", "expression": "state.score < 70", "target_node": "reject"}
                 ],
                 "default_node": "manual_review",
                 "evaluation_mode": "first_match"
@@ -418,39 +424,39 @@ CONDITIONAL_STRUCTURE = StructureDefinition(
         }
     ],
     use_cases=[
-        "품질 점수에 따른 승인/반려 분기",
-        "사용자 권한에 따른 처리 경로 분기",
-        "데이터 유효성에 따른 분기",
-        "A/B 테스트 분기"
+        "Approval/rejection branching based on quality scores",
+        "Processing path branching based on user permissions",
+        "Branching based on data validation",
+        "A/B test branching"
     ]
 )
 
 
 # ============================================================
-# 5. Retry 구조 - 재시도 처리
+# 5. Retry structure - Retry processing
 # ============================================================
 RETRY_STRUCTURE = StructureDefinition(
     name="retry",
     type=StructureType.RETRY,
-    description="실패 시 자동으로 재시도하는 구조. 지수 백오프 및 최대 재시도 횟수를 설정할 수 있습니다.",
+    description="A structure that automatically retries on failure. Supports exponential backoff and maximum retry counts.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: retry_1)"
+                "description": "Unique node ID (e.g., retry_1)"
             },
             "type": {
                 "type": "string",
                 "const": "retry_wrapper",
-                "description": "노드 타입 (고정값: retry_wrapper)"
+                "description": "Node type (fixed value: retry_wrapper)"
             },
             "data": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "UI에 표시될 노드 이름"},
-                    "description": {"type": "string", "description": "노드 설명"}
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "Node description"}
                 }
             },
             "config": {
@@ -459,32 +465,32 @@ RETRY_STRUCTURE = StructureDefinition(
                 "properties": {
                     "target_node": {
                         "type": "string",
-                        "description": "재시도할 노드 ID"
+                        "description": "Node ID to retry"
                     },
                     "max_attempts": {
                         "type": "integer",
                         "default": 3,
-                        "description": "최대 재시도 횟수"
+                        "description": "Maximum retry attempts"
                     },
                     "initial_interval_seconds": {
                         "type": "number",
                         "default": 1,
-                        "description": "첫 번째 재시도 전 대기 시간 (초)"
+                        "description": "Wait time before first retry (seconds)"
                     },
                     "max_interval_seconds": {
                         "type": "number",
                         "default": 60,
-                        "description": "최대 대기 시간 (초)"
+                        "description": "Maximum wait time (seconds)"
                     },
                     "backoff_rate": {
                         "type": "number",
                         "default": 2.0,
-                        "description": "지수 백오프 비율"
+                        "description": "Exponential backoff rate"
                     },
                     "retryable_errors": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "재시도할 에러 타입 목록 (비어있으면 모든 에러)"
+                        "description": "List of retryable error types (empty means all errors)"
                     }
                 }
             },
@@ -501,7 +507,7 @@ RETRY_STRUCTURE = StructureDefinition(
         {
             "id": "retry_api_call",
             "type": "retry_wrapper",
-            "data": {"label": "API 호출 재시도", "description": "실패 시 최대 5회 재시도"},
+            "data": {"label": "API Call Retry", "description": "Retry up to 5 times on failure"},
             "config": {
                 "target_node": "external_api_call",
                 "max_attempts": 5,
@@ -513,39 +519,39 @@ RETRY_STRUCTURE = StructureDefinition(
         }
     ],
     use_cases=[
-        "불안정한 외부 API 호출",
-        "네트워크 타임아웃 처리",
-        "일시적인 서비스 장애 대응",
-        "Rate Limit 초과 시 재시도"
+        "Handle unreliable external API calls",
+        "Manage network timeouts",
+        "Respond to temporary service outages",
+        "Handle rate limit exceedances"
     ]
 )
 
 
 # ============================================================
-# 6. Catch 구조 - 에러 핸들링
+# 6. Catch structure - Error handling
 # ============================================================
 CATCH_STRUCTURE = StructureDefinition(
     name="catch",
     type=StructureType.CATCH,
-    description="에러 발생 시 대체 경로로 분기하는 구조. try-catch 패턴을 구현합니다.",
+    description="A structure that branches to alternative paths on error. Implements try-catch patterns.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: catch_1)"
+                "description": "Unique node ID (e.g., catch_1)"
             },
             "type": {
                 "type": "string",
                 "const": "error_handler",
-                "description": "노드 타입 (고정값: error_handler)"
+                "description": "Node type (fixed value: error_handler)"
             },
             "data": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "UI에 표시될 노드 이름"},
-                    "description": {"type": "string", "description": "노드 설명"}
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "Node description"}
                 }
             },
             "config": {
@@ -555,11 +561,11 @@ CATCH_STRUCTURE = StructureDefinition(
                     "try_nodes": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "시도할 노드 ID 목록"
+                        "description": "List of node IDs to attempt"
                     },
                     "catch_handlers": {
                         "type": "array",
-                        "description": "에러 핸들러 목록",
+                        "description": "Error handler list",
                         "items": {
                             "type": "object",
                             "required": ["error_types", "handler_node"],
@@ -567,18 +573,18 @@ CATCH_STRUCTURE = StructureDefinition(
                                 "error_types": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "description": "처리할 에러 타입 목록"
+                                    "description": "List of error types to handle"
                                 },
                                 "handler_node": {
                                     "type": "string",
-                                    "description": "에러 처리 노드 ID"
+                                    "description": "Error handling node ID"
                                 }
                             }
                         }
                     },
                     "finally_node": {
                         "type": "string",
-                        "description": "항상 실행할 정리 노드 ID (선택사항)"
+                        "description": "Cleanup node ID to always execute (optional)"
                     }
                 }
             },
@@ -595,7 +601,7 @@ CATCH_STRUCTURE = StructureDefinition(
         {
             "id": "catch_processing",
             "type": "error_handler",
-            "data": {"label": "에러 핸들링", "description": "처리 중 에러 발생 시 복구"},
+            "data": {"label": "Error Handling", "description": "Recover from errors during processing"},
             "config": {
                 "try_nodes": ["process_data", "save_result"],
                 "catch_handlers": [
@@ -608,33 +614,33 @@ CATCH_STRUCTURE = StructureDefinition(
         }
     ],
     use_cases=[
-        "데이터 처리 실패 시 대체 로직 실행",
-        "외부 서비스 장애 시 폴백 처리",
-        "트랜잭션 실패 시 롤백",
-        "리소스 정리 보장"
+        "Execute alternative logic on data processing failures",
+        "Handle external service outages with fallbacks",
+        "Rollback on transaction failures",
+        "Ensure resource cleanup"
     ]
 )
 
 
 # ============================================================
-# 7. SubGraph 구조 - 중첩 워크플로우
+# 8. Wait for Approval 구조 - 인간 개입 (HITL)
 # ============================================================
-SUBGRAPH_STRUCTURE = StructureDefinition(
-    name="subgraph",
-    type=StructureType.SUBGRAPH,
-    description="다른 워크플로우를 중첩 호출하는 구조. 재사용 가능한 워크플로우 모듈화를 지원합니다.",
+WAIT_FOR_APPROVAL_STRUCTURE = StructureDefinition(
+    name="wait_for_approval",
+    type=StructureType.WAIT_FOR_APPROVAL,
+    description="AI가 판단하기 어려운 구간에서 인간의 승인을 기다리는 구조. Glassbox AI의 핵심 요소입니다.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: subgraph_1)"
+                "description": "노드 고유 ID (예: approval_1)"
             },
             "type": {
                 "type": "string",
-                "const": "group",
-                "description": "노드 타입 (고정값: group)"
+                "const": "wait_for_approval",
+                "description": "노드 타입 (고정값: wait_for_approval)"
             },
             "data": {
                 "type": "object",
@@ -645,23 +651,43 @@ SUBGRAPH_STRUCTURE = StructureDefinition(
             },
             "config": {
                 "type": "object",
-                "required": ["subgraph_id"],
+                "required": ["approval_message", "timeout_seconds"],
                 "properties": {
-                    "subgraph_id": {
+                    "approval_message": {
                         "type": "string",
-                        "description": "호출할 서브그래프(워크플로우) ID"
+                        "description": "사용자에게 표시할 승인 요청 메시지"
                     },
-                    "input_mapping": {
-                        "type": "object",
-                        "description": "입력 매핑 (현재 상태 → 서브그래프 입력)"
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "default": 3600,
+                        "description": "승인 대기 시간 초과 (기본 1시간)"
                     },
-                    "output_mapping": {
-                        "type": "object",
-                        "description": "출력 매핑 (서브그래프 출력 → 현재 상태)"
+                    "approver_roles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "승인 가능한 사용자 역할 목록"
                     },
-                    "inline_definition": {
-                        "type": "object",
-                        "description": "인라인 서브그래프 정의 (외부 참조 대신 직접 정의)"
+                    "auto_approve_conditions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "expression": {"type": "string", "description": "자동 승인 조건 표현식"},
+                                "action": {"type": "string", "enum": ["approve", "reject"], "description": "자동 승인 시 액션"}
+                            }
+                        },
+                        "description": "자동 승인 조건 목록"
+                    },
+                    "escalation_rules": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "after_seconds": {"type": "integer", "description": "에스컬레이션 대기 시간"},
+                                "escalate_to": {"type": "string", "description": "에스컬레이션 대상 역할"}
+                            }
+                        },
+                        "description": "에스컬레이션 규칙"
                     }
                 }
             },
@@ -676,28 +702,35 @@ SUBGRAPH_STRUCTURE = StructureDefinition(
     },
     examples=[
         {
-            "id": "subgraph_notification",
-            "type": "group",
-            "data": {"label": "알림 발송 서브그래프", "description": "재사용 가능한 알림 워크플로우 호출"},
+            "id": "approval_high_value_transaction",
+            "type": "wait_for_approval",
+            "data": {"label": "고액 거래 승인", "description": "100만원 이상 거래는 관리자 승인 필요"},
             "config": {
-                "subgraph_id": "notification_workflow_v2",
-                "input_mapping": {
-                    "recipient": "state.user_email",
-                    "message": "state.notification_message"
-                },
-                "output_mapping": {
-                    "state.notification_sent": "result.success"
-                }
+                "approval_message": "고액 거래가 발생했습니다. 승인하시겠습니까?",
+                "timeout_seconds": 7200,
+                "approver_roles": ["manager", "supervisor"],
+                "auto_approve_conditions": [
+                    {"expression": "state.amount < 50000", "action": "approve"}
+                ],
+                "escalation_rules": [
+                    {"after_seconds": 3600, "escalate_to": "senior_manager"}
+                ]
             },
-            "position": {"x": 400, "y": 200}
+            "position": {"x": 300, "y": 250}
         }
     ],
     use_cases=[
-        "공통 알림 로직 재사용",
-        "데이터 검증 파이프라인 모듈화",
-        "복잡한 워크플로우의 논리적 분리",
-        "팀 간 워크플로우 공유"
-    ]
+        "고액 거래 승인",
+        "민감한 데이터 접근 승인",
+        "AI 신뢰도가 낮은 판단 승인",
+        "규정 준수 확인 승인",
+        "중요한 의사결정 승인"
+    ],
+    ui_hints={
+        "suggested_width": 250,
+        "color_code": "#FF9800",
+        "icon": "user_check"
+    }
 )
 
 
@@ -713,6 +746,7 @@ ALL_STRUCTURE_DEFINITIONS: List[StructureDefinition] = [
     RETRY_STRUCTURE,
     CATCH_STRUCTURE,
     SUBGRAPH_STRUCTURE,
+    WAIT_FOR_APPROVAL_STRUCTURE,
 ]
 
 
@@ -746,13 +780,52 @@ def get_structure_tools_by_type(type_: StructureType) -> List[StructureDefinitio
     return [s for s in ALL_STRUCTURE_DEFINITIONS if s.type == type_]
 
 
-def get_gemini_system_instruction() -> str:
+def get_gemini_system_instruction(mode: str = "detailed") -> str:
     """
     Gemini 시스템 지침용 구조 도구 문서 생성
+    
+    Args:
+        mode: "detailed" (전체 스키마 포함) 또는 "brief" (이름과 용도만 포함)
+    
+    Returns:
+        시스템 지침 텍스트
     """
-    tools_doc = []
-    for struct in ALL_STRUCTURE_DEFINITIONS:
-        doc = f"""
+    if mode == "brief":
+        # 요약 모드: 이름과 용도만 포함
+        tools_doc = []
+        for struct in ALL_STRUCTURE_DEFINITIONS:
+            doc = f"""
+### {struct.name.upper()} ({struct.type.value})
+{struct.description}
+
+**사용 사례:**
+{chr(10).join(f'- {uc}' for uc in struct.use_cases)}
+"""
+            tools_doc.append(doc)
+        
+        return f"""
+# Analemma OS 워크플로우 구조 도구 (요약 모드)
+
+이 문서는 워크플로우 설계 시 사용할 수 있는 구조적 도구들을 요약합니다.
+각 도구는 특정 제어 흐름 패턴을 구현하며, 상세 스키마는 별도 참조하세요.
+
+{''.join(tools_doc)}
+
+---
+**중요 규칙:**
+1. 데이터 컬렉션 처리 시 Loop 또는 Map 구조 사용을 먼저 검토하세요.
+2. 독립적인 여러 작업은 Parallel 구조로 동시 실행하세요.
+3. 조건 분기가 필요하면 Conditional 구조를 사용하세요.
+4. 외부 API 호출에는 Retry 구조를 함께 사용하세요.
+5. 모든 에러 발생 가능 구간에 Catch 구조를 적용하세요.
+6. AI 신뢰도가 낮은 구간에는 Wait for Approval 구조를 사용하세요.
+"""
+    
+    else:
+        # 상세 모드: 전체 스키마 포함
+        tools_doc = []
+        for struct in ALL_STRUCTURE_DEFINITIONS:
+            doc = f"""
 ### {struct.name.upper()} ({struct.type.value})
 {struct.description}
 
@@ -769,9 +842,9 @@ def get_gemini_system_instruction() -> str:
 {json.dumps(struct.examples[0], ensure_ascii=False, indent=2)}
 ```
 """
-        tools_doc.append(doc)
-    
-    return f"""
+            tools_doc.append(doc)
+        
+        return f"""
 # Analemma OS 워크플로우 구조 도구
 
 이 문서는 워크플로우 설계 시 사용할 수 있는 구조적 도구들을 정의합니다.
@@ -786,12 +859,17 @@ def get_gemini_system_instruction() -> str:
 3. 조건 분기가 필요하면 Conditional 구조를 사용하세요.
 4. 외부 API 호출에는 Retry 구조를 함께 사용하세요.
 5. 모든 에러 발생 가능 구간에 Catch 구조를 적용하세요.
+6. AI 신뢰도가 낮은 구간에는 Wait for Approval 구조를 사용하세요.
 """
 
 
-def validate_structure_node(node: Dict[str, Any]) -> List[str]:
+def validate_structure_node(node: Dict[str, Any], all_node_ids: Optional[List[str]] = None) -> List[str]:
     """
     구조 노드의 유효성 검증
+    
+    Args:
+        node: 검증할 노드
+        all_node_ids: 전체 워크플로우의 노드 ID 목록 (참조 무결성 검증용)
     
     Returns:
         검증 오류 메시지 목록 (빈 리스트면 유효)
@@ -812,6 +890,7 @@ def validate_structure_node(node: Dict[str, Any]) -> List[str]:
         "retry_wrapper": RETRY_STRUCTURE,
         "error_handler": CATCH_STRUCTURE,
         "group": SUBGRAPH_STRUCTURE,
+        "wait_for_approval": WAIT_FOR_APPROVAL_STRUCTURE,
     }
     
     struct = type_to_struct.get(node_type)
@@ -833,5 +912,62 @@ def validate_structure_node(node: Dict[str, Any]) -> List[str]:
     for field in config_required:
         if field not in config:
             errors.append(f"{struct.name} 노드의 config에 필수 필드 '{field}'가 없습니다.")
+    
+    # 참조 무결성 검증 (all_node_ids가 제공된 경우)
+    if all_node_ids:
+        # body_nodes 검증 (Loop, Map 등)
+        body_nodes = config.get("body_nodes", [])
+        if isinstance(body_nodes, list):
+            for node_id in body_nodes:
+                if node_id not in all_node_ids:
+                    errors.append(f"{struct.name} 노드의 body_nodes에 존재하지 않는 노드 ID '{node_id}'가 참조되었습니다.")
+        
+        # target_node 검증 (Conditional, Retry 등)
+        target_node = config.get("target_node")
+        if target_node and target_node not in all_node_ids:
+            errors.append(f"{struct.name} 노드의 target_node에 존재하지 않는 노드 ID '{target_node}'가 참조되었습니다.")
+        
+        # default_node 검증
+        default_node = config.get("default_node")
+        if default_node and default_node not in all_node_ids:
+            errors.append(f"{struct.name} 노드의 default_node에 존재하지 않는 노드 ID '{default_node}'가 참조되었습니다.")
+        
+        # conditions의 target_node 검증
+        conditions = config.get("conditions", [])
+        if isinstance(conditions, list):
+            for i, cond in enumerate(conditions):
+                target = cond.get("target_node")
+                if target and target not in all_node_ids:
+                    errors.append(f"{struct.name} 노드의 conditions[{i}] target_node에 존재하지 않는 노드 ID '{target}'가 참조되었습니다.")
+        
+        # branches의 nodes 검증
+        branches = config.get("branches", [])
+        if isinstance(branches, list):
+            for i, branch in enumerate(branches):
+                nodes = branch.get("nodes", [])
+                if isinstance(nodes, list):
+                    for node_id in nodes:
+                        if node_id not in all_node_ids:
+                            errors.append(f"{struct.name} 노드의 branches[{i}]에 존재하지 않는 노드 ID '{node_id}'가 참조되었습니다.")
+        
+        # try_nodes 검증
+        try_nodes = config.get("try_nodes", [])
+        if isinstance(try_nodes, list):
+            for node_id in try_nodes:
+                if node_id not in all_node_ids:
+                    errors.append(f"{struct.name} 노드의 try_nodes에 존재하지 않는 노드 ID '{node_id}'가 참조되었습니다.")
+        
+        # catch_handlers의 handler_node 검증
+        catch_handlers = config.get("catch_handlers", [])
+        if isinstance(catch_handlers, list):
+            for i, handler in enumerate(catch_handlers):
+                handler_node = handler.get("handler_node")
+                if handler_node and handler_node not in all_node_ids:
+                    errors.append(f"{struct.name} 노드의 catch_handlers[{i}] handler_node에 존재하지 않는 노드 ID '{handler_node}'가 참조되었습니다.")
+        
+        # finally_node 검증
+        finally_node = config.get("finally_node")
+        if finally_node and finally_node not in all_node_ids:
+            errors.append(f"{struct.name} 노드의 finally_node에 존재하지 않는 노드 ID '{finally_node}'가 참조되었습니다.")
     
     return errors

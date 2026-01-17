@@ -1,9 +1,9 @@
 """
 Vector Sync Core Tests
-프로덕션 코드: vector_sync_service.py (services/)
-핵심: sync_correction_to_vector_db, batch_sync_corrections, 토큰 제한
+Production code: vector_sync_service.py (services/)
+Core: sync_correction_to_vector_db, batch_sync_corrections, token limits
 
-no-llm 테스트: 결정론적 벡터 동기화 검증
+no-llm test: deterministic vector synchronization verification
 """
 import pytest
 import asyncio

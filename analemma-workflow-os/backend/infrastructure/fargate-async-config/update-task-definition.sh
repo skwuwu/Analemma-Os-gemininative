@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# ECS Task Definition 동적 업데이트 스크립트
-# 사용법: ./scripts/update-task-definition.sh <IMAGE_TAG>
+# ECS Task Definition dynamic update script
+# Usage: ./scripts/update-task-definition.sh <IMAGE_TAG>
 
 set -e
 
-# 파라미터 검증
+# Parameter validation
 if [ -z "$1" ]; then
-    echo "❌ 사용법: $0 <IMAGE_TAG>"
-    echo "예시: $0 abc123def456"
+    echo "❌ Usage: $0 <IMAGE_TAG>"
+    echo "Example: $0 abc123def456"
     exit 1
 fi
 
@@ -18,17 +18,17 @@ REGION="ap-northeast-2"
 TASK_DEFINITION_FILE="async-llm-worker-task-definition.json"
 TASK_FAMILY="async-llm-worker"
 
-echo "🚀 ECS Task Definition 업데이트 시작..."
-echo "📦 이미지 태그: ${IMAGE_TAG}"
-echo "🏷️ 계정 ID: ${ACCOUNT_ID}"
+echo "🚀 Starting ECS Task Definition update..."
+echo "📦 Image tag: ${IMAGE_TAG}"
+echo "🏷️ Account ID: ${ACCOUNT_ID}"
 
-# Task Definition 파일에서 이미지 태그 치환
+# Replace image tag in Task Definition file
 TEMP_FILE=$(mktemp)
 sed "s/\${IMAGE_TAG:-latest}/${IMAGE_TAG}/g" "${TASK_DEFINITION_FILE}" > "${TEMP_FILE}"
 
-echo "📋 Task Definition 등록 중..."
+echo "📋 Registering Task Definition..."
 
-# Task Definition 등록
+# Register Task Definition
 TASK_DEF_ARN=$(aws ecs register-task-definition \
     --cli-input-json "file://${TEMP_FILE}" \
     --region "${REGION}" \
@@ -36,20 +36,20 @@ TASK_DEF_ARN=$(aws ecs register-task-definition \
     --output text)
 
 if [ -z "$TASK_DEF_ARN" ]; then
-    echo "❌ Task Definition 등록 실패"
+    echo "❌ Task Definition registration failed"
     rm "${TEMP_FILE}"
     exit 1
 fi
 
-echo "✅ Task Definition 등록 완료: ${TASK_DEF_ARN}"
+echo "✅ Task Definition registration completed: ${TASK_DEF_ARN}"
 
-# 임시 파일 정리
+# Clean up temporary file
 rm "${TEMP_FILE}"
 
-# GitHub Actions 출력 (optional)
+# GitHub Actions output (optional)
 if [ -n "$GITHUB_OUTPUT" ]; then
     echo "task-definition-arn=${TASK_DEF_ARN}" >> "$GITHUB_OUTPUT"
 fi
 
-echo "🎉 Task Definition 업데이트 완료!"
-echo "📝 새로운 ARN: ${TASK_DEF_ARN}"
+echo "🎉 Task Definition update completed!"
+echo "📝 New ARN: ${TASK_DEF_ARN}"

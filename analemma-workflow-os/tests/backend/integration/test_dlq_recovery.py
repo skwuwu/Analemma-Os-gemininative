@@ -2,10 +2,10 @@
 DLQ Recovery Pessimistic Tests
 
 Tests for Dead Letter Queue recovery functionality with emphasis on:
-- Context Retention (execution_id, owner_id 보존)
-- Idempotency (중복 데이터 방지)
-- Redrive Throttling (대량 복구 시 백오프)
-- Poison Pill Detection (무한 재시도 방지)
+- Context Retention (preserve execution_id, owner_id)
+- Idempotency (prevent duplicate data)
+- Redrive Throttling (backoff during bulk recovery)
+- Poison Pill Detection (prevent infinite retries)
 - Error Type Filtering (Throttle vs Logic Error)
 
 Reference: dlq_redrive_handler.py
@@ -134,7 +134,7 @@ class TestDLQMessageTypeDetection:
     """Test message type detection logic"""
     
     def test_detect_websocket_notification_type(self):
-        """WebSocket 알림 이벤트 타입 감지"""
+        """Detect WebSocket notification event type"""
         event = {
             "source": "aws.states",
             "detail": {
@@ -149,7 +149,7 @@ class TestDLQMessageTypeDetection:
         assert message_type == "websocket_notification"
     
     def test_detect_task_token_callback_type(self):
-        """Task Token 콜백 이벤트 타입 감지"""
+        """Detect Task Token callback event type"""
         event = {
             "taskToken": "AQAEAAAAAAAA...",
             "result": {"output": "success"}
@@ -161,7 +161,7 @@ class TestDLQMessageTypeDetection:
         assert message_type == "task_token_callback"
     
     def test_detect_execution_update_type(self):
-        """실행 업데이트 이벤트 타입 감지"""
+        """Detect execution update event type"""
         event = {
             "executionId": "exec-123",
             "status": "COMPLETED"
@@ -173,7 +173,7 @@ class TestDLQMessageTypeDetection:
         assert message_type == "execution_update"
     
     def test_unknown_message_type(self):
-        """알 수 없는 이벤트 타입 처리"""
+        """Handle unknown event type"""
         event = {"random": "data"}
         
         from src.handlers.utils.dlq_redrive_handler import determine_message_type
@@ -183,21 +183,21 @@ class TestDLQMessageTypeDetection:
 
 
 # =============================================================================
-# Context Retention Tests (비관적 강화)
+# Context Retention Tests (pessimistic reinforcement)
 # =============================================================================
 
 class TestDLQContextRetention:
     """
-    🔴 비관적 강화: DLQ에서 복구된 메시지가 원래의 컨텍스트를 유지하는지 확인
+    🔴 Pessimistic reinforcement: Verify that messages recovered from DLQ maintain their original context
     
-    Risk: execution_id, owner_id, segment_index 등이 손실되면 복구 불가
+    Risk: If execution_id, owner_id, segment_index etc. are lost, recovery is impossible
     """
     
     def test_original_event_extraction_from_sqs_body(self):
         """
-        SQS body에서 원본 이벤트가 정확히 추출되는지 확인
+        Verify that the original event is correctly extracted from SQS body
         """
-        # DLQ에 저장되는 형태의 SQS 레코드
+        # SQS record in the form stored in DLQ
         sqs_body = json.dumps({
             "originalEvent": {
                 "execution_id": "exec-123",
@@ -208,20 +208,20 @@ class TestDLQContextRetention:
             "error_info": "ThrottlingException"
         })
         
-        # 원본 이벤트 추출
+        # Extract original event
         body = json.loads(sqs_body)
         original_event = body.get("originalEvent", body)
         
-        # 컨텍스트 유지 확인
+        # Verify context preservation
         assert original_event["execution_id"] == "exec-123"
         assert original_event["ownerId"] == "user-test-001"
         assert original_event["segment_to_run"] == 5
     
     def test_nested_original_event_fallback(self):
         """
-        originalEvent 키가 없을 때 body 전체가 원본 이벤트로 사용되는지 확인
+        Verify that when originalEvent key is missing, the entire body is used as the original event
         """
-        # 일부 실패는 originalEvent 래핑 없이 저장될 수 있음
+        # Some failures may be saved without originalEvent wrapping
         sqs_body = json.dumps({
             "executionId": "exec-456",
             "status": "FAILED"
@@ -230,34 +230,34 @@ class TestDLQContextRetention:
         body = json.loads(sqs_body)
         original_event = body.get("originalEvent", body)
         
-        # Fallback 작동 확인
+        # Verify fallback operation
         assert original_event["executionId"] == "exec-456"
         assert original_event["status"] == "FAILED"
     
     def test_execution_arn_to_execution_id_extraction(self):
         """
-        executionArn에서 execution_id가 정확히 추출되는지 확인
+        Verify that execution_id is correctly extracted from executionArn
         """
         execution_arn = "arn:aws:states:us-east-1:123456789012:execution:AnalemmaStateMachine:exec-unique-id-789"
         
-        # 핸들러의 추출 로직과 동일
+        # Same as handler's extraction logic
         execution_id = execution_arn.split(":")[-1]
         
         assert execution_id == "exec-unique-id-789"
 
 
 # =============================================================================
-# Idempotency Tests (멱등성)
+# Idempotency Tests (Idempotency)
 # =============================================================================
 
 class TestDLQIdempotency:
     """
-    🔴 비관적 강화: 동일 메시지가 여러 번 재처리되어도 중복 데이터가 생기지 않음
+    🔴 Pessimistic reinforcement: No duplicate data even if same message is reprocessed multiple times
     """
     
     def test_websocket_payload_includes_unique_message_id(self):
         """
-        WebSocket 페이로드에 고유 messageId가 포함되어 클라이언트가 중복 필터링 가능
+        WebSocket payload includes unique messageId so client can filter duplicates
         """
         from src.handlers.utils.dlq_redrive_handler import create_websocket_payload
         
@@ -277,15 +277,15 @@ class TestDLQIdempotency:
         payload1 = create_websocket_payload(event, execution_info)
         payload2 = create_websocket_payload(event, execution_info)
         
-        # 각 페이로드에 고유 messageId 포함
+        # Each payload includes unique messageId
         assert "messageId" in payload1
         assert "messageId" in payload2
-        # 두 페이로드의 messageId는 다름 (UUID)
+        # The messageId of the two payloads are different (UUID)
         assert payload1["messageId"] != payload2["messageId"]
     
     def test_execution_update_is_idempotent(self):
         """
-        실행 업데이트가 여러 번 호출되어도 최종 상태가 동일
+        Execution update remains the same final state even if called multiple times
         """
         mock_table = MockDynamoDBTable({
             "exec-123": {
@@ -295,7 +295,7 @@ class TestDLQIdempotency:
             }
         })
         
-        # 동일 업데이트 두 번 적용
+        # Apply the same update twice
         update_event = {
             "executionId": "exec-123",
             "status": "COMPLETED",
@@ -311,27 +311,27 @@ class TestDLQIdempotency:
                 result1 = retry_execution_update(update_event)
                 result2 = retry_execution_update(update_event)
                 
-                # 두 번 모두 성공
+                # Both succeed
                 assert result1 is True
                 assert result2 is True
-                # 업데이트가 두 번 호출됨 (멱등성은 DB 레벨에서 보장)
+                # Update is called twice (idempotency guaranteed at DB level)
                 assert len(mock_table.update_calls) == 2
 
 
 # =============================================================================
-# Poison Pill Detection Tests (독 사과 탐지)
+# Poison Pill Detection Tests (Poison Apple Detection)
 # =============================================================================
 
 class TestDLQPoisonPillDetection:
     """
-    🔴 비관적 강화: 절대 성공할 수 없는 메시지가 무한 재시도되는 것을 방지
+    🔴 Pessimistic Reinforcement: Prevent messages that can never succeed from infinite retries
     
-    Risk: 로직 버그로 인한 메시지가 계속 DLQ로 되돌아가면 자원 낭비
+    Risk: Resource waste if messages due to logic bugs keep returning to DLQ
     """
     
     @pytest.fixture
     def retry_count_tracker(self):
-        """재시도 횟수 추적 유틸리티"""
+        """Retry count tracking utility"""
         class RetryTracker:
             MAX_RETRIES = 3
             

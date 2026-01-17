@@ -9,7 +9,7 @@ from boto3.dynamodb.conditions import Key
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# 공통 유틸리티 모듈 import (Lambda 환경에서는 상대 경로 import 불가)
+# Import common utility modules (relative path imports not available in Lambda environment)
 try:
     from src.common.websocket_utils import get_connections_for_owner
 except ImportError:
@@ -17,29 +17,29 @@ except ImportError:
         return []
 
 
-# 리소스 초기화 (Global scope for Warm Start)
+# Resource initialization (Global scope for Warm Start)
 dynamodb = boto3.resource('dynamodb')
 stepfunctions = boto3.client('stepfunctions')
 
-# 환경 변수
+# Environment variables
 EXEC_TABLE = os.environ.get('EXECUTIONS_TABLE')
-# 🚨 [Critical Fix] ExecutionsTableV3는 OwnerIdStartDateIndex GSI 사용
+# 🚨 [Critical Fix] ExecutionsTableV3 uses OwnerIdStartDateIndex GSI
 OWNER_INDEX = os.environ.get('OWNER_INDEX', os.environ.get('OWNER_ID_START_DATE_INDEX', 'OwnerIdStartDateIndex'))
 WEBSOCKET_ENDPOINT_URL = os.environ.get('WEBSOCKET_ENDPOINT_URL')
 WEBSOCKET_CONNECTIONS_TABLE = os.environ.get('WEBSOCKET_CONNECTIONS_TABLE')
 WEBSOCKET_OWNER_ID_GSI = os.environ.get('WEBSOCKET_OWNER_ID_GSI', 'OwnerIdConnectionIndex')
 
-# 테이블 리소스 초기화
+# Table resource initialization
 table = dynamodb.Table(EXEC_TABLE) if EXEC_TABLE else None
 connections_table = dynamodb.Table(WEBSOCKET_CONNECTIONS_TABLE) if WEBSOCKET_CONNECTIONS_TABLE else None
 
-# API Gateway 클라이언트 캐싱
+# API Gateway client caching
 apigw_clients = {}
 
 def get_apigw_client(endpoint_url):
-    """클라이언트 재사용을 위한 팩토리 함수"""
+    """Factory function for client reuse"""
     if endpoint_url not in apigw_clients:
-        # endpoint_url 프로토콜 보정
+        # Correct endpoint_url protocol
         if not endpoint_url.startswith("https://") and not endpoint_url.startswith("http://"):
             formatted_url = "https://" + endpoint_url
         else:
@@ -134,7 +134,7 @@ def handler_from_stepfunctions_event(event):
 
     if execution_arn:
         try:
-            # DescribeExecution은 API 호출 비용이 들지만, Input/Output 원본 확보를 위해 필수적임
+            # DescribeExecution incurs API call costs but is essential for obtaining original Input/Output
             desc = stepfunctions.describe_execution(executionArn=execution_arn)
             input_raw = desc.get('input')
             input_obj = safe_json_load(input_raw) or {}
@@ -195,37 +195,37 @@ def lambda_handler(event, context):
 
         current_time = int(time.time())
 
-        # DynamoDB 저장 아이템 구성
+        # Compose DynamoDB save item
         item = {
             'executionArn': exec_arn,
             'status': status or 'UNKNOWN',
             'updatedAt': current_time
         }
         
-        # 선택적 필드 추가
+        # Add optional fields
         for field in ['ownerId', 'workflowId', 'startDate', 'stopDate', 'output']:
             val = normalized.get(field)
             if val is not None:
-                # output이 문자열이면 JSON 파싱 시도
+                # Try JSON parsing if output is string
                 if field == 'output' and isinstance(val, str):
                     item[field] = safe_json_load(val)
                 else:
                     item[field] = val
 
-        # [핵심 수정] 알림(Sparse Index) 생성 로직
-        # "작업이 완전히 끝났을 때(Terminal State)"만 notificationTime을 부여해야 합니다.
+        # [Critical Fix] Notification (Sparse Index) creation logic
+        # "notificationTime" should only be assigned when "work is completely finished (Terminal State)".
         TERMINAL_STATUSES = ['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'ABORTED']
         
         if status in TERMINAL_STATUSES:
-            # 알림 시간은 stopDate 혹은 현재 시간
+            # Notification time is stopDate or current time
             item['notificationTime'] = stop_date if stop_date else str(current_time)
         
-        # DynamoDB Upsert (부분 업데이트)
+        # DynamoDB Upsert (partial update)
         # [FIX] Convert floats to Decimals for DynamoDB compatibility
         item = _convert_floats_to_decimals(item)
         upsert_execution(item)
 
-        # --- WebSocket Push (상태 변경 알림) ---
+        # --- WebSocket Push (status change notification) ---
         if WEBSOCKET_ENDPOINT_URL and connections_table and WEBSOCKET_OWNER_ID_GSI and owner_id:
             apigw_management = get_apigw_client(WEBSOCKET_ENDPOINT_URL)
             
@@ -256,7 +256,7 @@ def lambda_handler(event, context):
                     apigw_management.post_to_connection(ConnectionId=conn_id, Data=payload_bytes)
                 except ClientError as e:
                     if e.response['Error']['Code'] == 'GoneException':
-                        _delete_connection(connections_table, conn_id) # Helper 함수 필요 또는 직접 구현
+                        _delete_connection(connections_table, conn_id) # Helper function needed or implement directly
                     else:
                         logger.warning(f"Failed to push to {conn_id}: {e}")
                 except Exception as e:

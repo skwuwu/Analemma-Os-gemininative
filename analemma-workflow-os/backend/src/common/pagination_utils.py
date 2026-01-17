@@ -2,23 +2,23 @@
 """
 Pagination Utility Functions
 
-프로덕션급 페이지네이션 토큰 인코딩/디코딩 유틸리티입니다.
-DynamoDB 쿼리 결과의 페이지네이션에 사용됩니다.
+Production-grade pagination token encoding/decoding utility.
+Used for pagination of DynamoDB query results.
 
 Features:
-    - DynamoDB Decimal 타입 자동 처리
-    - URL-Safe Base64 인코딩 (쿼리 파라미터 안전)
-    - 토큰 만료(Expiration) 지원
-    - HMAC 무결성 검증 (변조 방지)
+    - Automatic handling of DynamoDB Decimal types
+    - URL-Safe Base64 encoding (query parameter safe)
+    - Token expiration support
+    - HMAC integrity verification (tamper prevention)
 
 Usage:
     from src.common.pagination_utils import encode_pagination_token, decode_pagination_token
     
-    # 기본 사용 (만료/무결성 검증 없음)
+    # Basic usage (no expiration/integrity verification)
     token = encode_pagination_token(last_evaluated_key)
     key = decode_pagination_token(token)
     
-    # 보안 강화 사용 (만료 + 무결성 검증)
+    # Enhanced security usage (expiration + integrity verification)
     token = encode_pagination_token(last_evaluated_key, ttl_seconds=3600)
     key = decode_pagination_token(token, verify_integrity=True)
 """

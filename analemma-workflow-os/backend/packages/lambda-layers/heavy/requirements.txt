@@ -1,4 +1,4 @@
-# 무거운 의존성 Layer - AI/웹 프레임워크 등 큰 패키지들
+# Heavy dependencies Layer - Large packages like AI/web frameworks
 
 # Vertex AI SDK (Gemini Native)
 google-cloud-aiplatform>=1.38.0
@@ -6,23 +6,23 @@ openai
 langgraph>=0.0.40
 langgraph-checkpoint-dynamodb>=0.0.1
 
-# 웹 프레임워크 (큰 용량)
+# Web frameworks (large size)
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 mangum>=0.17.0
 python-multipart>=0.0.6
 
-# 비동기 HTTP (큰 용량)
+# Async HTTP (large size)
 aiohttp>=3.9.0
 
-# 고급 데이터 처리
+# Advanced data processing
 pydantic>=2.7.4
 dill==0.3.6
 ijson>=3.2.0
 
-# X-Ray SDK (큰 용량)
+# X-Ray SDK (large size)
 aws-xray-sdk>=2.12.0
 
-# 테스트 도구 (개발용)
+# Test tools (for development)
 pytest
 moto

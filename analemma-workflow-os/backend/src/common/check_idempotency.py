@@ -3,7 +3,7 @@ import boto3
 import logging
 from botocore.exceptions import ClientError
 
-# 공통 모듈에서 AWS 클라이언트 가져오기
+# Import AWS client from common module
 try:
     from src.common.aws_clients import get_dynamodb_resource
     dynamodb = get_dynamodb_resource()
@@ -34,9 +34,9 @@ def lambda_handler(event, context):
     table = dynamodb.Table(IDEMPOTENCY_TABLE)
 
     try:
-        # 멱등성 키로 조회 (파티션 키 기준)
-        # 만약 정렬키(segment)를 쓴다면, '워크플로우 전체'를 대표하는 키(예: segment_to_run=-1 또는 meta)가 필요함
-        # 여기서는 idempotency_key가 PK라고 가정합니다.
+        # Query by idempotency key (based on partition key)
+        # If using sort key (segment), need a key representing 'entire workflow' (e.g., segment_to_run=-1 or meta)
+        # Here we assume idempotency_key is the PK.
         response = table.get_item(Key={'idempotency_key': idempotency_key})
         item = response.get('Item')
 
@@ -54,5 +54,5 @@ def lambda_handler(event, context):
 
     except Exception as e:
         logger.error(f"Idempotency check failed: {e}")
-        # DB 에러가 났다고 해서 워크플로우를 죽이지 않고, 중복 체크를 스킵하도록(False) 처리할 수도 있음
+        # Even if DB error occurs, workflow shouldn't die, can skip duplicate check by returning False
         raise e

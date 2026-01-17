@@ -1,12 +1,12 @@
 {
     "workflow_name": "HITP Segmentation Test Workflow",
-    "description": "Human-in-the-loop 세그멘테이션 테스트 워크플로우",
+    "description": "Human-in-the-loop segmentation test workflow",
     "nodes": [
         {
             "id": "prep_node",
             "type": "operator",
             "config": {
-                "code": "print(\"HITP 테스트 준비 중...\")\nstate['hitp_prepared'] = True\nresult = {\n    'status': 'hitp_prep_completed',\n    'ready_for_segmentation': True\n}\nstate['prep_result'] = result\nprint(\"HITP 준비 완료 - 세그멘테이션 대기\")",
+                "code": "print(\"Preparing HITP test...\")\nstate['hitp_prepared'] = True\nresult = {\n    'status': 'hitp_prep_completed',\n    'ready_for_segmentation': True\n}\nstate['prep_result'] = result\nprint(\"HITP preparation complete - waiting for segmentation\")",
                 "output_key": "prep_result"
             }
         },
@@ -14,7 +14,7 @@
             "id": "validator_node",
             "type": "operator",
             "config": {
-                "code": "if state.get('hitp_prepared') and state.get('prep_result', {}).get('ready_for_segmentation'):\n    state['TEST_RESULT'] = '✅ SUCCESS: HITP 준비 상태 확인됨'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: HITP 준비 실패'"
+                "code": "if state.get('hitp_prepared') and state.get('prep_result', {}).get('ready_for_segmentation'):\n    state['TEST_RESULT'] = '✅ SUCCESS: HITP preparation status confirmed'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: HITP preparation failed'"
             }
         },
         {
@@ -22,7 +22,7 @@
             "type": "operator",
             "hitp": true,
             "config": {
-                "code": "print(\"승인 필요 노드 실행 중...\")\nstate['requires_approval'] = True\nresult = {\n    'status': 'awaiting_human_approval',\n    'approval_type': 'manual_review_required'\n}\nstate['approval_result'] = result\nprint(\"Human approval 대기 상태\")",
+                "code": "print(\"Approval required node executing...\")\nstate['requires_approval'] = True\nresult = {\n    'status': 'awaiting_human_approval',\n    'approval_type': 'manual_review_required'\n}\nstate['approval_result'] = result\nprint(\"Waiting for human approval\")",
                 "output_key": "approval_result"
             }
         }

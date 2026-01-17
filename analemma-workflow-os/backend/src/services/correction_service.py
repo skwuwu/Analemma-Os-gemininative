@@ -1,5 +1,5 @@
 """
-지능형 지침 증류기 - 수정 로그 수집 서비스
+Intelligent Instruction Distiller - Correction Log Collection Service
 """
 
 import boto3

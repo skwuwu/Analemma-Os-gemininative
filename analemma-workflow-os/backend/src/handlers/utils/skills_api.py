@@ -1,11 +1,11 @@
 """
 Skills API Lambda Handler - CRUD operations for Skills.
 
-[v2.1] 개선사항:
-1. Gemini 시만틱 스킬 검색 (GET /skills/search?q=)
-2. Breaking Change 감지 및 경고
-3. 전역 이벤트 루프 + safe_run_async 패턴
-4. 코드 일관성 (다른 핸들러와 동일 패턴)
+[v2.1] Improvements:
+1. Gemini semantic skill search (GET /skills/search?q=)
+2. Breaking Change detection and warning
+3. Global event loop + safe_run_async pattern
+4. Code consistency (same pattern as other handlers)
 
 Endpoints:
 - POST   /skills           - Create a new skill

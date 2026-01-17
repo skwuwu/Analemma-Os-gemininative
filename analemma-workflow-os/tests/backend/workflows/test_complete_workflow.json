@@ -1,12 +1,12 @@
 {
     "workflow_name": "Complete Test Workflow",
-    "description": "정상 완료 시뮬레이션 테스트 - LLM 세그먼트 분할 포함",
+    "description": "Normal completion simulation test - including LLM segment division",
     "nodes": [
         {
             "id": "complete_prep",
             "type": "operator",
             "config": {
-                "code": "print(\"완료 테스트 준비\")\nstate['prep_done'] = True\nresult = {'status': 'ready_for_completion'}\nstate['prep_result'] = result",
+                "code": "print(\"Completion test preparation\")\nstate['prep_done'] = True\nresult = {'status': 'ready_for_completion'}\nstate['prep_result'] = result",
                 "output_key": "prep_result"
             }
         },

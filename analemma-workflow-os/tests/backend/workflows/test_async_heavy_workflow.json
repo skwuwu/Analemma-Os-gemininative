@@ -1,12 +1,12 @@
 {
     "workflow_name": "Async Heavy Prompt Test",
-    "description": "대량 프롬프트 비동기 처리 테스트",
+    "description": "Large prompt async processing test",
     "nodes": [
         {
             "id": "heavy_prompt_gen",
             "type": "operator",
             "config": {
-                "code": "print(\"대량 프롬프트 생성 중...\")\nheavy_prompt = \"This is a very long prompt for async processing. \" * 1000  # ~50KB 프롬프트\nstate['heavy_prompt'] = heavy_prompt\nstate['prompt_size'] = len(heavy_prompt)\nresult = {'prompt_size_kb': state['prompt_size']/1024, 'requires_async': state['prompt_size'] > 10000}\nstate['heavy_gen_result'] = result\nprint(f\"대량 프롬프트 생성: {state['prompt_size']} bytes\")",
+                "code": "print(\"Generating large prompt...\")\nheavy_prompt = \"This is a very long prompt for async processing. \" * 1000  # ~50KB prompt\nstate['heavy_prompt'] = heavy_prompt\nstate['prompt_size'] = len(heavy_prompt)\nresult = {'prompt_size_kb': state['prompt_size']/1024, 'requires_async': state['prompt_size'] > 10000}\nstate['heavy_gen_result'] = result\nprint(f\"Large prompt generated: {state['prompt_size']} bytes\")",
                 "output_key": "heavy_gen_result"
             }
         },

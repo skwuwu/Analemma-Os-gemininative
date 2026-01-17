@@ -1,11 +1,11 @@
 """
-백엔드 전체에서 사용되는 상수 및 설정값 통합 관리
-매직 넘버 제거 및 중앙화된 설정 관리
+Centralized management of constants and configuration values used across the backend
+Remove magic numbers and centralized configuration management
 
-사용법:
+Usage:
     from src.common.constants import TTLConfig, QuotaLimits, ModelPricing
     
-    # TTL 설정
+    # TTL settings
     ttl = int(time.time()) + TTLConfig.WEBSOCKET_CONNECTION
     
     # 쿼터 제한

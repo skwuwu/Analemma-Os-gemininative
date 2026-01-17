@@ -1,14 +1,14 @@
 """
-오케스트레이터 선택 및 성능 메트릭 관리
+Orchestrator selection and performance metrics management
 
-CloudWatch 메트릭을 통해 동적 오케스트레이터 선택의 성능과 효과를 모니터링합니다.
+Monitor the performance and effectiveness of dynamic orchestrator selection through CloudWatch metrics.
 
-🚀 주요 메트릭:
-- 오케스트레이터 선택 분포
-- 캐시 히트율
-- 응답 시간 개선
-- 워크플로우 복잡도 분포
-- 선택 정확도
+🚀 Key metrics:
+- Orchestrator selection distribution
+- Cache hit rate
+- Response time improvement
+- Workflow complexity distribution
+- Selection accuracy
 """
 
 import time
@@ -30,7 +30,7 @@ except ImportError:
 
 @dataclass
 class OrchestratorMetrics:
-    """오케스트레이터 메트릭 데이터"""
+    """Orchestrator metrics data"""
     orchestrator_type: str
     selection_time_ms: float
     complexity_score: float
@@ -43,7 +43,7 @@ class OrchestratorMetrics:
 
 
 class MetricsCollector:
-    """메트릭 수집 및 전송 관리자"""
+    """Metrics collection and transmission manager"""
     
     def __init__(self, namespace: str = "WorkflowOrchestrator"):
         self.namespace = namespace

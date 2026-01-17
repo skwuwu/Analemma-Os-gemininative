@@ -5,7 +5,7 @@ Design Services Package
 This package contains AI-powered design assistance services:
 - codesign_assistant: Natural language to workflow co-design
 - designer_service: Core workflow design logic
-- prompts: LLM 시스템 프롬프트 정의
+- prompts: LLM system prompt definitions
 """
 
 from src.services.design.codesign_assistant import (

@@ -3,21 +3,21 @@ info:
   title: Workflow API (Security-Hardened)
   version: 2.0.0
   description: |
-    🔒 Security-hardened Step Functions 및 Lambda 핸들러를 위한 OpenAPI 명세.
+    🔒 OpenAPI specification for security-hardened Step Functions and Lambda handlers.
     
     ## Security Features (v2.0.0):
-    - ✅ IDOR 취약점 패치: 모든 API가 JWT claims에서 ownerId 추출
-    - ✅ WebSocket JWT 검증: JWKS 기반 실제 서명 검증 구현
-    - ✅ Tenant 격리: 사용자는 본인의 데이터에만 접근 가능
-    - ✅ 내부 API 보호: Step Functions 전용 엔드포인트는 공개 노출 제거
+    - ✅ IDOR vulnerability patch: All APIs extract ownerId from JWT claims
+    - ✅ WebSocket JWT validation: Implemented actual signature verification based on JWKS
+    - ✅ Tenant isolation: Users can only access their own data
+    - ✅ Internal API protection: Step Functions-only endpoints removed from public exposure
     
     ## WebSocket Real-time Notifications:
-    WebSocket 연결은 JWT 토큰 검증이 필요하며, 연결 시 Authorization 헤더로 Bearer 토큰을 제공해야 합니다.
-    Notifications는 EventBridge → Notify Lambda를 통해 authenticated 사용자의 활성 연결로만 전송됩니다.
+    WebSocket connections require JWT token verification, and must provide Bearer token in Authorization header when connecting.
+    Notifications are sent only to authenticated users' active connections through EventBridge → Notify Lambda.
     
     ## Breaking Changes from v1.0.0:
-    - ownerId 쿼리 매개변수 제거: JWT에서 자동 추출
-    - /notify-hitp 엔드포인트 제거: 내부 Step Functions 전용으로 변경
+    - ownerId query parameter removed: Automatically extracted from JWT
+    - /notify-hitp endpoint removed: Changed to Step Functions internal only
 servers:
   - url: https://wxis03rjce.execute-api.ap-northeast-2.amazonaws.com
     description: Production API (AWS API Gateway)
@@ -488,12 +488,12 @@ paths:
 # WebSocket API Security Information (Non-OpenAPI)
 # ===========================================================================
 # 
-# WebSocket 연결 엔드포인트: wss://{api-id}.execute-api.{region}.amazonaws.com/{stage}
+# WebSocket connection endpoint: wss://{api-id}.execute-api.{region}.amazonaws.com/{stage}
 # 
 # Security Requirements:
-# 1. JWT Token Required: 연결 시 Authorization 헤더에 Bearer 토큰 필수
-# 2. JWKS Validation: 실제 Cognito JWKS 서명 검증 구현됨
-# 3. Tenant Isolation: 사용자는 본인의 알림만 수신 가능
+# 1. JWT Token Required: Bearer token required in Authorization header when connecting
+# 2. JWKS Validation: Actual Cognito JWKS signature verification implemented
+# 3. Tenant Isolation: Users can only receive their own notifications
 # 
 # Connection Examples:
 # 
@@ -509,7 +509,7 @@ paths:
 #     ...
 # 
 # Security Improvements (v2.0.0):
-# - ✅ 실제 JWKS 서명 검증 (이전 가짜 검증에서 개선)
-# - ✅ TTL 기반 연결 정리로 stale 연결 방지
-# - ✅ ownerId 기반 알림 격리로 cross-tenant 접근 차단
+# - ✅ Actual JWKS signature verification (improved from previous fake verification)
+# - ✅ Prevent stale connections with TTL-based connection cleanup
+# - ✅ ownerId-based notification isolation blocks cross-tenant access
 # ===========================================================================

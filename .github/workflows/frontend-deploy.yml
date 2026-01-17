@@ -10,7 +10,7 @@ on:
       - 'analemma-workflow-os/backend/scripts/**'
 
 permissions:
-  id-token: write # AWS OIDC 인증 필수
+  id-token: write # AWS OIDC authentication required
   contents: read
 
 env:
@@ -34,17 +34,17 @@ jobs:
         with:
           node-version: '20'
 
-      # 1. AWS 인증 (OIDC) - 가장 먼저 수행
+      # 1. AWS authentication (OIDC) - perform first
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 2. 환경변수 가져오기 (기존 스크립트 활용)
+      # 2. Get environment variables (using existing script)
       - name: Fetch API configuration from SSM
         run: |
-          # backend/scripts 폴더에 있는 스크립트 실행 (frontend 폴더 기준 상위로 이동)
+          # Execute script in backend/scripts folder (move up from frontend folder)
           chmod +x ../../../backend/scripts/fetch-api-url.sh
           ../../../backend/scripts/fetch-api-url.sh
           echo "Verifying .env file:"
@@ -55,21 +55,21 @@ jobs:
           # Default PARAM_NAME_WS updated to match SSM parameter used in this repo
           PARAM_NAME_WS: ${{ secrets.WS_URL_SSM_PARAM || '/my-app/dev/websocket-url' }}
 
-      # 3. 의존성 설치 및 빌드
+      # 3. Install dependencies and build
       - name: Install dependencies
         run: npm ci
 
       - name: Build React App
         run: npm run build
 
-      # 4. S3에 파일 업로드 (Sync)
+      # 4. Upload files to S3 (Sync)
       - name: Deploy to S3
         run: |
           aws s3 sync ./dist s3://${{ env.S3_BUCKET_NAME }} \
             --delete \
             --region ${{ env.AWS_REGION }}
 
-      # 5. CloudFront 캐시 무효화 (필수)
+      # 5. Invalidate CloudFront cache (required)
       - name: Invalidate CloudFront Cache
         run: |
           aws cloudfront create-invalidation \

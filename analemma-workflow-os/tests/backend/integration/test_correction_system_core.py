@@ -1,10 +1,10 @@
 """
 Correction System Core Tests
-프로덕션 코드: backend/apps/backend/backend/correction_api_handler.py
-스키마: CorrectionLogRequest (Pydantic)
-핸들러: lambda_log_correction
+Production code: backend/apps/backend/backend/correction_api_handler.py
+Schema: CorrectionLogRequest (Pydantic)
+Handler: lambda_log_correction
 
-no-llm 테스트: OpenAI 및 AWS 모킹으로 결정론적 동작 검증
+no-llm test: Verify deterministic behavior with OpenAI and AWS mocking
 """
 import pytest
 import json

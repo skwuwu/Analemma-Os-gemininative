@@ -9,9 +9,9 @@ Metadata:
   cfn-lint:
     config:
       ignore_checks:
-        - E6101  # FunctionUrl 속성 인식 오류 무시
-        - E1010  # GetAtt 관련 잘못된 파싱 무시
-        - W1001  # 조건부 리소스 참조 경고 무시
+        - E6101  # Ignore FunctionUrl property recognition error
+        - E1010  # Ignore incorrect GetAtt parsing
+        - W1001  # Ignore conditional resource reference warning
 
 Parameters:
   StageName:
@@ -71,7 +71,7 @@ Parameters:
     Type: String
     Default: ""
   
-  # [테스트 유저 인증] - GitHub Secrets → AWS Secrets Manager
+  # [Test User Authentication] - GitHub Secrets → AWS Secrets Manager
   TestUserEmail:
     Type: String
     Default: ""
@@ -82,18 +82,18 @@ Parameters:
     NoEcho: true
     Description: Test user password for simulator auth tests (from GitHub Secrets)
 
-  # [추가] 외부에서 주입받을 Kinesis ARN (기본값은 빈 문자열)
+  # [Addition] Kinesis ARN to be injected from external (default is empty string)
   ExternalExecutionsStreamArn:
     Type: String
     Default: ""
     Description: ARN of a pre-existing Kinesis stream. If provided, creation is skipped.
 
-  # [추가] 외부에서 빌드된 이미지 URI 주입
+  # [Addition] Inject image URI built externally
   BackendLambdaImageUri:
     Type: String
     Description: Docker Image URI for Backend Lambda Functions
 
-  # DB 업데이트 전략 관련 파라미터
+  # Parameters related to DB update strategy
   DbUpdateStrategy:
     Type: String
     Default: "SELECTIVE"
@@ -116,7 +116,7 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
-        # 공통 환경 변수
+        # Common environment variables
         WORKFLOWS_TABLE: !Ref WorkflowsTableV3
         TASK_TOKENS_TABLE_NAME: !Ref TaskTokensTableV3
         IDEMPOTENCY_TABLE: !Ref IdempotencyTableV3
@@ -135,7 +135,7 @@ Globals:
         # WorkflowsTableV3 uses: OwnerIdNameIndex
         # ExecutionsTableV3 uses: OwnerIdStartDateIndex
         BEDROCK_JOB_TABLE: !Ref BedrockJobTableV3
-        # [Checkpoint & Time Machine 공통 변수]
+        # [Checkpoint & Time Machine common variables]
         CHECKPOINT_TABLE: !Ref CheckpointsTableV3
 
 Conditions:
@@ -143,17 +143,17 @@ Conditions:
   HasAsyncWorkerExecutionRole: !Not [ !Equals [ !Ref AsyncWorkerExecutionRoleArn, "" ] ]
   CreateAsyncWorkerRole: !Equals [ !Ref AsyncWorkerExecutionRoleArn, "" ]
   HasAsyncWorkerTaskDefinition: !Not [ !Equals [ !Ref AsyncWorkerTaskDefinition, "" ] ]
-  # [추가] ARN이 비어있을 때만 리소스를 생성하겠다는 조건
+  # [Addition] Condition to create resource only when ARN is empty
   ShouldCreateKinesisStream: !Equals [ !Ref ExternalExecutionsStreamArn, "" ]
-  # [추가] 테스트 유저 자격증명이 제공된 경우에만 시크릿 생성
+  # [Addition] Create secret only when test user credentials are provided
   HasTestUserCredentials: !And
     - !Not [ !Equals [ !Ref TestUserEmail, "" ] ]
     - !Not [ !Equals [ !Ref TestUserPassword, "" ] ]
 
 Resources:
-  # [2순위 최적화] CheckIdempotencyFunction 제거됨
-  # Direct SDK Integration으로 대체 (Step Functions에서 직접 DynamoDB 조회)
-  # Lambda Cold Start 제거로 100-300ms 절감
+  # [Secondary optimization] CheckIdempotencyFunction removed
+  # Replaced with Direct SDK Integration (Direct DynamoDB query from Step Functions)
+  # 100-300ms savings by removing Lambda Cold Start
 
   # --- Layers (Lightweight Only) ---
   # 🚨 LAYER SIZE LIMIT: 262MB unzipped
@@ -195,8 +195,8 @@ Resources:
       Name: !Sub "backend-workflow-${StageName}-anthropic_api_key"
       SecretString: !Sub '{"api_key":"${AnthropicApiKey}"}'
 
-  # 🔐 테스트 유저 인증 정보 (시뮬레이터용)
-  # GitHub Secrets → 배포 시 AWS Secrets Manager에 저장 → Lambda에서 런타임 조회
+  # 🔐 Test user authentication information (for simulator)
+  # GitHub Secrets → Save to AWS Secrets Manager during deployment → Runtime lookup from Lambda
   TestUserCredentialsSecret:
     Type: AWS::SecretsManager::Secret
     Condition: HasTestUserCredentials
@@ -206,13 +206,13 @@ Resources:
       Description: "Test user credentials for simulator auth tests"
 
   # 🔐 SSM Parameter for Cognito User Pool ID
-  # CognitoIssuerUrl에서 User Pool ID를 추출하여 저장 (LocalRunnerFunction 등에서 사용)
+  # Extract and store User Pool ID from CognitoIssuerUrl (used by LocalRunnerFunction, etc.)
   CognitoUserPoolIdParameter:
     Type: AWS::SSM::Parameter
     Properties:
       Name: !Sub "/analemma/${StageName}/cognito-user-pool-id"
       Type: String
-      # CognitoIssuerUrl 형식: https://cognito-idp.{region}.amazonaws.com/{poolId}
+      # CognitoIssuerUrl format: https://cognito-idp.{region}.amazonaws.com/{poolId}
       Value: !Select [3, !Split ["/", !Ref CognitoIssuerUrl]]
       Description: !Sub "Cognito User Pool ID for ${StageName} environment"
 
@@ -260,8 +260,8 @@ Resources:
       AccessLogSettings:
         DestinationArn: !GetAtt HttpApiAccessLogGroup.Arn
         Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","integrationError":"$context.integrationErrorMessage","errorMessage":"$context.error.message"}'
-      # 🛡️ [Concurrency Protection] API Gateway 최전방 방어 - 퓨즈(Fuse) 역할
-      # BurstLimit > RateLimit: 짧은 트래픽 급증은 허용, 지속적 과부하는 차단
+      # 🛡️ [Concurrency Protection] API Gateway frontline defense - Fuse role
+      # BurstLimit > RateLimit: Allow short traffic spikes, block sustained overload
       DefaultRouteSettings:
         ThrottlingBurstLimit: 100  # 순간 최대 요청 허용량
         ThrottlingRateLimit: 50    # 초당 지속 요청 제한

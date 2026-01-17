@@ -1,10 +1,10 @@
 {
-  "Comment": "사용자 워크플로우를 세그먼트 단위로 실행하고, HITP를 처리하는 오케스트레이터",
+  "Comment": "Orchestrator that executes user workflows in segment units and handles HITP",
   "StartAt": "CheckForInjectedConfig",
   "States": {
     "CheckForInjectedConfig": {
       "Type": "Choice",
-      "Comment": "MOCK_MODE가 true이고 테스트 설정이 있으면 DynamoDB 우회",
+      "Comment": "Bypass DynamoDB if MOCK_MODE is true and test config exists",
       "Choices": [
         {
           "And": [
@@ -25,7 +25,7 @@
     "CheckForExistingExecution": {
       "Type": "Task",
       "Resource": "arn:aws:states:::dynamodb:getItem",
-      "Comment": "[2순위 최적화] Direct SDK Integration: Lambda Cold Start 제거. DynamoDB에서 직접 idempotency_key 조회",
+      "Comment": "[2nd Priority Optimization] Direct SDK Integration: Remove Lambda Cold Start. Query idempotency_key directly from DynamoDB",
       "Parameters": {
         "TableName": "${IdempotencyTable}",
         "Key": {

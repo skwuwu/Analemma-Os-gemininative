@@ -1,8 +1,8 @@
 """
-AWS 클라이언트 공통 모듈
-Boto3 클라이언트를 중앙에서 관리하여 Cold Start 최적화 및 재사용성 향상
+AWS client common module
+Centralized management of Boto3 clients for Cold Start optimization and improved reusability
 
-사용법:
+Usage:
     from src.common.aws_clients import get_dynamodb_resource, get_s3_client, get_stepfunctions_client
 """
 
@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# 글로벌 클라이언트 캐시 (Lambda Cold Start 최적화)
+# Global client cache (Lambda Cold Start optimization)
 _dynamodb_resource: Optional[Any] = None
 _s3_client: Optional[Any] = None
 _stepfunctions_client: Optional[Any] = None
@@ -25,7 +25,7 @@ _kinesis_client: Optional[Any] = None
 
 def get_dynamodb_resource():
     """
-    DynamoDB 리소스 싱글톤
+    DynamoDB resource singleton
     
     Returns:
         boto3.resource('dynamodb')
@@ -39,14 +39,14 @@ def get_dynamodb_resource():
 
 def get_dynamodb_table(table_name: Optional[str] = None, env_var: Optional[str] = None):
     """
-    DynamoDB 테이블 객체 가져오기
+    Get DynamoDB table object
     
     Args:
-        table_name: 직접 지정된 테이블 이름
-        env_var: 테이블 이름을 가져올 환경변수 키
+        table_name: Directly specified table name
+        env_var: Environment variable key to get table name
         
     Returns:
-        DynamoDB Table 객체 또는 None
+        DynamoDB Table object or None
     """
     if not table_name and env_var:
         table_name = os.environ.get(env_var)
@@ -60,7 +60,7 @@ def get_dynamodb_table(table_name: Optional[str] = None, env_var: Optional[str] 
 
 def get_s3_client():
     """
-    S3 클라이언트 싱글톤
+    S3 client singleton
     
     Returns:
         boto3.client('s3')
@@ -74,7 +74,7 @@ def get_s3_client():
 
 def get_stepfunctions_client():
     """
-    Step Functions 클라이언트 싱글톤
+    Step Functions client singleton
     
     Returns:
         boto3.client('stepfunctions')
@@ -88,7 +88,7 @@ def get_stepfunctions_client():
 
 def get_ssm_client():
     """
-    SSM Parameter Store 클라이언트 싱글톤
+    SSM Parameter Store client singleton
     
     Returns:
         boto3.client('ssm')
@@ -102,7 +102,7 @@ def get_ssm_client():
 
 def get_ecs_client():
     """
-    ECS 클라이언트 싱글톤
+    ECS client singleton
     
     Returns:
         boto3.client('ecs')
@@ -116,7 +116,7 @@ def get_ecs_client():
 
 def get_lambda_client():
     """
-    Lambda 클라이언트 싱글톤
+    Lambda client singleton
     
     Returns:
         boto3.client('lambda')
@@ -130,7 +130,7 @@ def get_lambda_client():
 
 def get_kinesis_client():
     """
-    Kinesis 클라이언트 싱글톤
+    Kinesis client singleton
     
     Returns:
         boto3.client('kinesis')
@@ -142,13 +142,13 @@ def get_kinesis_client():
     return _kinesis_client
 
 
-# Secrets Manager 클라이언트 (secrets_utils.py에서 사용)
+# Secrets Manager client (used in secrets_utils.py)
 _secrets_client: Optional[Any] = None
 
 
 def get_secrets_client():
     """
-    Secrets Manager 클라이언트 싱글톤
+    Secrets Manager client singleton
     
     Returns:
         boto3.client('secretsmanager')
@@ -161,13 +161,13 @@ def get_secrets_client():
     return _secrets_client
 
 
-# Bedrock 클라이언트
+# Bedrock client
 _bedrock_client: Optional[Any] = None
 
 
 def get_bedrock_client():
     """
-    Bedrock Runtime 클라이언트 싱글톤
+    Bedrock Runtime client singleton
     
     Returns:
         boto3.client('bedrock-runtime')

@@ -22,7 +22,7 @@ import json
 import boto3
 from botocore.exceptions import ClientError
 
-# 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+# 🚨 [Critical Fix] Match default value with template.yaml
 WORKFLOWS_TABLE = os.environ.get('WORKFLOWS_TABLE', 'WorkflowsTableV3')
 
 

@@ -1,10 +1,10 @@
 """
 API Contract Tests
-프론트엔드-백엔드 간 계약(Contract) 검증
+Frontend-Backend Contract Verification
 
-🚨 핵심 원칙: 실제 프로덕션 핸들러를 직접 임포트하여 테스트
-- AWS/LLM 모킹만 허용
-- 실제 API 응답 스키마를 검증
+🚨 Core Principle: Directly import actual production handlers for testing
+- Only AWS/LLM mocking is allowed
+- Verify actual API response schemas
 """
 import pytest
 import json
@@ -12,14 +12,14 @@ import sys
 import os
 from unittest.mock import patch, MagicMock
 
-# 환경 변수 설정 (모듈 import 전)
+# Set environment variables (before module import)
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 os.environ.setdefault("MOCK_MODE", "true")
 os.environ.setdefault("WORKFLOWS_TABLE", "test-workflows")
 os.environ.setdefault("EXECUTIONS_TABLE", "test-executions")
 os.environ.setdefault("WEBSOCKET_CONNECTIONS_TABLE", "test-connections")
 
-# OpenAI 모킹 (LLM 비용 방지)
+# OpenAI mocking (prevent LLM costs)
 mock_openai = MagicMock()
 sys.modules['openai'] = mock_openai
 
@@ -29,11 +29,11 @@ import boto3
 
 @pytest.fixture(autouse=True)
 def mock_aws_services():
-    """모든 테스트에 AWS 모킹 (필수)"""
+    """AWS mocking for all tests (required)"""
     with mock_aws():
         dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
         
-        # 워크플로우 테이블
+        # Workflow table
         dynamodb.create_table(
             TableName='test-workflows',
             KeySchema=[
@@ -47,7 +47,7 @@ def mock_aws_services():
             BillingMode='PAY_PER_REQUEST'
         )
         
-        # 실행 테이블
+        # Execution table
         dynamodb.create_table(
             TableName='test-executions',
             KeySchema=[
@@ -65,14 +65,14 @@ def mock_aws_services():
 
 class TestAPIResponseSchemaContract:
     """
-    API 응답 스키마 계약 검증 - 프론트엔드 TypeScript 인터페이스와 일치
+    API response schema contract verification - matches frontend TypeScript interfaces
     
-    🚨 프로덕션 코드 직접 사용:
+    🚨 Direct use of production code:
     - backend.get_workflow.lambda_handler
     - backend.correction_api_handler.lambda_log_correction
     """
     
-    # 프론트엔드에서 기대하는 필드명 (camelCase)
+    # Field names expected by frontend (camelCase)
     FRONTEND_WORKFLOW_FIELDS = {
         "workflowId",      # not workflow_id
         "name",
@@ -85,10 +85,10 @@ class TestAPIResponseSchemaContract:
     }
     
     def test_get_workflow_handler_returns_camel_case(self):
-        """프로덕션 get_workflow 핸들러가 camelCase 응답 반환"""
+        """Production get_workflow handler returns camelCase response"""
         from backend.get_workflow import lambda_handler
         
-        # DynamoDB에 테스트 워크플로우 삽입
+        # Insert test workflow into DynamoDB
         dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
         table = dynamodb.Table('test-workflows')
         table.put_item(Item={
@@ -102,7 +102,7 @@ class TestAPIResponseSchemaContract:
             'updatedAt': '2026-01-03T00:00:00Z'
         })
         
-        # JWT 인증된 요청 시뮬레이션 (목록 조회)
+        # Simulate JWT authenticated request (list query)
         event = {
             'httpMethod': 'GET',
             'pathParameters': {},
@@ -118,28 +118,28 @@ class TestAPIResponseSchemaContract:
         
         result = lambda_handler(event, None)
         
-        # 성공 응답
+        # Success response
         assert result['statusCode'] == 200
         
-        # 응답 본문 파싱
+        # Parse response body
         body = json.loads(result['body'])
         
-        # 목록 응답 형식: workflows 배열
+        # List response format: workflows array
         assert 'workflows' in body
         assert len(body['workflows']) >= 1
         
-        # 첫 번째 워크플로우에서 camelCase 확인
+        # Check camelCase in first workflow
         workflow = body['workflows'][0]
         assert 'workflowId' in workflow
         assert 'name' in workflow
         
-        # snake_case가 없어야 함
+        # snake_case should not exist
         body_str = json.dumps(body)
         assert 'workflow_id' not in body_str
         assert 'created_at' not in body_str
     
     def test_correction_api_401_error_format(self):
-        """프로덕션 correction_api_handler 401 에러 응답 형식"""
+        """Production correction_api_handler 401 error response format"""
         from backend.correction_api_handler import lambda_log_correction
         
         event = {
@@ -160,12 +160,12 @@ class TestAPIResponseSchemaContract:
         assert result['statusCode'] == 401
         
         body = json.loads(result['body'])
-        # 에러 응답에 'error' 필드 존재
+        # Error response contains 'error' field
         assert 'error' in body
         assert isinstance(body['error'], str)
     
     def test_get_workflow_404_when_not_found(self):
-        """존재하지 않는 워크플로우 요청 시 404"""
+        """404 when requesting non-existent workflow"""
         from backend.get_workflow import lambda_handler
         
         event = {
@@ -183,11 +183,11 @@ class TestAPIResponseSchemaContract:
         
         result = lambda_handler(event, None)
         
-        # 404 또는 빈 응답
+        # 404 or empty response
         assert result['statusCode'] in [200, 404]
     
     def test_options_request_cors_handling(self):
-        """OPTIONS 요청에 대한 CORS 처리"""
+        """CORS handling for OPTIONS requests"""
         from backend.get_workflow import lambda_handler
         
         event = {

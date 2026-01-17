@@ -14,21 +14,21 @@ pydantic>=2.7.4
 dill==0.3.6
 aws-lambda-powertools
 PyJWT[crypto]
-ijson>=3.2.0  # 스트리밍 JSON 파서 (대용량 S3 결과 처리용)
+ijson>=3.2.0  # Streaming JSON parser (for large S3 result processing)
 
-# AWS X-Ray (aws-lambda-powertools에서 필요)
+# AWS X-Ray (required by aws-lambda-powertools)
 aws-xray-sdk>=2.12.0
 
-# FastAPI 및 웹 프레임워크
+# FastAPI and web frameworks
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 mangum>=0.17.0
 python-multipart>=0.0.6
 
-# LangGraph 및 워크플로우
+# LangGraph and workflow
 langgraph-checkpoint-dynamodb>=0.0.1
 
-# 추가 유틸리티
+# Additional utilities
 requests>=2.31.0
 aiohttp>=3.9.0
 urllib3>=1.26.0

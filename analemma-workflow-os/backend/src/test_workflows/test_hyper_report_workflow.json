@@ -1,21 +1,21 @@
 {
-  "name": "글로벌 기술 트렌드 하이퍼-리포트 자동 생성",
-  "description": "대량 데이터 처리, 병렬/순차 처리, 의도적 장애, HITL, 지능 증류를 포함한 복합 시나리오",
+  "name": "Global Technology Trends Hyper-Report Auto Generation",
+  "description": "Complex scenario including large data processing, parallel/sequential processing, intentional failures, HITL, and intelligence distillation",
   "version": "2.1",
   "max_loop_iterations": 50,
   "nodes": [
     {
       "node_id": "data_ingestion",
-      "node_name": "대량 데이터 수집",
-      "description": "50+ RSS 피드 또는 200+ 기술 문서 수집 (256KB 초과 시나리오)",
+      "node_name": "Large-scale Data Collection",
+      "description": "Collect 50+ RSS feeds or 200+ technical documents (scenario exceeding 256KB)",
       "type": "llm",
       "llm_config": {
         "provider": "bedrock",
         "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
         "temperature": 0.3,
         "max_tokens": 4096,
-        "system_prompt": "당신은 글로벌 기술 트렌드를 수집하는 데이터 엔지니어입니다. 50개 이상의 뉴스 소스에서 데이터를 수집하여 구조화된 JSON 형식으로 반환하세요.",
-        "user_prompt_template": "다음 카테고리에서 최신 기술 트렌드를 수집하세요:\n\n카테고리:\n{% for category in categories %}\n- {{ category }}\n{% endfor %}\n\n각 카테고리별로 10개 이상의 기사 제목과 요약을 포함하여 반환하세요. 총 데이터 크기가 300KB를 초과하도록 상세하게 작성하세요."
+        "system_prompt": "You are a data engineer collecting global technology trends. Collect data from 50+ news sources and return it in structured JSON format.",
+        "user_prompt_template": "Collect the latest technology trends from the following categories:\n\nCategories:\n{% for category in categories %}\n- {{ category }}\n{% endfor %}\n\nInclude 10+ article titles and summaries for each category. Write in detail so that the total data size exceeds 300KB."
       },
       "input_variables": ["categories"],
       "output_key": "raw_data_collection",
@@ -26,8 +26,8 @@
     },
     {
       "node_id": "category_dispatcher",
-      "node_name": "분야별 병렬 분류",
-      "description": "수집된 데이터를 AI, Cloud, Security, SaaS 분야로 병렬 분류",
+      "node_name": "Parallel classification by field",
+      "description": "Parallel classification of collected data into AI, Cloud, Security, SaaS fields",
       "type": "map",
       "map_config": {
         "items_source": "$.raw_data_collection.categories",
@@ -39,8 +39,8 @@
             "model_id": "anthropic.claude-3-5-haiku-20241022-v1:0",
             "temperature": 0.2,
             "max_tokens": 2048,
-            "system_prompt": "당신은 기술 문서 분류 전문가입니다. 주어진 기사를 정확한 카테고리로 분류하세요.",
-            "user_prompt_template": "다음 카테고리의 기사들을 분석하세요:\n\n카테고리: {{ item.category }}\n기사 목록: {{ item.articles | tojson }}\n\n각 기사의 핵심 키워드, 중요도(1-10), 관련 기술 스택을 JSON으로 반환하세요."
+            "system_prompt": "You are a technical document classification expert. Classify the given article into the correct category.",
+            "user_prompt_template": "Analyze the articles in the following category:\n\nCategory: {{ item.category }}\nArticle list: {{ item.articles | tojson }}\n\nReturn each article's core keywords, importance (1-10), and related technology stack as JSON."
           }
         }
       },
@@ -53,16 +53,16 @@
     },
     {
       "node_id": "saas_analyzer_with_failure",
-      "node_name": "SaaS 분야 분석 (장애 주입)",
-      "description": "SaaS 카테고리 분석 중 의도적 API 에러 발생",
+      "node_name": "SaaS field analysis (failure injection)",
+      "description": "Intentional API error during SaaS category analysis",
       "type": "llm",
       "llm_config": {
         "provider": "bedrock",
         "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
         "temperature": 0.5,
         "max_tokens": 3072,
-        "system_prompt": "당신은 SaaS 트렌드 분석가입니다. 주어진 데이터를 분석하되, 처음 2번은 의도적으로 실패하세요 (테스트 목적).",
-        "user_prompt_template": "{% if attempt_count is undefined or attempt_count < 2 %}SIMULATE_RATE_LIMIT_ERROR{% else %}다음 SaaS 관련 기사를 분석하세요:\n\n{{ categorized_data.SaaS | tojson }}\n\n각 기사의 비즈니스 임팩트, 시장 트렌드, 경쟁 분석을 포함하여 상세 리포트를 작성하세요.{% endif %}"
+        "system_prompt": "You are a SaaS trend analyst. Analyze the given data, but intentionally fail the first 2 times (for testing purposes).",
+        "user_prompt_template": "{% if attempt_count is undefined or attempt_count < 2 %}SIMULATE_RATE_LIMIT_ERROR{% else %}Analyze the following SaaS-related articles:\n\n{{ categorized_data.SaaS | tojson }}\n\nWrite a detailed report including each article's business impact, market trends, and competitive analysis.{% endif %}"
       },
       "input_variables": ["categorized_data", "attempt_count"],
       "output_key": "saas_analysis",

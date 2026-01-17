@@ -79,15 +79,15 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
 
     except Exception as e:
         logger.exception("Top-level handler failure")
-        # [Fix] ASL ResultSelector가 기대하는 모든 필드를 포함해야 JSONPath 에러 방지
+        # [Fix] Must include all fields expected by ASL ResultSelector to prevent JSONPath errors
         chunk_id = event.get('chunk_data', {}).get('chunk_id', 'unknown')
         return {
             "chunk_id": chunk_id,
             "status": "FAILED",
             "error": str(e),
             "processed_segments": 0,
-            # ASL이 필수로 요구하는 필드들 - None/빈값으로 제공
-            "final_state": event.get('previous_state', {}),  # 마지막 알려진 상태 보존
+            # Fields required by ASL - provided as None/empty values
+            "final_state": event.get('previous_state', {}),  # Preserve last known state
             "paused_segment_id": None
         }
 

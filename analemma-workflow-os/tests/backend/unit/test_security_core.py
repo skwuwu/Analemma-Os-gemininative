@@ -1,9 +1,9 @@
 """
 Security Core Tests
-프로덕션 코드: common/auth_utils.py, get_workflow.py, correction_api_handler.py
-핵심: Owner ID 검증, 인증, XSS 방어
+Production code: common/auth_utils.py, get_workflow.py, correction_api_handler.py
+Core: Owner ID verification, authentication, XSS defense
 
-no-llm 테스트: 결정론적 보안 로직 검증
+no-llm test: Deterministic security logic verification
 """
 import pytest
 import json
@@ -11,12 +11,12 @@ import sys
 import os
 from unittest.mock import patch, MagicMock
 
-# 환경 변수 설정
+# Environment variable setup
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
 os.environ.setdefault("MOCK_MODE", "true")
 os.environ.setdefault("WORKFLOWS_TABLE", "test-workflows")
 
-# OpenAI 모킹
+# OpenAI mocking
 mock_openai = MagicMock()
 sys.modules['openai'] = mock_openai
 
@@ -26,7 +26,7 @@ import boto3
 
 @pytest.fixture(autouse=True)
 def mock_aws_services():
-    """모든 테스트에 AWS 모킹"""
+    """Mock AWS for all tests"""
     with mock_aws():
         dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
         dynamodb.create_table(
@@ -45,29 +45,29 @@ def mock_aws_services():
 
 
 class TestAuthUtilsCore:
-    """auth_utils.py 핵심 테스트 (Table-Driven)"""
+    """auth_utils.py core tests (Table-Driven)"""
     
     @pytest.mark.parametrize("event,expected_owner_id", [
-        # JWT claims의 sub에서 추출
+        # Extract from sub in JWT claims
         ({"requestContext": {"authorizer": {"jwt": {"claims": {"sub": "user-abc-123"}}}}}, "user-abc-123"),
-        # REST API 형식의 authorizer claims
+        # REST API format authorizer claims
         ({"requestContext": {"authorizer": {"claims": {"sub": "rest-user-456"}}}}, "rest-user-456"),
-        # JWT claims 없으면 None
+        # None if no JWT claims
         ({"requestContext": {}}, None),
-        # requestContext 없으면 None
+        # None if no requestContext
         ({}, None),
-        # authorizer 빈 객체 → None
+        # None if authorizer is empty object
         ({"requestContext": {"authorizer": {}}}, None),
     ])
     def test_extract_owner_id_from_event(self, event, expected_owner_id):
-        """다양한 이벤트 형식에서 owner_id 추출 (Table-Driven)"""
+        """Extract owner_id from various event formats (Table-Driven)"""
         from src.common.auth_utils import extract_owner_id_from_event
         
         owner_id = extract_owner_id_from_event(event)
         assert owner_id == expected_owner_id
     
     def test_require_authentication_raises_on_missing(self):
-        """require_authentication은 인증 없으면 ValueError"""
+        """require_authentication raises ValueError when no authentication"""
         from src.common.auth_utils import require_authentication
         
         event = {"requestContext": {}}
@@ -79,10 +79,10 @@ class TestAuthUtilsCore:
 
 
 class TestGetWorkflowSecurity:
-    """get_workflow.py 보안 테스트"""
+    """get_workflow.py security tests"""
     
     def test_get_workflow_requires_auth(self):
-        """인증 없으면 401"""
+        """401 when no authentication"""
         from backend.get_workflow import lambda_handler
         
         event = {
@@ -95,7 +95,7 @@ class TestGetWorkflowSecurity:
         assert result['statusCode'] == 401
     
     def test_get_workflow_ignores_query_param_owner_id(self):
-        """query param의 ownerId 무시하고 JWT의 sub 사용"""
+        """Ignore ownerId from query param and use JWT's sub"""
         from backend.get_workflow import lambda_handler
         
         event = {
@@ -113,21 +113,21 @@ class TestGetWorkflowSecurity:
             result = lambda_handler(event, None)
         
         assert result['statusCode'] == 200
-        # JWT의 owner_id로 쿼리됨
+        # Queried by JWT's owner_id
         mock_table.query.assert_called()
 
 
 class TestInputSanitization:
-    """입력 Sanitization 테스트 (Table-Driven)"""
+    """Input Sanitization Test (Table-Driven)"""
     
     @pytest.mark.parametrize("input_data,expected_escaped", [
-        # script 태그 이스케이프
+        # script tag escape
         ({"text": "<script>alert('XSS')</script>"}, "&lt;script&gt;"),
-        # 이벤트 핸들러 이스케이프
+        # event handler escape
         ({"img": "<img src=x onerror=alert(1)>"}, "&lt;"),
     ])
     def test_xss_patterns_escaped(self, input_data, expected_escaped):
-        """XSS 패턴들이 이스케이프됨 (Table-Driven)"""
+        """XSS patterns are escaped (Table-Driven)"""
         from backend.correction_api_handler import sanitize_input_data
         
         result = sanitize_input_data(input_data)
@@ -135,7 +135,7 @@ class TestInputSanitization:
         assert expected_escaped in result_str
     
     def test_nested_object_sanitized(self):
-        """중첩된 객체도 sanitize"""
+        """Nested objects are also sanitized"""
         from backend.correction_api_handler import sanitize_input_data
         
         result = sanitize_input_data({
@@ -144,15 +144,15 @@ class TestInputSanitization:
             }
         })
         
-        # 중첩 객체 내부도 처리됨
+        # Nested object internals are also processed
         assert "&lt;script&gt;" in str(result) or "script" not in str(result).lower()
 
 
 class TestPathTraversal:
-    """Path Traversal 방어 테스트"""
+    """Path Traversal Defense Test"""
     
     def test_dangerous_paths_detected(self):
-        """위험 경로 탐지"""
+        """Dangerous path detection"""
         dangerous_paths = [
             "../../etc/passwd",
             "../../../root/.ssh/id_rsa",

@@ -1,8 +1,8 @@
 """
-구조화된 로깅 유틸리티 모듈
-AWS Lambda Powertools를 사용한 JSON 구조화 로깅 및 상관관계 ID 추적
+Structured logging utility module
+JSON structured logging and correlation ID tracking using AWS Lambda Powertools
 
-사용법:
+Usage:
     from src.common.logging_utils import get_logger, log_execution_context
     
     logger = get_logger(__name__)

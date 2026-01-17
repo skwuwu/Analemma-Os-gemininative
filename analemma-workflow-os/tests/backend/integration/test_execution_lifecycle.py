@@ -1,7 +1,7 @@
 """
-🎯 실행 라이프사이클 통합 테스트 (Execution Lifecycle)
+🎯 Execution Lifecycle Integration Test (Execution Lifecycle)
 
-허니콤(Honeycomb) 모델 - 실제 프로덕션 코드 테스트
+Honeycomb Model - Real Production Code Testing
 Table-Driven Testing으로 엣지 케이스 효율적 커버
 
 대상 모듈:

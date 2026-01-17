@@ -1,7 +1,7 @@
 """
-WebSocket 관련 공통 유틸리티 함수들
-중복 코드를 제거하고 재사용성을 높이기 위한 모듈
-DynamoDB Decimal 타입 직렬화 문제 해결 포함
+Common utility functions related to WebSocket
+Module to eliminate duplicate code and increase reusability
+Includes resolution of DynamoDB Decimal type serialization issues
 """
 
 import os
@@ -13,21 +13,21 @@ from typing import List, Optional, Any, Union
 from botocore.exceptions import ClientError
 
 from src.common.aws_clients import get_dynamodb_resource
-from src.common.json_utils import DecimalEncoder  # 통합된 DecimalEncoder 사용
+from src.common.json_utils import DecimalEncoder  # Use integrated DecimalEncoder
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# 글로벌 캐시: API Gateway 클라이언트 재사용
+# Global cache: API Gateway client reuse
 _apigw_clients = {}
 
-# 글로벌 캐시: DynamoDB 테이블
+# Global cache: DynamoDB table
 _connections_table = None
 _dynamodb_resource = None
 
-# WebSocket 페이로드 제한 (실시간 데이터 경량화)
-MAX_CURRENT_THOUGHT_LENGTH = 200  # 타이핑 애니메이션용 최대 글자 수
-MAX_WEBSOCKET_PAYLOAD_BYTES = 32 * 1024  # 32KB (API Gateway 한도: 128KB)
+# WebSocket payload limit (real-time data lightweight)
+MAX_CURRENT_THOUGHT_LENGTH = 200  # Maximum characters for typing animation
+MAX_WEBSOCKET_PAYLOAD_BYTES = 32 * 1024  # 32KB (API Gateway limit: 128KB)
 
 # NOTE: DecimalEncoder는 common.json_utils에서 import됨 (중복 제거됨)
 

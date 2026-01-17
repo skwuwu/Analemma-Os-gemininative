@@ -1,10 +1,10 @@
 {
-  "Comment": "Distributed Map 기반 대용량 워크플로우 처리 - 25,000개 Event History 제한 해결",
+  "Comment": "Distributed Map-based large-scale workflow processing - Resolves 25,000 Event History limit",
   "StartAt": "CheckForInjectedConfig",
   "States": {
     "CheckForInjectedConfig": {
       "Type": "Choice",
-      "Comment": "MOCK_MODE가 true이고 테스트 설정이 있으면 DynamoDB 우회",
+      "Comment": "If MOCK_MODE is true and test config exists, bypass DynamoDB",
       "Choices": [
         {
           "And": [
@@ -25,7 +25,7 @@
     "CheckForExistingExecution": {
       "Type": "Task",
       "Resource": "arn:aws:states:::dynamodb:getItem",
-      "Comment": "Direct SDK Integration: DynamoDB에서 직접 idempotency_key 조회",
+      "Comment": "Direct SDK Integration: Query idempotency_key directly from DynamoDB",
       "Parameters": {
         "TableName": "${IdempotencyTable}",
         "Key": {
@@ -63,7 +63,7 @@
     },
     "CheckIfItemExists": {
       "Type": "Choice",
-      "Comment": "DynamoDB 응답에 Item이 있는지 확인 (없으면 새 실행)",
+      "Comment": "Check if Item exists in DynamoDB response (if not, new execution)",
       "Choices": [
         {
           "Variable": "$.dynamodb_result.Item",
@@ -75,7 +75,7 @@
     },
     "ExtractExistingExecutionInfo": {
       "Type": "Pass",
-      "Comment": "기존 실행 정보 추출",
+      "Comment": "Extract existing execution information",
       "Parameters": {
         "idempotency_check_result": {
           "existing_execution_arn.$": "$.dynamodb_result.Item.executionArn.S",
@@ -145,7 +145,7 @@
     "InitializeStateData": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "워크플로우 상태 초기화 및 파티션 맵 생성",
+      "Comment": "Workflow state initialization and partition map creation",
       "Parameters": {
         "FunctionName": "${InitializeStateDataArn}",
         "InvocationType": "RequestResponse",
@@ -195,7 +195,7 @@
     "HandleInitFailure": {
       "Type": "Task",
       "Resource": "arn:aws:states:::events:putEvents",
-      "Comment": "[Fix] InitializeStateData 실패 시 원본 입력에서 ownerId 추출",
+      "Comment": "[Fix] Extract ownerId from original input when InitializeStateData fails",
       "Parameters": {
         "Entries": [
           {
@@ -223,7 +223,7 @@
     },
     "CheckDistributedMapRequired": {
       "Type": "Choice",
-      "Comment": "대용량 병렬 처리 필요 시 Distributed Map 사용",
+      "Comment": "Use Distributed Map when large-scale parallel processing is required",
       "Choices": [
         {
           "Variable": "$.state_data.total_segments",
@@ -241,7 +241,7 @@
     "PrepareDistributedExecution": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "Distributed Map을 위한 세그먼트 그룹화 및 S3 업로드",
+      "Comment": "Segment grouping and S3 upload for Distributed Map",
       "Parameters": {
         "FunctionName": "${PrepareDistributedExecutionArn}",
         "Payload": {
@@ -263,7 +263,7 @@
     "NotifyDistributedWorkflowStarted": {
       "Type": "Task",
       "Resource": "arn:aws:states:::events:putEvents",
-      "Comment": "분산 워크플로우 시작 알림",
+      "Comment": "Distributed workflow start notification",
       "Parameters": {
         "Entries": [
           {

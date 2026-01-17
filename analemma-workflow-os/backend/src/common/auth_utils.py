@@ -1,6 +1,6 @@
 """
-인증 관련 공통 유틸리티 함수들
-JWT 토큰 검증 및 사용자 ID 추출 로직을 통합하여 재사용성 향상
+Common utility functions related to authentication
+Integrate JWT token verification and user ID extraction logic to improve reusability
 """
 
 import os
@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# JWKS 캐시 전역 변수들
+# JWKS cache global variables
 _JWKS_CACHE: Optional[Dict[str, Any]] = None
 _JWKS_CACHE_FETCHED_AT: float = 0.0
 _JWKS_CACHE_TTL = int(os.getenv("JWKS_CACHE_TTL_SECONDS", "3600"))
@@ -18,16 +18,16 @@ _JWKS_CACHE_TTL = int(os.getenv("JWKS_CACHE_TTL_SECONDS", "3600"))
 
 def _fetch_jwks(jwks_url: str) -> Dict[str, Any]:
     """
-    JWKS를 주어진 URL에서 가져옵니다. (urllib.request 사용으로 의존성 최소화)
+    Fetch JWKS from the given URL. (Minimize dependencies by using urllib.request)
 
     Args:
-        jwks_url: JWKS 엔드포인트 URL
+        jwks_url: JWKS endpoint URL
 
     Returns:
-        JWKS 데이터
+        JWKS data
 
     Raises:
-        RuntimeError: HTTP 요청 실패 시
+        RuntimeError: If HTTP request fails
     """
     try:
         import urllib.request
@@ -43,19 +43,19 @@ def _fetch_jwks(jwks_url: str) -> Dict[str, Any]:
 
 def _get_cached_jwks(jwks_url: str) -> Dict[str, Any]:
     """
-    캐시된 JWKS를 반환하고 TTL이 만료되면 새로고침합니다.
+    Returns cached JWKS and refreshes if TTL has expired.
 
     Args:
-        jwks_url: JWKS 엔드포인트 URL
+        jwks_url: JWKS endpoint URL
 
     Returns:
-        캐시된 JWKS 데이터 (kid->key 매핑)
+        Cached JWKS data (kid->key mapping)
     """
     global _JWKS_CACHE, _JWKS_CACHE_FETCHED_AT
     now = time.time()
     if _JWKS_CACHE is None or (now - _JWKS_CACHE_FETCHED_AT) > _JWKS_CACHE_TTL:
         jwks = _fetch_jwks(jwks_url)
-        # kid로 인덱싱하여 빠른 조회 가능하도록 함
+        # Index by kid for fast lookup
         key_map: Dict[str, Any] = {}
         for k in jwks.get("keys", []):
             kid = k.get("kid")
@@ -68,17 +68,17 @@ def _get_cached_jwks(jwks_url: str) -> Dict[str, Any]:
 
 def validate_token(token: str) -> Dict[str, Any]:
     """
-    Cognito JWKS를 사용하여 JWT 토큰을 검증합니다. (PyJWT 사용으로 경량화)
+    Validates JWT token using Cognito JWKS. (Lightweight using PyJWT)
 
     Args:
-        token: 검증할 JWT 토큰
+        token: JWT token to validate
 
     Returns:
-        디코딩된 토큰 클레임
+        Decoded token claims
 
     Raises:
-        RuntimeError: 필수 라이브러리나 환경변수가 없을 경우
-        ValueError: 토큰 검증 실패 시
+        RuntimeError: If required libraries or environment variables are missing
+        ValueError: If token validation fails
     """
     try:
         import jwt
@@ -86,14 +86,14 @@ def validate_token(token: str) -> Dict[str, Any]:
     except Exception:
         raise RuntimeError("'PyJWT' is required for JWT validation. Please add 'PyJWT' to your Lambda dependencies.")
 
-    # 발급자 URL 결정 (환경변수 우선, 없으면 리전과 풀 ID로 조립)
+    # Determine issuer URL (environment variable takes priority, otherwise assemble from region and pool ID)
     issuer_url = os.environ.get("COGNITO_ISSUER_URL")
 
     if issuer_url:
-        # 환경변수에 URL이 있으면 그대로 사용 (가장 안전함)
+        # If URL exists in environment variable, use as is (safest)
         issuer = issuer_url.rstrip('/')
     else:
-        # URL이 없으면 Region과 Pool ID로 직접 조립
+        # If URL doesn't exist, assemble directly from Region and Pool ID
         region = os.environ.get("COGNITO_REGION")
         user_pool = os.environ.get("USER_POOL_ID")
 
@@ -108,20 +108,20 @@ def validate_token(token: str) -> Dict[str, Any]:
 
     jwks_url = f"{issuer}/.well-known/jwks.json"
 
-    # 토큰 헤더에서 kid 추출 (PyJWT에서는 get_unverified_header)
+    # Extract kid from token header (use get_unverified_header in PyJWT)
     try:
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get("kid")
     except Exception as e:
         raise ValueError(f"Invalid token header: {e}")
 
-    # JWKS 조회 (캐시 사용)
+    # Retrieve JWKS (using cache)
     jwks = _get_cached_jwks(jwks_url)
     key_map = jwks.get("keys", {})
     key_data = key_map.get(kid)
 
     if not key_data:
-        # 캐시 새로고침 후 재시도 (1회)
+        # Retry after cache refresh (once)
         global _JWKS_CACHE_FETCHED_AT
         _JWKS_CACHE_FETCHED_AT = 0
         jwks = _get_cached_jwks(jwks_url)
@@ -130,12 +130,12 @@ def validate_token(token: str) -> Dict[str, Any]:
         if not key_data:
             raise ValueError("Public key not found in JWKS for kid: %s" % kid)
 
-    # PyJWT에서는 RSA public key를 직접 구성해야 함
+    # In PyJWT, RSA public key must be constructed directly
     try:
-        # RSA public key 생성
+        # Create RSA public key
         public_key = RSAAlgorithm.from_jwk(key_data)
 
-        # 토큰 검증 및 디코딩
+        # Validate and decode token
         decoded = jwt.decode(
             token,
             public_key,
@@ -150,16 +150,16 @@ def validate_token(token: str) -> Dict[str, Any]:
 
 def extract_owner_id_from_token(token: str) -> str:
     """
-    JWT 토큰에서 owner_id를 추출합니다.
+    Extract owner_id from JWT token.
 
     Args:
-        token: JWT 토큰
+        token: JWT token
 
     Returns:
-        사용자 ID (sub 클레임)
+        User ID (sub claim)
 
     Raises:
-        ValueError: 토큰이 유효하지 않거나 sub 클레임이 없을 경우
+        ValueError: If token is invalid or sub claim is missing
     """
     token_claims = validate_token(token)
     owner_id = token_claims.get('sub')
@@ -170,18 +170,18 @@ def extract_owner_id_from_token(token: str) -> str:
 
 def extract_owner_id_from_event(event: Dict[str, Any]) -> Optional[str]:
     """
-    API Gateway 이벤트에서 owner_id를 추출합니다.
+    Extract owner_id from API Gateway event.
     
-    1. requestContext의 authorizer claims (API Gateway가 이미 검증함)를 최우선으로 사용
-    2. 없을 경우 Authorization 헤더를 파싱하여 검증 (Fallback)
+    1. Use authorizer claims from requestContext (already verified by API Gateway) as priority
+    2. If not available, parse and verify Authorization header (Fallback)
 
     Args:
-        event: API Gateway 이벤트
+        event: API Gateway event
 
     Returns:
-        사용자 ID 또는 None (인증 실패 시)
+        User ID or None (if authentication fails)
     """
-    # 1. Fast Path: API Gateway가 이미 검증한 Claims 사용
+    # Fast Path: Use Claims already verified by API Gateway
     try:
         request_context = event.get("requestContext", {})
         authorizer = request_context.get("authorizer", {})
@@ -207,10 +207,10 @@ def extract_owner_id_from_event(event: Dict[str, Any]) -> Optional[str]:
         logger.warning(f"Failed to extract owner_id from requestContext: {e}")
         # Fallback continues below
 
-    # 2. Slow Path: 헤더에서 직접 파싱 및 서명 검증 (로컬 테스트 호환성 등)
+    # Slow Path: Parse and verify signature directly from header (for local test compatibility, etc.)
     try:
         headers = event.get("headers") or {}
-        # 헤더 이름 소문자화하여 다양한 변형 수용
+        # Lowercase header names to accommodate various variations
         headers_low = {k.lower(): v for k, v in headers.items()} if isinstance(headers, dict) else {}
         auth_header = headers_low.get("authorization")
 
@@ -227,17 +227,17 @@ def extract_owner_id_from_event(event: Dict[str, Any]) -> Optional[str]:
 
 def require_authentication(event: Dict[str, Any]) -> str:
     """
-    API Gateway 이벤트에서 인증을 요구하고 owner_id를 반환합니다.
-    인증 실패 시 예외를 발생시킵니다.
+    Require authentication from API Gateway event and return owner_id.
+    Raises exception if authentication fails.
 
     Args:
-        event: API Gateway 이벤트
+        event: API Gateway event
 
     Returns:
-        사용자 ID
+        User ID
 
     Raises:
-        ValueError: 인증 실패 시
+        ValueError: If authentication fails
     """
     owner_id = extract_owner_id_from_event(event)
     if not owner_id:

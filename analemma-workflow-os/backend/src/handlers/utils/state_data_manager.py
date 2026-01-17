@@ -1,6 +1,6 @@
 """
 State Data Manager Lambda Function
-페이로드 크기 관리 및 S3 오프로딩을 담당하는 Lambda 함수
+Lambda function responsible for payload size management and S3 offloading
 """
 
 import json
@@ -267,7 +267,7 @@ def update_and_compress_state_data(event: Dict[str, Any]) -> Dict[str, Any]:
     
     logger.info(f"Final payload size: {final_size_kb}KB (compression: {compression_applied}, s3_offload: {s3_offloaded})")
     
-    # CloudWatch 메트릭 발송
+    # Send CloudWatch metrics
     _send_cloudwatch_metrics(
         initial_size_kb=initial_size_kb,
         final_size_kb=final_size_kb,

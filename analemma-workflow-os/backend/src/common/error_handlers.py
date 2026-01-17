@@ -1,8 +1,8 @@
 """
-외부 서비스 예외 처리 유틸리티
-AWS 서비스 및 외부 API 호출 시 발생하는 예외를 세분화하여 처리
+External service exception handling utilities
+Categorize and handle exceptions that occur when calling AWS services and external APIs
 
-사용법:
+Usage:
     from src.common.error_handlers import handle_dynamodb_error, handle_s3_error
     
     try:
@@ -31,21 +31,21 @@ def handle_dynamodb_error(
     item_key: Dict = None
 ) -> Exception:
     """
-    DynamoDB ClientError를 구체적인 예외로 변환
+    Convert DynamoDB ClientError to specific exception
     
     Args:
         error: boto3 ClientError
-        operation: 수행하려던 작업 (예: "put_item", "query")
-        table_name: 테이블 이름
-        item_key: 아이템 키 (선택적)
+        operation: The operation that was attempted (e.g., "put_item", "query")
+        table_name: Table name
+        item_key: Item key (optional)
     
     Returns:
-        Exception: 적절한 커스텀 예외
+        Exception: Appropriate custom exception
     """
     error_code = error.response['Error']['Code']
     error_message = error.response['Error']['Message']
     
-    # 컨텍스트 정보 구성
+    # Compose context information
     context = {
         "service": "dynamodb",
         "operation": operation,
@@ -56,7 +56,7 @@ def handle_dynamodb_error(
     
     logger.error(f"DynamoDB {operation} failed", extra=context)
     
-    # 에러 코드별 세분화 처리
+    # Granular handling by error code
     if error_code == 'ThrottlingException':
         return RateLimitExceededError(
             f"DynamoDB throttling on {operation}",
@@ -86,16 +86,16 @@ def handle_s3_error(
     key: str = None
 ) -> Exception:
     """
-    S3 ClientError를 구체적인 예외로 변환
+    Convert S3 ClientError to specific exception
     
     Args:
         error: boto3 ClientError
-        operation: 수행하려던 작업 (예: "get_object", "put_object")
-        bucket: S3 버킷 이름
-        key: S3 객체 키
+        operation: The operation that was attempted (e.g., "get_object", "put_object")
+        bucket: S3 bucket name
+        key: S3 object key
     
     Returns:
-        Exception: 적절한 커스텀 예외
+        Exception: Appropriate custom exception
     """
     error_code = error.response['Error']['Code']
     error_message = error.response['Error']['Message']
@@ -130,7 +130,7 @@ def handle_stepfunctions_error(
     execution_arn: str = None
 ) -> Exception:
     """
-    Step Functions ClientError를 구체적인 예외로 변환
+    Convert Step Functions ClientError to specific exception
     """
     error_code = error.response['Error']['Code']
     error_message = error.response['Error']['Message']
@@ -162,7 +162,7 @@ def handle_bedrock_error(
     operation: str = "invoke_model"
 ) -> Exception:
     """
-    Bedrock ClientError를 구체적인 예외로 변환
+    Convert Bedrock ClientError to specific exception
     """
     error_code = error.response['Error']['Code']
     error_message = error.response['Error']['Message']
@@ -197,13 +197,13 @@ def handle_llm_api_error(
     operation: str = "api_call"
 ) -> Exception:
     """
-    외부 LLM API (OpenAI, Anthropic 등) 에러를 처리
+    Handle external LLM API (OpenAI, Anthropic, etc.) errors
     
     Args:
-        error: 원본 예외
-        provider: LLM 제공자 ("openai", "anthropic", "google")
-        model: 모델 이름
-        operation: 작업 이름
+        error: Original exception
+        provider: LLM provider ("openai", "anthropic", "google")
+        model: Model name
+        operation: Operation name
     """
     context = {
         "service": f"llm_{provider}",
@@ -215,7 +215,7 @@ def handle_llm_api_error(
     
     logger.error(f"LLM API {operation} failed", extra=context)
     
-    # OpenAI 에러 처리
+    # OpenAI error handling
     if provider == "openai":
         error_str = str(error).lower()
         if "rate limit" in error_str or "429" in error_str:
@@ -227,7 +227,7 @@ def handle_llm_api_error(
         elif "unauthorized" in error_str or "401" in error_str:
             return AuthenticationError(f"OpenAI authentication failed")
     
-    # Anthropic 에러 처리
+    # Anthropic error handling
     elif provider == "anthropic":
         error_str = str(error).lower()
         if "rate_limit" in error_str or "429" in error_str:
@@ -237,13 +237,13 @@ def handle_llm_api_error(
         elif "invalid" in error_str or "400" in error_str:
             return ValidationError(f"Anthropic validation error: {error}")
     
-    # 일반적인 LLM 서비스 에러
+    # General LLM service error
     return LLMServiceError(provider, str(error))
 
 
 def handle_network_error(error: Exception, service: str, operation: str) -> Exception:
     """
-    네트워크 관련 에러 처리 (연결 실패, 타임아웃 등)
+    Network-related error handling (connection failure, timeout, etc.)
     """
     context = {
         "service": service,
@@ -268,7 +268,7 @@ def handle_network_error(error: Exception, service: str, operation: str) -> Exce
 
 def safe_external_call(func, *args, **kwargs):
     """
-    외부 서비스 호출을 안전하게 래핑하는 헬퍼 함수
+    Helper function that safely wraps external service calls
     
     Usage:
         result = safe_external_call(
@@ -296,13 +296,13 @@ def safe_external_call(func, *args, **kwargs):
 
 def handle_lambda_error(error: Exception) -> Dict[str, Any]:
     """
-    Lambda 예외를 표준화된 API 응답으로 변환
+    Convert Lambda exceptions to standardized API responses
 
     Args:
-        error: 발생한 예외
+        error: The exception that occurred
 
     Returns:
-        API Gateway 호환 응답 딕셔너리
+        API Gateway compatible response dictionary
     """
     from src.common.http_utils import build_response
     from src.common.exceptions import BaseAnalemmaError

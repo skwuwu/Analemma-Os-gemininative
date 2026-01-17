@@ -2,12 +2,12 @@
 """
 Draft Result Generator Service - Gemini Native Edition
 
-실제 실행 없이 예상 결과물의 상세 초안을 생성하는 서비스입니다.
-사용자가 "자세히 보기"를 클릭했을 때 호출됩니다.
+Service that generates detailed drafts of expected results without actual execution.
+Called when user clicks "View Details".
 
-[Gemini Native 통합]
-- Gemini 1.5 Flash: 초안 생성 (비용 효율적, 빠른 응답)
-- Gemini 2.0 Flash: 복잡한 문서/멀티모달 초안
+[Gemini Native Integration]
+- Gemini 1.5 Flash: Draft generation (cost-effective, fast response)
+- Gemini 2.0 Flash: Complex document/multimodal drafts
 - Google Cloud DLP: 민감 정보 탐지 (선택적)
 
 [핵심 가치] Pre-execution Visibility

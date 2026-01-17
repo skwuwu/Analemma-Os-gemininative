@@ -5,11 +5,11 @@ from src.common.auth_utils import extract_owner_id_from_event
 
 # Backward compatibility alias
 def get_owner_id(event):
-    """JWT 토큰에서 owner_id 추출 (레거시 호환용 - extract_owner_id_from_event 사용 권장)"""
+    """Extract owner_id from JWT token (for legacy compatibility - recommend using extract_owner_id_from_event)"""
     return extract_owner_id_from_event(event)
 
 def get_current_timestamp():
-    """현재 시간을 표준 Unix Timestamp(초 단위, 정수)로 반환"""
+    """Return current time as standard Unix Timestamp (seconds, integer)"""
     return int(time.time())
 
 def generate_workflow_id(owner_id: str, workflow_name: str) -> str:

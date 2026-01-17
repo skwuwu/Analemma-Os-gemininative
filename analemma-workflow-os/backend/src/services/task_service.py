@@ -2,14 +2,14 @@
 """
 Task Service
 
-Task Manager UI를 위한 비즈니스 로직 서비스입니다.
-기술적인 실행 로그를 비즈니스 친화적인 Task 정보로 변환합니다.
+Business logic service for Task Manager UI.
+Converts technical execution logs into business-friendly Task information.
 
-[v2.0] 개선사항:
-- GSI 기반 효율적인 task_id 조회 (FilterExpression 제거)
-- 중요 이벤트 DynamoDB 영속화 (State Drift 방지)
-- S3 Presigned URL 지원 (대용량 아티팩트)
-- 타임스탬프 검증 강화
+[v2.0] Improvements:
+- Efficient task_id lookup based on GSI (removed FilterExpression)
+- Critical event DynamoDB persistence (prevents State Drift)
+- S3 Presigned URL support (large artifacts)
+- Enhanced timestamp validation
 """
 
 import os
@@ -37,7 +37,7 @@ from src.models.task_context import (
     get_friendly_error_message,
 )
 
-# 비즈니스 메트릭스 계산 모듈 임포트
+# Import business metrics calculation module
 try:
     from backend.services.business_metrics_calculator import (
         calculate_all_business_metrics,
@@ -48,7 +48,7 @@ except ImportError:
             calculate_all_business_metrics,
         )
     except ImportError:
-        # 폴백: 모듈 없으면 빈 딕셔너리 반환
+        # Fallback: Return empty dictionary if module not found
         def calculate_all_business_metrics(*args, **kwargs):
             return {}
 

@@ -1,12 +1,12 @@
 """
 Centralized Retry & Resilience Utilities (v1.0)
 
-분산 시스템의 표준 패턴을 한 곳에서 관리:
+Manage standard patterns of distributed systems in one place:
 - Exponential Backoff + Jitter
 - Circuit Breaker
-- Sync/Async 양쪽 지원
+- Support both Sync/Async
 
-사용법:
+Usage:
     from src.common.retry_utils import with_retry, with_retry_sync, circuit_breaker
     
     @with_retry(max_retries=3, exceptions=(ClientError,))

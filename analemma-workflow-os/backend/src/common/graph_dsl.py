@@ -1,12 +1,12 @@
 """
-Graph DSL: 워크플로우 JSON 스키마 정의 및 검증
+Graph DSL: Workflow JSON schema definition and validation
 
-Co-design Assistant의 핵심 모듈로, 워크플로우 구조를 공식화합니다.
+Core module of Co-design Assistant that formalizes workflow structures.
 """
 import json
 from typing import Any, Dict, List, Literal, Optional
 
-# Pydantic이 없을 경우를 위한 fallback
+# Fallback for when Pydantic is not available
 try:
     from pydantic import BaseModel, Field, ValidationError, field_validator
     PYDANTIC_AVAILABLE = True
@@ -35,13 +35,13 @@ except ImportError:
 
 
 class Position(BaseModel):
-    """노드 위치 정보"""
+    """Node position information"""
     x: float
     y: float
 
 
 class NodeConfig(BaseModel):
-    """유연한 노드 설정 (노드 타입별 다양한 필드)"""
+    """Flexible node configuration (various fields by node type)"""
     # operator
     code: Optional[str] = None
     sets: Optional[Dict[str, Any]] = None
@@ -77,17 +77,17 @@ class NodeConfig(BaseModel):
 
 
 class WorkflowNode(BaseModel):
-    """워크플로우 노드 정의"""
+    """Workflow node definition"""
     id: str
     type: Literal["operator", "llm_chat", "api_call", "db_query", "for_each", "route_draft_quality", "group", "aiModel"]
     label: Optional[str] = None
     position: Position
     config: Optional[NodeConfig] = None
-    data: Optional[Dict[str, Any]] = None  # 프론트엔드 호환용
+    data: Optional[Dict[str, Any]] = None  # For frontend compatibility
     
-    # 서브그래프 관계
-    subgraph_id: Optional[str] = None  # group 노드용 (내부 서브그래프 참조)
-    parent_id: Optional[str] = None    # 그룹 내 노드용 (부모 그룹 참조)
+    # Subgraph relationships
+    subgraph_id: Optional[str] = None  # For group nodes (internal subgraph reference)
+    parent_id: Optional[str] = None    # For nodes within groups (parent group reference)
 
 
 class WorkflowEdge(BaseModel):

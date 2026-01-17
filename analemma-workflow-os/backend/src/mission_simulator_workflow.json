@@ -124,7 +124,7 @@
                                 "MaxAttempts": 6,
                                 "BackoffRate": 2.0,
                                 "JitterStrategy": "FULL",
-                                "Comment": "[Concurrency Protection] Lambda 429 재시도 - Mission Simulator 병렬 실행 보호"
+                                "Comment": "[Concurrency Protection] Lambda 429 retry - Mission Simulator parallel execution protection"
                             }
                         ],
                         "Catch": [
@@ -177,7 +177,7 @@
                         "Type": "Task",
                         "Resource": "arn:aws:states:::states:startExecution.sync:2",
                         "TimeoutSeconds": 600,
-                        "Comment": "10분 타임아웃 - 분산 오케스트레이터는 여러 세그먼트 실행으로 시간 소요",
+                        "Comment": "10-minute timeout - Distributed orchestrator takes time due to multiple segment executions",
                         "Parameters": {
                             "StateMachineArn.$": "$.prep_result.targetArn",
                             "Name.$": "$.prep_result.name",
@@ -227,7 +227,7 @@
                                 "MaxAttempts": 6,
                                 "BackoffRate": 2.0,
                                 "JitterStrategy": "FULL",
-                                "Comment": "[Concurrency Protection] Lambda 429 재시도"
+                                "Comment": "[Concurrency Protection] Lambda 429 retry"
                             }
                         ],
                         "Catch": [
@@ -259,7 +259,7 @@
                                 "MaxAttempts": 6,
                                 "BackoffRate": 2.0,
                                 "JitterStrategy": "FULL",
-                                "Comment": "[Concurrency Protection] Lambda 429 재시도"
+                                "Comment": "[Concurrency Protection] Lambda 429 retry"
                             }
                         ],
                         "Catch": [
@@ -313,7 +313,7 @@
                     "MaxAttempts": 6,
                     "BackoffRate": 2.0,
                     "JitterStrategy": "FULL",
-                    "Comment": "[Concurrency Protection] Lambda 429 재시도"
+                    "Comment": "[Concurrency Protection] Lambda 429 retry"
                 }
             ],
             "Catch": [
@@ -337,7 +337,7 @@
                 }
             },
             "ResultPath": "$.cleanup_result",
-            "Comment": "ResultPath를 지정하여 기존 데이터(simulator_execution_id, map_results) 보존",
+            "Comment": "Specify ResultPath to preserve existing data (simulator_execution_id, map_results)",
             "Retry": [
                 {
                     "ErrorEquals": [
@@ -350,7 +350,7 @@
                     "MaxAttempts": 6,
                     "BackoffRate": 2.0,
                     "JitterStrategy": "FULL",
-                    "Comment": "[Concurrency Protection] Lambda 429 재시도"
+                    "Comment": "[Concurrency Protection] Lambda 429 retry"
                 }
             ],
             "Catch": [

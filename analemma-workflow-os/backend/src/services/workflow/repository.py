@@ -3,7 +3,7 @@ import logging
 import boto3
 from botocore.exceptions import ClientError
 
-# 공통 모듈에서 AWS 클라이언트 가져오기
+# Import AWS clients from common module
 try:
     from src.common.aws_clients import get_dynamodb_resource
     _dynamodb = get_dynamodb_resource()
@@ -12,7 +12,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# 🚨 [Critical Fix] 기본값을 template.yaml과 일치시킴
+# 🚨 [Critical Fix] Match default values with template.yaml
 USERS_TABLE = os.environ.get('USERS_TABLE', 'UsersTableV3')
 JOB_TABLE = os.environ.get('BEDROCK_JOB_TABLE', 'BedrockJobTableV3')
 
