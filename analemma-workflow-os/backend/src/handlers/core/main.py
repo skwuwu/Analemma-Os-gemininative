@@ -254,6 +254,175 @@ def extract_text_from_bedrock_response(resp: Any) -> str:
     except Exception:
         return str(resp)
 
+def normalize_llm_usage(usage: Dict[str, Any], provider: str) -> Dict[str, Any]:
+    """
+    Normalize token usage statistics from different LLM providers.
+    
+    Analemma 대시보드에서 일관된 비용 차트를 표시하기 위해 
+    Gemini와 Bedrock의 다른 필드명을 표준 인터페이스로 통합합니다.
+    
+    Args:
+        usage: Raw usage dictionary from provider
+        provider: Provider name ("gemini" or "bedrock")
+    
+    Returns:
+        Normalized usage dict with standard keys for dashboard compatibility:
+        {
+            "input_tokens": int,      # 입력 토큰 수
+            "output_tokens": int,     # 출력 토큰 수
+            "total_tokens": int,      # 총 토큰 수
+            "cached_tokens": int,     # Context Cache로 절감된 토큰 (Gemini only)
+            "estimated_cost_usd": float,  # 예상 비용 (USD)
+            "provider": str,          # 제공자 이름
+            "cost_saved_usd": float,  # 캐싱으로 절감된 비용 (Gemini only)
+        }
+    """
+    normalized = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cached_tokens": 0,
+        "estimated_cost_usd": 0.0,
+        "cost_saved_usd": 0.0,
+        "provider": provider,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    }
+    
+    try:
+        if provider == "gemini":
+            # Gemini structure: {input_tokens, output_tokens, cached_tokens, total_tokens, estimated_cost_usd}
+            normalized["input_tokens"] = usage.get("input_tokens", 0)
+            normalized["output_tokens"] = usage.get("output_tokens", 0)
+            normalized["cached_tokens"] = usage.get("cached_tokens", 0)
+            normalized["total_tokens"] = usage.get("total_tokens", 0)
+            normalized["estimated_cost_usd"] = usage.get("estimated_cost_usd", 0.0)
+            
+            # Calculate cost savings from caching (75% reduction for cached tokens)
+            cached = normalized["cached_tokens"]
+            if cached > 0:
+                # Gemini cached tokens cost 75% less
+                normalized["cost_saved_usd"] = round(cached * 0.75 * 0.000001, 6)  # Approximate
+                
+        elif provider == "bedrock":
+            # Bedrock structure: {inputTokens, outputTokens} or {input_tokens, output_tokens}
+            normalized["input_tokens"] = usage.get("inputTokens") or usage.get("input_tokens", 0)
+            normalized["output_tokens"] = usage.get("outputTokens") or usage.get("output_tokens", 0)
+            normalized["total_tokens"] = normalized["input_tokens"] + normalized["output_tokens"]
+            
+            # Bedrock Claude model pricing (approximate)
+            # Claude 3 Sonnet: $3/1M input, $15/1M output
+            input_cost = (normalized["input_tokens"] / 1_000_000) * 3.0
+            output_cost = (normalized["output_tokens"] / 1_000_000) * 15.0
+            normalized["estimated_cost_usd"] = round(input_cost + output_cost, 6)
+            
+    except Exception as e:
+        logger.debug(f"Failed to normalize usage from {provider}: {e}")
+    
+    return normalized
+
+def prepare_multimodal_content(prompt: str, state: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
+    """
+    Extract S3 URIs from prompt and prepare multimodal content for Gemini Vision API.
+    
+    Gemini Vision API는 텍스트 + 이미지/비디오를 contents 리스트로 받아야 합니다.
+    이 함수는 프롬프트에서 S3 URI를 추출하고 invoke_with_images용 데이터를 준비합니다.
+    
+    Args:
+        prompt: User prompt that may contain S3 URIs (e.g., "이 이미지 분석해줘 s3://bucket/image.jpg")
+        state: Execution state with potential hydrated binary data
+    
+    Returns:
+        Tuple of (cleaned_prompt, multimodal_parts)
+        - cleaned_prompt: Prompt with S3 URIs replaced with placeholder
+        - multimodal_parts: List of dicts for invoke_with_images:
+            [{"source": "s3://..." or bytes, "mime_type": "image/jpeg", "source_uri": "s3://..."}]
+    """
+    import re
+    
+    multimodal_parts = []
+    
+    # Pattern to detect S3 URIs in prompt
+    s3_uri_pattern = r's3://[a-zA-Z0-9\-_.]+/[a-zA-Z0-9\-_./]+'
+    s3_uris = re.findall(s3_uri_pattern, prompt)
+    
+    if not s3_uris:
+        return prompt, multimodal_parts
+    
+    # MIME type mapping (Gemini 지원 형식)
+    MIME_TYPE_MAP = {
+        # Images
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".heic": "image/heic",
+        ".heif": "image/heif",
+        ".bmp": "image/bmp",
+        # Videos
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+        # Documents (Gemini 1.5+)
+        ".pdf": "application/pdf",
+    }
+    
+    def get_mime_type(uri: str) -> str:
+        """확장자에서 MIME 타입 추출"""
+        uri_lower = uri.lower()
+        for ext, mime in MIME_TYPE_MAP.items():
+            if uri_lower.endswith(ext):
+                return mime
+        return "image/jpeg"  # default
+    
+    # Extract multimodal data
+    for s3_uri in s3_uris:
+        try:
+            mime_type = get_mime_type(s3_uri)
+            
+            # Check if hydrated data exists in state
+            s3_key = f"hydrated_{s3_uri.replace('s3://', '').replace('/', '_')}"
+            
+            if s3_key in state:
+                # Binary data already hydrated - use directly
+                binary_data = state[s3_key]
+                multimodal_parts.append({
+                    "source": binary_data,  # bytes for invoke_with_images
+                    "data": binary_data,    # backward compat
+                    "mime_type": mime_type,
+                    "source_uri": s3_uri,
+                    "hydrated": True
+                })
+                logger.info(f"Prepared hydrated multimodal part: {s3_uri} ({mime_type})")
+            else:
+                # Not hydrated - pass S3 URI directly (GeminiService will download)
+                multimodal_parts.append({
+                    "source": s3_uri,       # S3 URI for invoke_with_images
+                    "mime_type": mime_type,
+                    "source_uri": s3_uri,
+                    "hydrated": False
+                })
+                logger.info(f"Prepared S3 URI multimodal part: {s3_uri} ({mime_type})")
+                
+        except Exception as e:
+            logger.warning(f"Failed to prepare multimodal data for {s3_uri}: {e}")
+    
+    # Remove S3 URIs from prompt if we extracted them
+    if multimodal_parts:
+        cleaned_prompt = re.sub(s3_uri_pattern, "[미디어 첨부됨]", prompt)
+        return cleaned_prompt, multimodal_parts
+    
+    return prompt, multimodal_parts
+    
+    # Remove S3 URIs from prompt if we extracted them
+    if multimodal_parts:
+        cleaned_prompt = re.sub(s3_uri_pattern, "[Image/Video attached]", prompt)
+        return cleaned_prompt, multimodal_parts
+    
+    return prompt, multimodal_parts
+
 # Async processing threshold (configurable via environment variable)
 ASYNC_TOKEN_THRESHOLD = int(os.getenv('ASYNC_TOKEN_THRESHOLD', '2000'))
 
@@ -354,12 +523,18 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             # [Test Logic] Simulate Rate Limit Error for retry testing
             if prompt and "SIMULATE_RATE_LIMIT_ERROR" in prompt:
                 logger.warning(f"🧪 Simulation triggered: Raising Rate Limit Error for node {node_id}")
-                # Simulate a ThrottlingException that is retryable
-                from botocore.exceptions import ClientError
-                raise ClientError(
-                    {"Error": {"Code": "ThrottlingException", "Message": "Simulated Rate Limit"}},
-                    "InvokeModel"
-                )
+                # Check provider for appropriate exception type
+                provider = config.get("provider", "gemini")
+                if provider == "gemini":
+                    # Simulate Gemini rate limit (will be caught and retried)
+                    raise Exception("429 Resource Exhausted: Quota exceeded for Gemini API")
+                else:
+                    # Simulate Bedrock ThrottlingException
+                    from botocore.exceptions import ClientError
+                    raise ClientError(
+                        {"Error": {"Code": "ThrottlingException", "Message": "Simulated Rate Limit"}},
+                        "InvokeModel"
+                    )
             
             # 2. Check Async Conditions
             # node_id already defined above check async
@@ -409,13 +584,43 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                         system_instruction=system_prompt
                     )
                     
+                    # Prepare multimodal content if S3 URIs present
+                    cleaned_prompt, multimodal_parts = prepare_multimodal_content(prompt, exec_state)
+                    
                     service = GeminiService(config=gemini_config)
-                    resp = service.invoke_model(
-                        user_prompt=prompt,
-                        system_instruction=system_prompt,
-                        max_output_tokens=max_tokens,
-                        temperature=temperature
-                    )
+                    
+                    # Use multimodal invocation if images/videos detected
+                    if multimodal_parts:
+                        logger.info(f"Invoking Gemini Vision API with {len(multimodal_parts)} multimodal parts")
+                        
+                        # Extract sources from multimodal_parts using unified 'source' key
+                        # source can be: bytes (hydrated) or S3 URI string
+                        image_sources = [p["source"] for p in multimodal_parts]
+                        mime_types = [p.get("mime_type", "image/jpeg") for p in multimodal_parts]
+                        
+                        # Log multimodal details for debugging
+                        for i, part in enumerate(multimodal_parts):
+                            hydrated = part.get("hydrated", False)
+                            source_type = "bytes" if hydrated else "S3 URI"
+                            logger.debug(f"  Part {i+1}: {part['mime_type']} ({source_type})")
+                        
+                        # Call invoke_with_images for multimodal processing
+                        resp = service.invoke_with_images(
+                            user_prompt=cleaned_prompt,
+                            image_sources=image_sources,
+                            mime_types=mime_types,
+                            system_instruction=system_prompt,
+                            max_output_tokens=max_tokens,
+                            temperature=temperature
+                        )
+                    else:
+                        # Standard text-only invocation
+                        resp = service.invoke_model(
+                            user_prompt=prompt,
+                            system_instruction=system_prompt,
+                            max_output_tokens=max_tokens,
+                            temperature=temperature
+                        )
                     
                     # Extract text from Gemini response structure
                     text = ""
@@ -426,13 +631,28 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                     else:
                         text = str(resp)
                     
-                    usage = resp.get("metadata", {}).get("token_usage", {})
+                    # Normalize usage statistics
+                    raw_usage = resp.get("metadata", {}).get("token_usage", {})
+                    usage = normalize_llm_usage(raw_usage, "gemini")
                     meta["provider"] = "gemini"
+                    meta["multimodal"] = len(multimodal_parts) > 0
                     
                 except Exception as gemini_error:
-                    # Gemini failed, fallback to Bedrock
-                    logger.warning(f"Gemini invocation failed, falling back to Bedrock: {gemini_error}")
-                    provider = "bedrock"
+                    # Check if this is a retryable error (rate limit, timeout, etc.)
+                    error_msg = str(gemini_error).lower()
+                    is_retryable = any(keyword in error_msg for keyword in [
+                        "429", "quota", "rate limit", "resource exhausted",
+                        "timeout", "deadline exceeded", "unavailable"
+                    ])
+                    
+                    if is_retryable:
+                        # Retryable error - propagate to retry loop
+                        logger.warning(f"Retryable Gemini error: {gemini_error}")
+                        raise gemini_error
+                    else:
+                        # Non-retryable error - fallback to Bedrock
+                        logger.warning(f"Gemini invocation failed (non-retryable), falling back to Bedrock: {gemini_error}")
+                        provider = "bedrock"
             
             if provider == "bedrock":
                 # Bedrock fallback (existing logic)
@@ -447,10 +667,11 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                 )
                 text = extract_text_from_bedrock_response(resp)
                 
-                # Extract usage stats if available
-                usage = {}
+                # Extract and normalize usage stats
+                raw_usage = {}
                 if isinstance(resp, dict) and "usage" in resp:
-                    usage = resp["usage"]
+                    raw_usage = resp["usage"]
+                usage = normalize_llm_usage(raw_usage, "bedrock")
             
             # [Fix] Manually trigger on_llm_end
             if callbacks:
