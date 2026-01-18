@@ -93,9 +93,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            .aws-sam
+            analemma-workflow-os/backend/.aws-sam
             ~/.cache/pip
-          key: ${{ runner.os }}-sam-${{ hashFiles('template.yaml', 'requirements.txt', 'src/requirements.txt', 'Dockerfile.lambda', 'Dockerfile.base') }}
+          key: ${{ runner.os }}-sam-${{ hashFiles('analemma-workflow-os/backend/template.yaml', 'analemma-workflow-os/backend/requirements.txt', 'analemma-workflow-os/backend/src/requirements.txt', 'analemma-workflow-os/backend/Dockerfile.lambda', 'analemma-workflow-os/backend/Dockerfile.base') }}
           restore-keys: |
             ${{ runner.os }}-sam-
 
@@ -138,8 +138,8 @@ jobs:
         uses: docker/build-push-action@v5
         id: docker_build
         with:
-          context: ./backend
-          file: ./backend/Dockerfile.base
+          context: ./analemma-workflow-os/backend
+          file: ./analemma-workflow-os/backend/Dockerfile.base
           platforms: linux/arm64  # [FIX] ARM64 for Graviton2 Lambda
           push: true
           tags: |
