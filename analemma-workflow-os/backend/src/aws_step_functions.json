@@ -542,6 +542,12 @@
         },
         {
           "Variable": "$.execution_result.status",
+          "StringEquals": "SEQUENTIAL_BRANCH",
+          "Comment": "Single branch optimization: skip parallel execution",
+          "Next": "CheckForNextSegment"
+        },
+        {
+          "Variable": "$.execution_result.status",
           "StringEquals": "PAUSED_FOR_ASYNC_LLM",
           "Next": "HandleAsyncLLM"
         },

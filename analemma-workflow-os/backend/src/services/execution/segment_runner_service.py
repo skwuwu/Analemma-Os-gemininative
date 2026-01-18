@@ -5,12 +5,26 @@ import json
 import random
 from typing import Dict, Any, Optional, List, Tuple
 
-# [v2.1] 중앙 집중식 재시도 유틸리티
+# [v2.1] Centralized Retry Utility
 try:
     from src.common.retry_utils import retry_call, retry_stepfunctions, retry_s3
     RETRY_UTILS_AVAILABLE = True
 except ImportError:
     RETRY_UTILS_AVAILABLE = False
+
+# 🛡️ [v2.2] Ring Protection: Prompt Security Guard
+try:
+    from src.services.recovery.prompt_security_guard import (
+        PromptSecurityGuard,
+        get_security_guard,
+        RingLevel,
+        SecurityViolation,
+    )
+    RING_PROTECTION_AVAILABLE = True
+except ImportError:
+    RING_PROTECTION_AVAILABLE = False
+    get_security_guard = None
+    RingLevel = None
 
 # Services
 from src.services.state.state_manager import StateManager
@@ -27,13 +41,13 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # 🛡️ [Kernel] Dynamic Scheduling Constants
 # ============================================================================
-# 메모리 안전 마진 (80% 사용 시 분할 트리거)
+# Memory Safety Margin (Trigger split at 80% usage)
 MEMORY_SAFETY_THRESHOLD = 0.8
-# 세그먼트 분할 시 최소 노드 수
+# Minimum Node Count for Segment Splitting
 MIN_NODES_PER_SUB_SEGMENT = 2
-# 최대 분할 깊이 (무한 분할 방지)
+# Maximum Split Depth (Prevent infinite splitting)
 MAX_SPLIT_DEPTH = 3
-# 세그먼트 상태 값
+# Segment Status Values
 SEGMENT_STATUS_PENDING = "PENDING"
 SEGMENT_STATUS_RUNNING = "RUNNING"
 SEGMENT_STATUS_COMPLETED = "COMPLETED"
@@ -43,11 +57,11 @@ SEGMENT_STATUS_FAILED = "FAILED"
 # ============================================================================
 # 🛡️ [Kernel] Aggressive Retry & Partial Success Constants
 # ============================================================================
-# 커널 내부 재시도 횟수 (Step Functions 레벨 재시도 전에 먼저 시도)
+# Kernel Internal Retry Count (Attempt before Step Functions level retry)
 KERNEL_MAX_RETRIES = 3
-# 재시도 간격 (지수 백오프 기준)
+# Retry Interval (Exponential backoff base)
 KERNEL_RETRY_BASE_DELAY = 1.0
-# 재시도 가능한 에러 패턴
+# Retryable Error Patterns
 RETRYABLE_ERROR_PATTERNS = [
     'ThrottlingException',
     'ServiceUnavailable',
@@ -61,37 +75,37 @@ RETRYABLE_ERROR_PATTERNS = [
     'BrokenPipeError',
     'ResourceNotFoundException',  # S3 eventual consistency
 ]
-# 부분 성공 활성화 (세그먼트 실패해도 워크플로우 계속 진행)
+# Enable Partial Success (Continue workflow even if segment fails)
 ENABLE_PARTIAL_SUCCESS = True
 
 # ============================================================================
 # 🔀 [Kernel] Parallel Scheduler Constants
 # ============================================================================
-# 기본 동시성 제한 (Lambda 계정 수준)
-DEFAULT_MAX_CONCURRENT_MEMORY_MB = 3072  # 3GB (Lambda 3개 동시 실행 가정)
-DEFAULT_MAX_CONCURRENT_TOKENS = 100000   # 분당 토큰 제한
-DEFAULT_MAX_CONCURRENT_BRANCHES = 10     # 최대 동시 브랜치 수
+# Default Concurrency Limit (Lambda account level)
+DEFAULT_MAX_CONCURRENT_MEMORY_MB = 3072  # 3GB (Assuming 3 Lambda concurrent executions)
+DEFAULT_MAX_CONCURRENT_TOKENS = 100000   # Tokens per minute limit
+DEFAULT_MAX_CONCURRENT_BRANCHES = 10     # Maximum concurrent branches
 
-# 스케줄링 전략
-STRATEGY_SPEED_OPTIMIZED = "SPEED_OPTIMIZED"      # 최대한 병렬 실행
-STRATEGY_RESOURCE_OPTIMIZED = "RESOURCE_OPTIMIZED" # 자원 효율 우선
-STRATEGY_COST_OPTIMIZED = "COST_OPTIMIZED"        # 비용 최소화
+# Scheduling Strategy
+STRATEGY_SPEED_OPTIMIZED = "SPEED_OPTIMIZED"      # Maximize parallel execution
+STRATEGY_RESOURCE_OPTIMIZED = "RESOURCE_OPTIMIZED" # Prioritize resource efficiency
+STRATEGY_COST_OPTIMIZED = "COST_OPTIMIZED"        # Minimize cost
 
-# 브랜치 예상 자원 기본값
+# Default estimated resources per branch
 DEFAULT_BRANCH_MEMORY_MB = 256
 DEFAULT_BRANCH_TOKENS = 5000
 
-# 계정 수준 하드 리밋 (SPEED_OPTIMIZED에서도 체크)
-ACCOUNT_LAMBDA_CONCURRENCY_LIMIT = 100  # AWS 기본 동시성 제한
-ACCOUNT_MEMORY_HARD_LIMIT_MB = 10240    # 10GB 하드 리밋
+# Account level hard limit (checked even in SPEED_OPTIMIZED)
+ACCOUNT_LAMBDA_CONCURRENCY_LIMIT = 100  # AWS default concurrency limit
+ACCOUNT_MEMORY_HARD_LIMIT_MB = 10240    # 10GB hard limit
 
-# 상태 병합 정책
-MERGE_POLICY_OVERWRITE = "OVERWRITE"      # 나중 값이 덮어씀 (기본)
-MERGE_POLICY_APPEND_LIST = "APPEND_LIST"  # 리스트는 합침
-MERGE_POLICY_KEEP_FIRST = "KEEP_FIRST"    # 첫 번째 값 유지
-MERGE_POLICY_CONFLICT_ERROR = "ERROR"     # 충돌 시 에러
+# State merge policy
+MERGE_POLICY_OVERWRITE = "OVERWRITE"      # Later values overwrite (default)
+MERGE_POLICY_APPEND_LIST = "APPEND_LIST"  # Lists are merged
+MERGE_POLICY_KEEP_FIRST = "KEEP_FIRST"    # Keep first value
+MERGE_POLICY_CONFLICT_ERROR = "ERROR"     # Error on conflict
 
-# 리스트 병합이 필요한 키 패턴
+# Key patterns requiring list merge
 LIST_MERGE_KEY_PATTERNS = [
     '__new_history_logs',
     '__kernel_actions', 
@@ -110,8 +124,18 @@ class SegmentRunnerService:
         self.repo = WorkflowRepository()
         self.threshold = int(os.environ.get("STATE_SIZE_THRESHOLD", 256000))
         
-        # 🛡️ [Kernel] S3 클라이언트 (지연 초기화)
+        # 🛡️ [Kernel] S3 Client (Lazy Initialization)
         self._s3_client = None
+        
+        # 🛡️ [v2.2] Ring Protection Security Guard
+        self._security_guard = None
+    
+    @property
+    def security_guard(self):
+        """Lazy Security Guard initialization"""
+        if self._security_guard is None and RING_PROTECTION_AVAILABLE:
+            self._security_guard = get_security_guard()
+        return self._security_guard
     
     @property
     def s3_client(self):
@@ -126,7 +150,7 @@ class SegmentRunnerService:
     # ========================================================================
     def _should_merge_as_list(self, key: str) -> bool:
         """
-        이 키가 리스트 병합 대상인지 확인
+        Check if this key is a list merge target
         """
         for pattern in LIST_MERGE_KEY_PATTERNS:
             if pattern in key or key.startswith(pattern):
@@ -140,17 +164,17 @@ class SegmentRunnerService:
         merge_policy: str = MERGE_POLICY_APPEND_LIST
     ) -> Dict[str, Any]:
         """
-        🔧 무결성 보장 상태 병합
+        🔧 Integrity-guaranteed state merging
         
-        정책:
-        - OVERWRITE: 단순 덮어쓰기 (기존 동작)
-        - APPEND_LIST: 리스트 키는 합침, 나머지는 덮어씀
-        - KEEP_FIRST: 이미 존재하는 키는 유지
-        - ERROR: 키 충돌 시 예외 발생
+        Policy:
+        - OVERWRITE: Simple overwrite (existing behavior)
+        - APPEND_LIST: Merge list keys, overwrite others
+        - KEEP_FIRST: Keep existing keys
+        - ERROR: Raise exception on key conflict
         
-        특별 처리:
-        - __new_history_logs, __kernel_actions 등은 항상 리스트 병합
-        - _로 시작하는 내부 키는 특별 취급
+        Special handling:
+        - __new_history_logs, __kernel_actions, etc. always merge as lists
+        - Keys starting with _ are treated specially
         """
         if merge_policy == MERGE_POLICY_OVERWRITE:
             result = base_state.copy()
@@ -162,13 +186,13 @@ class SegmentRunnerService:
         
         for key, new_value in new_state.items():
             if key not in result:
-                # 새 키: 그냥 추가
+                # New key: just add
                 result[key] = new_value
                 continue
             
             existing_value = result[key]
             
-            # 리스트 병합 대상 키 확인
+            # Check if key is list merge target
             if self._should_merge_as_list(key):
                 if isinstance(existing_value, list) and isinstance(new_value, list):
                     result[key] = existing_value + new_value
@@ -180,15 +204,15 @@ class SegmentRunnerService:
                     result[key] = [existing_value, new_value]
                 continue
             
-            # 정책에 따른 처리
+            # Handle according to policy
             if merge_policy == MERGE_POLICY_KEEP_FIRST:
-                # 기존 값 유지
+                # Keep existing value
                 continue
             elif merge_policy == MERGE_POLICY_CONFLICT_ERROR:
                 if existing_value != new_value:
                     conflicts.append(key)
             else:
-                # APPEND_LIST 기본: 리스트가 아니면 덮어씀
+                # APPEND_LIST default: overwrite if not list
                 result[key] = new_value
         
         if conflicts:
@@ -203,25 +227,25 @@ class SegmentRunnerService:
     # ========================================================================
     def _estimate_segment_memory(self, segment_config: Dict[str, Any], state: Dict[str, Any]) -> int:
         """
-        세그먼트 실행에 필요한 메모리 추정 (MB 단위)
+        Estimate memory required for segment execution (in MB)
         
-        [최적화] json.dumps 대신 메타데이터 기반 휴리스틱 사용
-        - 대용량 데이터에서 json.dumps는 그 자체로 메모리 부담
-        - 리스트 길이, 문자열 키 존재 여부 등으로 경량 추정
+        [Optimization] Use metadata-based heuristics instead of json.dumps
+        - json.dumps itself is a memory burden for large data
+        - Lightweight estimation using list length, string key presence, etc.
         
-        추정 기준:
-        - 노드 수 × 기본 메모리 (10MB)
-        - LLM 노드: 추가 50MB
-        - for_each 노드: 아이템 수 × 5MB
-        - 상태 크기: 메타데이터 기반 추정
+        Estimation criteria:
+        - Node count × base memory (10MB)
+        - LLM node: additional 50MB
+        - for_each node: item count × 5MB
+        - State size: metadata-based estimation
         """
-        base_memory = 50  # 기본 오버헤드
+        base_memory = 50  # base overhead
         
         nodes = segment_config.get('nodes', [])
         if not nodes:
             return base_memory
         
-        node_memory = len(nodes) * 10  # 노드당 10MB
+        node_memory = len(nodes) * 10  # 10MB per node
         
         llm_memory = 0
         foreach_memory = 0
@@ -229,7 +253,7 @@ class SegmentRunnerService:
         for node in nodes:
             node_type = node.get('type', '')
             if node_type in ('llm_chat', 'aiModel'):
-                llm_memory += 50  # LLM 노드는 추가 50MB
+                llm_memory += 50  # LLM nodes get additional 50MB
             elif node_type == 'for_each':
                 config = node.get('config', {})
                 items_key = config.get('input_list_key', '')
@@ -238,7 +262,7 @@ class SegmentRunnerService:
                     if isinstance(items, list):
                         foreach_memory += len(items) * 5
         
-        # [최적화] 상태 크기 메타데이터 기반 추정 (json.dumps 회피)
+        # [Optimization] State size estimation based on metadata (avoid json.dumps)
         state_size_mb = self._estimate_state_size_lightweight(state)
         
         total = base_memory + node_memory + llm_memory + foreach_memory + int(state_size_mb)
@@ -250,19 +274,19 @@ class SegmentRunnerService:
 
     def _estimate_state_size_lightweight(self, state: Dict[str, Any], max_sample_keys: int = 20) -> float:
         """
-        [최적화] json.dumps 없이 상태 크기를 경량 추정
+        [Optimization] Lightweight estimation of state size without json.dumps
         
-        전략:
-        1. 상위 N개 키만 샘플링하여 평균 크기 계산
-        2. 리스트는 길이 × 평균 아이템 크기로 추정
-        3. 문자열은 len() 사용
-        4. 중첩 dict는 키 수로 추정
+        Strategy:
+        1. Sample only top N keys to calculate average size
+        2. Estimate lists as length × average item size
+        3. Use len() for strings
+        4. Estimate nested dicts by key count
         
         Returns:
-            추정 크기 (MB)
+            Estimated size (MB)
         """
         if not state or not isinstance(state, dict):
-            return 0.1  # 최소 100KB
+            return 0.1  # minimum 100KB
         
         total_bytes = 0
         keys = list(state.keys())[:max_sample_keys]
@@ -271,7 +295,7 @@ class SegmentRunnerService:
             value = state.get(key)
             total_bytes += self._estimate_value_size(value)
         
-        # 샘플링 비율로 전체 크기 추정
+        # Estimate total size based on sampling ratio
         if len(state) > max_sample_keys:
             sample_ratio = len(state) / max_sample_keys
             total_bytes = int(total_bytes * sample_ratio)
@@ -280,12 +304,12 @@ class SegmentRunnerService:
 
     def _estimate_value_size(self, value: Any, depth: int = 0) -> int:
         """
-        값의 크기를 휴리스틱으로 추정 (bytes)
+        Heuristically estimate value size (bytes)
         
-        재귀 깊이 제한으로 무한 루프 방지
+        Prevent infinite loops with recursion depth limit
         """
-        if depth > 3:  # 깊이 제한
-            return 100  # 대략적 추정
+        if depth > 3:  # depth limit
+            return 100  # approximate estimate
         
         if value is None:
             return 4
@@ -300,14 +324,14 @@ class SegmentRunnerService:
         elif isinstance(value, list):
             if not value:
                 return 2
-            # 첫 3개 아이템만 샘플링하여 평균 계산
+            # Sample only first 3 items to calculate average
             sample = value[:3]
             avg_size = sum(self._estimate_value_size(v, depth + 1) for v in sample) / len(sample)
             return int(avg_size * len(value))
         elif isinstance(value, dict):
             if not value:
                 return 2
-            # 첫 5개 키만 샘플링
+            # Sample only first 5 keys
             sample_keys = list(value.keys())[:5]
             sample_size = sum(
                 len(str(k)) + self._estimate_value_size(value[k], depth + 1) 
@@ -317,16 +341,16 @@ class SegmentRunnerService:
                 return int(sample_size * len(value) / 5)
             return sample_size
         else:
-            # 기타 타입: 대략적 추정
+            # Other types: approximate estimate
             return 100
 
     def _split_segment(self, segment_config: Dict[str, Any], split_depth: int = 0) -> List[Dict[str, Any]]:
         """
-        세그먼트를 더 작은 서브 세그먼트로 분할
+        Split segment into smaller sub-segments
         
-        분할 전략:
-        1. 노드 리스트를 반으로 나눔
-        2. 의존성 유지: 엣지 연결 보존
+        Splitting strategy:
+        1. Split node list in half
+        2. Maintain dependencies: preserve edge connections
         3. 최소 노드 수 보장
         """
         if split_depth >= MAX_SPLIT_DEPTH:
@@ -1084,6 +1108,108 @@ class SegmentRunnerService:
             return None
 
     # ========================================================================
+    # 🛡️ [v2.2] Ring Protection: 프롬프트 보안 검증
+    # ========================================================================
+    def _apply_ring_protection(
+        self,
+        segment_config: Dict[str, Any],
+        initial_state: Dict[str, Any],
+        segment_id: int,
+        workflow_id: str
+    ) -> List[Dict[str, Any]]:
+        """
+        🛡️ Ring Protection: 세그먼트 내 프롬프트 보안 검증
+        
+        모든 LLM 노드의 프롬프트를 검증하고:
+        1. Prompt Injection 패턴 탐지
+        2. Ring 0 태그 위조 시도 탐지
+        3. 위험 도구 직접 접근 시도 탐지
+        
+        Args:
+            segment_config: 세그먼트 설정
+            initial_state: 초기 상태
+            segment_id: 세그먼트 ID
+            workflow_id: 워크플로우 ID
+            
+        Returns:
+            보안 위반 목록 (빈 리스트면 안전)
+        """
+        violations = []
+        
+        if not self.security_guard or not RING_PROTECTION_AVAILABLE:
+            return violations
+        
+        nodes = segment_config.get('nodes', [])
+        if not nodes:
+            return violations
+        
+        context = {
+            'workflow_id': workflow_id,
+            'segment_id': segment_id
+        }
+        
+        for node in nodes:
+            node_id = node.get('id', 'unknown')
+            node_type = node.get('type', '')
+            config = node.get('config', {})
+            
+            # LLM 노드의 프롬프트 검증
+            if node_type in ('llm_chat', 'aiModel', 'llm'):
+                prompt = config.get('prompt_content') or config.get('prompt') or ''
+                system_prompt = config.get('system_prompt', '')
+                
+                # 프롬프트 검증
+                for prompt_type, prompt_content in [('prompt', prompt), ('system_prompt', system_prompt)]:
+                    if prompt_content:
+                        result = self.security_guard.validate_prompt(
+                            content=prompt_content,
+                            ring_level=RingLevel.RING_3_USER,
+                            context={**context, 'node_id': node_id, 'prompt_type': prompt_type}
+                        )
+                        
+                        if not result.is_safe:
+                            for v in result.violations:
+                                violations.append({
+                                    'node_id': node_id,
+                                    'violation_type': v.violation_type.value,
+                                    'severity': v.severity,
+                                    'message': v.message,
+                                    'should_sigkill': result.should_sigkill
+                                })
+                            
+                            # 프롬프트 정화 (in-place)
+                            if result.sanitized_content:
+                                if prompt_type == 'prompt':
+                                    config['prompt_content'] = result.sanitized_content
+                                    config['prompt'] = result.sanitized_content
+                                else:
+                                    config['system_prompt'] = result.sanitized_content
+                                logger.info(f"[Ring Protection] 🛡️ Sanitized {prompt_type} in node {node_id}")
+            
+            # 위험 도구 접근 검증
+            if node_type in ('tool', 'api_call', 'operator'):
+                tool_name = config.get('tool') or config.get('method') or node_type
+                allowed, violation = self.security_guard.check_tool_permission(
+                    tool_name=tool_name,
+                    ring_level=RingLevel.RING_3_USER,
+                    context={**context, 'node_id': node_id}
+                )
+                
+                if not allowed and violation:
+                    violations.append({
+                        'node_id': node_id,
+                        'violation_type': violation.violation_type.value,
+                        'severity': violation.severity,
+                        'message': violation.message,
+                        'should_sigkill': False  # 도구 접근은 경고만
+                    })
+        
+        if violations:
+            logger.warning(f"[Ring Protection] ⚠️ {len(violations)} security violations detected in segment {segment_id}")
+        
+        return violations
+
+    # ========================================================================
     # 🛡️ [Kernel Defense] Aggressive Retry Helper
     # ========================================================================
     def _is_retryable_error(self, error: Exception) -> bool:
@@ -1308,6 +1434,70 @@ class SegmentRunnerService:
             branches = segment_config.get('branches', [])
             logger.info(f"🔀 Parallel group detected with {len(branches)} branches")
             
+            # 🛡️ [Critical Fix] 단일 브랜치 + 내부 partition_map 케이스 처리
+            # 이 경우 실제 병렬 실행이 필요 없으므로 브랜치 내부의 첫 번째 세그먼트 직접 실행
+            if len(branches) == 1:
+                single_branch = branches[0]
+                branch_partition_map = single_branch.get('partition_map', [])
+                
+                if branch_partition_map:
+                    logger.info(f"[Kernel] 📌 Single branch with internal partition_map detected. "
+                               f"Executing {len(branch_partition_map)} segments sequentially instead of parallel.")
+                    
+                    # 브랜치 내부의 첫 번째 세그먼트를 segment_config로 사용
+                    first_inner_segment = branch_partition_map[0] if branch_partition_map else None
+                    
+                    if first_inner_segment:
+                        # 🔧 내부 partition_map을 새로운 실행 컨텍스트로 변환
+                        # 상태를 유지하면서 내부 세그먼트 체인 순차 실행
+                        return {
+                            "status": "SEQUENTIAL_BRANCH",
+                            "final_state": initial_state,
+                            "final_state_s3_path": None,
+                            "next_segment_to_run": segment_id + 1,
+                            "new_history_logs": [],
+                            "error_info": None,
+                            "branches": None,  # 병렬 실행 안함
+                            "segment_type": "sequential_branch",
+                            "segment_id": segment_id,
+                            # 🛡️ 내부 partition_map 정보 전달 (ASL이 순차 처리하도록)
+                            "inner_partition_map": branch_partition_map,
+                            "inner_segment_count": len(branch_partition_map),
+                            "branch_id": single_branch.get('branch_id', 'B0'),
+                            "scheduling_metadata": {
+                                'strategy': 'SEQUENTIAL_SINGLE_BRANCH',
+                                'total_inner_segments': len(branch_partition_map),
+                                'reason': 'Single branch optimization - parallel execution skipped'
+                            }
+                        }
+            
+            # 🔧 빈 브랜치 또는 노드가 없는 브랜치 필터링
+            valid_branches = []
+            for branch in branches:
+                branch_nodes = branch.get('nodes', [])
+                branch_partition = branch.get('partition_map', [])
+                
+                # nodes가 있거나 partition_map이 있으면 유효한 브랜치
+                if branch_nodes or branch_partition:
+                    valid_branches.append(branch)
+                else:
+                    logger.warning(f"[Kernel] ⚠️ Skipping empty branch: {branch.get('branch_id', 'unknown')}")
+            
+            # 🛡️ 유효한 브랜치가 없으면 SUCCEEDED로 진행
+            if not valid_branches:
+                logger.info(f"[Kernel] ⏭️ No valid branches to execute, skipping parallel group")
+                return {
+                    "status": "SUCCEEDED",
+                    "final_state": initial_state,
+                    "final_state_s3_path": None,
+                    "next_segment_to_run": segment_id + 1,
+                    "new_history_logs": [],
+                    "error_info": None,
+                    "branches": None,
+                    "segment_type": "empty_parallel_group",
+                    "segment_id": segment_id
+                }
+            
             # 병렬 스케줄러 호출
             schedule_result = self._schedule_parallel_group(
                 segment_config=segment_config,
@@ -1330,7 +1520,7 @@ class SegmentRunnerService:
                     "next_segment_to_run": segment_id + 1,
                     "new_history_logs": [],
                     "error_info": None,
-                    "branches": branches,
+                    "branches": valid_branches,  # 유효한 브랜치만
                     "execution_batches": execution_batches,
                     "segment_type": "scheduled_parallel",
                     "scheduling_metadata": metadata,
@@ -1345,8 +1535,8 @@ class SegmentRunnerService:
                 "next_segment_to_run": segment_id + 1,
                 "new_history_logs": [],
                 "error_info": None,
-                "branches": branches,
-                "execution_batches": schedule_result.get('execution_batches', [branches]),
+                "branches": valid_branches,  # 유효한 브랜치만
+                "execution_batches": schedule_result.get('execution_batches', [valid_branches]),
                 "segment_type": "parallel_group",
                 "scheduling_metadata": schedule_result.get('scheduling_metadata'),
                 "segment_id": segment_id
@@ -1382,6 +1572,44 @@ class SegmentRunnerService:
         
         # 5. Apply Self-Healing (Prompt Injection / Refinement)
         self.healer.apply_healing(segment_config, event.get("_self_healing_metadata"))
+        
+        # 🛡️ [v2.2] Ring Protection: 프롬프트 보안 검증
+        # 세그먼트 내 LLM 노드의 프롬프트를 검증하고 위험 패턴 탐지
+        security_violations = []
+        if self.security_guard and RING_PROTECTION_AVAILABLE:
+            security_violations = self._apply_ring_protection(
+                segment_config=segment_config,
+                initial_state=initial_state,
+                segment_id=segment_id,
+                workflow_id=workflow_id
+            )
+            
+            # CRITICAL 위반 시 SIGKILL (세그먼트 강제 종료)
+            critical_violations = [v for v in security_violations if v.get('should_sigkill')]
+            if critical_violations:
+                logger.error(f"[Kernel] 🛡️ SIGKILL triggered by Ring Protection: {len(critical_violations)} critical violations")
+                return {
+                    "status": "SIGKILL",
+                    "final_state": initial_state,
+                    "final_state_s3_path": None,
+                    "next_segment_to_run": None,
+                    "new_history_logs": [],
+                    "error_info": {
+                        "error": "Security violation detected",
+                        "error_type": "RingProtectionViolation",
+                        "violations": critical_violations
+                    },
+                    "branches": None,
+                    "segment_type": "sigkill",
+                    "kernel_action": {
+                        'action': 'SIGKILL',
+                        'segment_id': segment_id,
+                        'reason': 'Critical security violation',
+                        'violations': critical_violations,
+                        'timestamp': time.time()
+                    },
+                    "segment_id": segment_id
+                }
         
         # 6. Check User Quota / Secret Resolution (Repo access)
         # Note: In a full refactor, this should move to a UserService or AuthMiddleware

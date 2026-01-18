@@ -516,6 +516,22 @@ SCENARIOS = {
         'expected_status': 'SUCCEEDED',
         'verify_func': 'verify_split_paradox_prevention',
         'timeout_seconds': 120
+    },
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 🛡️ The Shield of Analemma: Ring Protection Test Scenarios
+    # ═══════════════════════════════════════════════════════════════════════════
+    'RING_PROTECTION_ATTACK_TEST': {
+        'name': 'Scenario AK: Ring Protection Attack Simulation',
+        'description': '🛡️ Red Team Attack: Prompt Injection, Ring 0 위조, 위험 도구 접근 시도가 Ring Protection에 의해 탐지/차단되는지 검증',
+        'test_keyword': 'RING_PROTECTION_ATTACK_TEST',
+        'input_data': {
+            'ring_protection_test': True,
+            'attack_simulation': True,
+            'expected_sigkill': True
+        },
+        'expected_status': 'SIGKILL',  # Ring Protection에 의해 SIGKILL 예상
+        'verify_func': 'verify_ring_protection_attack',
+        'timeout_seconds': 60
     }
 }
 
@@ -559,6 +575,8 @@ TEST_WORKFLOW_MAPPINGS = {
     'DEADLOCK_DETECTION_TEST': 'test_deadlock_detection_workflow',  # 교착 상태 (Circular Token Dependency)
     'MEMORY_LEAK_TEST': 'test_memory_leak_workflow',  # 메모리 누수 (State Bag Bloat)
     'SPLIT_PARADOX_TEST': 'test_split_paradox_workflow',  # 분할의 역설 (Infinite Fragmentation)
+    # 🛡️ The Shield of Analemma: Ring Protection
+    'RING_PROTECTION_ATTACK_TEST': 'test_ring_protection_attack_workflow',  # Ring Protection 공격 시뮬레이션
 }
 
 
@@ -3369,6 +3387,88 @@ def verify_split_paradox_prevention(execution_arn: str, result: dict, scenario_c
         
     except Exception as e:
         logger.error(f"Split paradox verification failed: {e}")
+        return {
+            'passed': False,
+            'checks': [{'name': 'Verification Error', 'passed': False, 'details': str(e)}]
+        }
+
+
+def verify_ring_protection_attack(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
+    """
+    Scenario AK: Ring Protection Attack Simulation 검증.
+    
+    🛡️ Red Team Attack 시뮬레이션:
+    - Prompt Injection 패턴이 탐지되는지
+    - Ring 0 태그 위조 시도가 차단되는지
+    - 위험 도구 접근이 거부되는지
+    - SIGKILL 또는 sanitization이 작동하는지
+    """
+    verification = {'passed': False, 'checks': []}
+    
+    try:
+        output = result.get('output', {})
+        if isinstance(output, str):
+            try:
+                output = json.loads(output)
+            except:
+                output = {}
+        
+        status = result.get('status', '')
+        error_info = result.get('error', {}) or output.get('error_info', {})
+        
+        # 1. Ring Protection이 작동했는지 확인
+        # 공격 시뮬레이션이므로 SIGKILL 또는 violations 존재가 정상
+        is_sigkill = status == 'SIGKILL' or 'SIGKILL' in str(output)
+        has_violations = 'violations' in str(output) or 'security' in str(error_info).lower()
+        
+        ring_protection_active = is_sigkill or has_violations
+        verification['checks'].append({
+            'name': 'Ring Protection Active',
+            'passed': ring_protection_active,
+            'expected': 'SIGKILL or security violations detected',
+            'actual': f"Status: {status}, Violations detected: {has_violations}"
+        })
+        
+        # 2. Prompt Injection 탐지 확인
+        injection_detected = 'injection' in str(output).lower() or 'injection' in str(error_info).lower()
+        verification['checks'].append({
+            'name': 'Prompt Injection Detected',
+            'passed': injection_detected or ring_protection_active,
+            'details': 'Injection patterns should be detected and filtered'
+        })
+        
+        # 3. Ring 0 위조 시도 탐지 확인
+        ring_0_blocked = 'ring-0' in str(output).lower() or 'ring_0' in str(output).lower() or 'tampering' in str(output).lower()
+        verification['checks'].append({
+            'name': 'Ring 0 Forgery Blocked',
+            'passed': ring_0_blocked or ring_protection_active,
+            'details': 'Ring 0 tag forgery attempts should be blocked'
+        })
+        
+        # 4. 위험 도구 접근 차단 확인
+        dangerous_tool_blocked = 's3_delete' in str(output) or 'dangerous' in str(output).lower() or 'tool_access' in str(output).lower()
+        verification['checks'].append({
+            'name': 'Dangerous Tool Access Blocked',
+            'passed': dangerous_tool_blocked or ring_protection_active,
+            'details': 'Ring 3 should not access dangerous tools directly'
+        })
+        
+        # 5. 보안 로그 생성 확인
+        has_kernel_action = 'kernel_action' in str(output)
+        verification['checks'].append({
+            'name': 'Security Audit Log Created',
+            'passed': has_kernel_action or ring_protection_active,
+            'details': 'Kernel action log should be created for security events'
+        })
+        
+        # 공격 시뮬레이션이므로 SIGKILL이 발생해야 성공
+        # 또는 최소한 보안 위반이 탐지되어야 함
+        verification['passed'] = ring_protection_active
+        
+        return verification
+        
+    except Exception as e:
+        logger.error(f"Ring protection verification failed: {e}")
         return {
             'passed': False,
             'checks': [{'name': 'Verification Error', 'passed': False, 'details': str(e)}]

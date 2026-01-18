@@ -208,6 +208,65 @@ class SecurityConfig:
     
     # WebSocket 인증 쿼리 파라미터
     WEBSOCKET_TOKEN_PARAM = "token"
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 🛡️ Ring Protection: OS 수준 Privilege Isolation for AI Agents
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    # Ring 레벨 정의 (CPU Ring Model 차용)
+    RING_0_KERNEL = 0      # 커널 수준: 불변 시스템 목적, 보안 정책
+    RING_1_DRIVER = 1      # 드라이버 수준: 내부 시스템 도구 (향후 확장)
+    RING_2_SERVICE = 2     # 서비스 수준: 제한된 외부 API (향후 확장)
+    RING_3_USER = 3        # 사용자 수준: 신뢰할 수 없는 외부 입력
+    
+    # Ring 0 (Kernel) 보호 프롬프트 접두사 - 절대 무시 불가
+    RING_0_PREFIX = "[RING-0:IMMUTABLE]"
+    RING_3_PREFIX = "[RING-3:UNTRUSTED]"
+    
+    # 위험 도구 분류 (Ring 3에서 직접 접근 불가)
+    DANGEROUS_TOOLS = frozenset({
+        's3_delete', 's3_write', 's3_put_object',
+        'db_delete', 'db_write', 'db_update', 'dynamodb_delete',
+        'execute_shell', 'run_command', 'exec',
+        'send_email', 'send_sms', 'send_notification',
+        'payment_process', 'transfer_funds',
+        'delete_user', 'admin_action',
+    })
+    
+    # 안전 도구 (Ring 3에서 직접 사용 가능)
+    SAFE_TOOLS = frozenset({
+        's3_read', 's3_get_object', 's3_list',
+        'db_read', 'db_query', 'db_scan',
+        'api_get', 'http_get',
+        'llm_chat', 'llm_complete',
+        'log', 'print', 'format',
+    })
+    
+    # Prompt Injection 패턴 (Ring 3 → Ring 0 탈출 시도 탐지)
+    INJECTION_PATTERNS = [
+        r'(?i)ignore\s+(all\s+)?previous\s+instructions?',
+        r'(?i)disregard\s+(all\s+)?(above|previous)',
+        r'(?i)forget\s+(all\s+)?(previous|above)',
+        r'(?i)override\s+(system|all|security)',
+        r'(?i)you\s+are\s+now\s+(a|an|the)',
+        r'(?i)new\s+(role|instructions?|persona)\s*:',
+        r'(?i)system\s*:\s*you\s+are',
+        r'(?i)\[RING-0',  # Ring 0 태그 위조 시도
+        r'(?i)</?(RING|KERNEL|SYSTEM)[-_]',
+        r'(?i)jailbreak|bypass|escape\s+mode',
+    ]
+    
+    # 보안 위반 심각도 레벨
+    SEVERITY_CRITICAL = "CRITICAL"    # 즉시 SIGKILL
+    SEVERITY_HIGH = "HIGH"            # 경고 + 세그먼트 중단
+    SEVERITY_MEDIUM = "MEDIUM"        # 경고 + 필터링 후 진행
+    SEVERITY_LOW = "LOW"              # 로깅만
+    
+    # Ring Protection 활성화 여부
+    ENABLE_RING_PROTECTION = os.environ.get('ENABLE_RING_PROTECTION', 'true').lower() == 'true'
+    
+    # 보안 위반 시 자동 SIGKILL 활성화
+    ENABLE_AUTO_SIGKILL = os.environ.get('ENABLE_AUTO_SIGKILL', 'true').lower() == 'true'
 
 
 class EnvironmentVariables:

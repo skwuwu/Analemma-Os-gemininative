@@ -650,6 +650,12 @@
         },
         {
           "Variable": "$.execution_result.status",
+          "StringEquals": "SEQUENTIAL_BRANCH",
+          "Comment": "단일 브랜치 최적화: 병렬 실행 스킵하고 다음 세그먼트로",
+          "Next": "CheckForNextSegment"
+        },
+        {
+          "Variable": "$.execution_result.status",
           "StringEquals": "PAUSE",
           "Next": "WaitForCallback"
         },
