@@ -661,13 +661,38 @@ class DynamicWorkflowBuilder:
                 raise ValueError(f"Unknown edge type: {edge_type}")
 
         # Default entry point if none assigned
+        # [Critical Fix] Use topological analysis instead of nodes[0]
+        # Find nodes with in-degree 0 (no incoming edges) as entry point candidates
         if not entrypoint_assigned:
             nodes = self.config.get("nodes", [])
             if nodes:
-                first_node_id = nodes[0].get("id")
-                if first_node_id:
-                    self.graph.set_entry_point(first_node_id)
-                    logger.debug(f"Default entry point set: {first_node_id}")
+                # Build in-degree map
+                node_ids = {n.get("id") for n in nodes}
+                in_degree = {nid: 0 for nid in node_ids}
+                
+                for edge in edges:
+                    target = edge.get("target")
+                    if target in in_degree:
+                        in_degree[target] += 1
+                
+                # Find entry point candidates (in-degree 0)
+                entry_candidates = [nid for nid, deg in in_degree.items() if deg == 0]
+                
+                if entry_candidates:
+                    # If multiple candidates, prefer the first one in node order
+                    # (maintains backward compatibility with sorted nodes)
+                    node_order = [n.get("id") for n in nodes]
+                    for nid in node_order:
+                        if nid in entry_candidates:
+                            self.graph.set_entry_point(nid)
+                            logger.debug(f"Entry point set via topological analysis: {nid}")
+                            break
+                else:
+                    # Fallback to first node if no clear entry point (isolated nodes or cycles)
+                    first_node_id = nodes[0].get("id")
+                    if first_node_id:
+                        self.graph.set_entry_point(first_node_id)
+                        logger.debug(f"Default entry point set (fallback): {first_node_id}")
 
     def _validate_graph_completeness(self) -> None:
         """
