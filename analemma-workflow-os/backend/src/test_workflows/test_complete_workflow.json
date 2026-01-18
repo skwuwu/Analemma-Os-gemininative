@@ -1,0 +1,44 @@
+{
+    "workflow_name": "Complete Test Workflow",
+    "description": "Normal completion simulation test - including LLM segment division",
+    "nodes": [
+        {
+            "id": "complete_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"Completion test preparation\")\nstate['prep_done'] = True\nresult = {'status': 'ready_for_completion'}\nstate['prep_result'] = result",
+                "output_key": "prep_result"
+            }
+        },
+        {
+            "id": "complete_llm",
+            "type": "aiModel",
+            "config": {
+                "model": "claude-3-sonnet",
+                "max_tokens": 300,
+                "prompt": "완료 상태를 확인하고 COMPLETE 결과를 생성해주세요. 준비 상태: {prep_result}",
+                "temperature": 0.3
+            }
+        },
+        {
+            "id": "validator_node",
+            "type": "operator",
+            "config": {
+                "code": "if state.get('prep_done'):\n    state['TEST_RESULT'] = '✅ SUCCESS: 완료 테스트 정상 수행됨'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: 완료 테스트 준비 실패'"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "complete_prep",
+            "target": "complete_llm",
+            "type": "normal"
+        },
+        {
+            "source": "complete_llm",
+            "target": "validator_node",
+            "type": "normal"
+        }
+    ],
+    "start_node": "complete_prep"
+}

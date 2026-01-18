@@ -129,7 +129,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         test_keyword = config.get('test_keyword', 'COMPLETE')
         input_data = config.get('input_data', {}).copy()  # 복사본 사용하여 원본 보호
         
-        # 실제 테스트 워크플로 파일에서 config 로드
+        # LOCAL 시나리오는 워크플로 파일이 필요 없음 - 바로 LocalRunner Lambda 실행
+        if target_type == 'LOCAL':
+            logger.info(f"✅ Prepared LOCAL scenario: {scenario_key}")
+            return {
+                "targetArn": target_arn,
+                "name": execution_name,
+                "input": {},  # LOCAL 시나리오는 input 불필요
+                "scenario": scenario_key,
+                "targetType": target_type
+            }
+        
+        # SFN 시나리오만 워크플로 파일 로드
         workflow_config = _load_test_workflow_config(test_keyword)
         if not workflow_config:
             raise ValueError(f"Test workflow config not found for test_keyword: {test_keyword}")

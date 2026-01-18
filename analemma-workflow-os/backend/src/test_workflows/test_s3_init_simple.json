@@ -1,0 +1,16 @@
+{
+    "workflow_name": "S3 Init Test - Minimal",
+    "description": "S3 초기화 확인용 단순 워크플로우",
+    "nodes": [
+        {
+            "id": "s3_verification",
+            "type": "operator",
+            "config": {
+                "code": "print(\"=== S3 초기화 검증 ===\")\nprint(f\"S3_INIT_MARKER: {state.get('S3_INIT_MARKER', 'NOT_FOUND')}\")\nprint(f\"large_payload 크기: {len(str(state.get('large_payload', ''))))} bytes\")\nresult = {\n    'verified': state.get('S3_INIT_MARKER') == 'LOADED_FROM_S3',\n    'payload_size': len(str(state.get('large_payload', ''))),\n    'test_success': True\n}",
+                "output_key": "s3_verification"
+            }
+        }
+    ],
+    "edges": [],
+    "start_node": "s3_verification"
+}

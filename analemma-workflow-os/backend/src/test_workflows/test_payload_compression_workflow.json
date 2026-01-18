@@ -1,0 +1,42 @@
+{
+    "workflow_name": "Payload Compression Test",
+    "description": "StateDataManager 압축 기능 테스트 - 200KB 임계값 초과 시 압축 적용 검증",
+    "nodes": [
+        {
+            "id": "compression_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"페이로드 압축 테스트 준비\")\nstate['compression_test_started'] = True\n# 압축 테스트용 반복 데이터 생성 (200KB 임계값 초과)\ncompression_data = 'COMPRESSION_TEST_DATA_PATTERN_' * 8000  # ~240KB\nstate['compression_payload'] = compression_data\nstate['original_size_bytes'] = len(compression_data)\nstate['original_size_kb'] = len(compression_data) / 1024\nresult = {\n    'test_type': 'payload_compression',\n    'original_size_kb': state['original_size_kb'],\n    'exceeds_threshold': state['original_size_kb'] > 200,\n    'should_trigger_compression': True\n}\nstate['prep_result'] = result\nprint(f\"압축 테스트 데이터 생성: {state['original_size_kb']:.1f}KB (임계값: 200KB)\")",
+                "output_key": "prep_result"
+            }
+        },
+        {
+            "id": "compression_heavy_processing",
+            "type": "operator",
+            "config": {
+                "code": "print(\"압축 테스트용 무거운 처리 시뮬레이션\")\nif state.get('compression_test_started'):\n    # 추가 데이터 생성으로 페이로드 크기 증가\n    heavy_data = 'HEAVY_PROCESSING_RESULT_' * 5000  # ~150KB 추가\n    state['heavy_processing_result'] = heavy_data\n    state['additional_size_kb'] = len(heavy_data) / 1024\n    \n    # 총 크기 계산\n    total_size_kb = state.get('original_size_kb', 0) + state['additional_size_kb']\n    state['total_payload_size_kb'] = total_size_kb\n    \n    result = {\n        'status': 'heavy_processing_completed',\n        'additional_size_kb': state['additional_size_kb'],\n        'total_size_kb': total_size_kb,\n        'definitely_needs_compression': total_size_kb > 200\n    }\n    state['processing_result'] = result\n    print(f\"무거운 처리 완료: 총 {total_size_kb:.1f}KB (압축 필요: {total_size_kb > 200})\")\nelse:\n    raise RuntimeError(\"압축 테스트 준비가 되지 않음\")",
+                "output_key": "processing_result"
+            }
+        },
+        {
+            "id": "compression_validator",
+            "type": "operator",
+            "config": {
+                "code": "print(\"페이로드 압축 테스트 검증 시작\")\n\n# 검증 조건들\nsuccess_conditions = [\n    state.get('compression_test_started') == True,\n    state.get('original_size_kb', 0) > 200,  # 원본 크기가 임계값 초과\n    state.get('total_payload_size_kb', 0) > 200,  # 총 크기가 임계값 초과\n    'compression_payload' in state,\n    'heavy_processing_result' in state,\n    'prep_result' in state,\n    'processing_result' in state\n]\n\nall_passed = all(success_conditions)\ntotal_size = state.get('total_payload_size_kb', 0)\n\nprint(f\"검증 조건들: {success_conditions}\")\nprint(f\"총 페이로드 크기: {total_size:.1f}KB\")\nprint(f\"모든 조건 통과: {all_passed}\")\n\nif all_passed:\n    state['TEST_RESULT'] = f'✅ SUCCESS: 페이로드 압축 테스트 성공 - {total_size:.1f}KB 데이터로 StateDataManager 압축 트리거됨'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print(\"✅ 페이로드 압축 테스트 검증 성공\")\nelse:\n    state['TEST_RESULT'] = f'❌ FAILURE: 페이로드 압축 테스트 실패 - 크기: {total_size:.1f}KB, 조건 미충족'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(\"❌ 페이로드 압축 테스트 검증 실패\")\n\nstate['validation_details'] = {\n    'test_type': 'payload_compression',\n    'original_size_kb': state.get('original_size_kb', 0),\n    'total_size_kb': total_size,\n    'threshold_kb': 200,\n    'conditions_checked': len(success_conditions),\n    'conditions_passed': sum(success_conditions),\n    'compression_should_be_applied': total_size > 200\n}"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "compression_prep",
+            "target": "compression_heavy_processing",
+            "type": "normal"
+        },
+        {
+            "source": "compression_heavy_processing",
+            "target": "compression_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "compression_prep"
+}

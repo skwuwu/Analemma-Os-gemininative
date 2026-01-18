@@ -1,0 +1,43 @@
+{
+    "workflow_name": "HITP Segmentation Test Workflow",
+    "description": "Human-in-the-loop segmentation test workflow",
+    "nodes": [
+        {
+            "id": "prep_node",
+            "type": "operator",
+            "config": {
+                "code": "print(\"Preparing HITP test...\")\nstate['hitp_prepared'] = True\nresult = {\n    'status': 'hitp_prep_completed',\n    'ready_for_segmentation': True\n}\nstate['prep_result'] = result\nprint(\"HITP preparation complete - waiting for segmentation\")",
+                "output_key": "prep_result"
+            }
+        },
+        {
+            "id": "validator_node",
+            "type": "operator",
+            "config": {
+                "code": "if state.get('hitp_prepared') and state.get('prep_result', {}).get('ready_for_segmentation'):\n    state['TEST_RESULT'] = '✅ SUCCESS: HITP preparation status confirmed'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: HITP preparation failed'"
+            }
+        },
+        {
+            "id": "approval_required_node",
+            "type": "operator",
+            "hitp": true,
+            "config": {
+                "code": "print(\"Approval required node executing...\")\nstate['requires_approval'] = True\nresult = {\n    'status': 'awaiting_human_approval',\n    'approval_type': 'manual_review_required'\n}\nstate['approval_result'] = result\nprint(\"Waiting for human approval\")",
+                "output_key": "approval_result"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "prep_node",
+            "target": "validator_node",
+            "type": "normal"
+        },
+        {
+            "source": "validator_node",
+            "target": "approval_required_node",
+            "type": "hitp"
+        }
+    ],
+    "start_node": "prep_node"
+}

@@ -1,0 +1,43 @@
+{
+    "workflow_name": "S3 Mixed Data Test",
+    "description": "10KB → 50KB → 200KB 순차적 다양한 크기 테스트",
+    "nodes": [
+        {
+            "id": "small_data_10k",
+            "type": "operator",
+            "config": {
+                "code": "print(\"1단계: 10KB 데이터 생성\")\nsmall_data = \"SMALL_\" * 2000  # ~10KB\nsize_10k = len(small_data)\nprint(f\"10KB 데이터 생성: {size_10k} bytes\")\n# result 변수로 명시적 반환\nresult = {\n    'data_10k': small_data,\n    'size_10k': size_10k,\n    'step1_result': {'step': 1, 'size_kb': size_10k/1024}\n}",
+                "output_key": "step1_result"
+            }
+        },
+        {
+            "id": "medium_data_50k", 
+            "type": "operator",
+            "config": {
+                "code": "print(\"2단계: 50KB 데이터 생성\")\nmedium_data = \"MEDIUM_\" * 7000  # ~50KB\nsize_50k = len(medium_data)\nprint(f\"50KB 데이터 생성: {size_50k} bytes\")\n# result 변수로 명시적 반환\nresult = {\n    'data_50k': medium_data,\n    'size_50k': size_50k,\n    'step2_result': {'step': 2, 'size_kb': size_50k/1024}\n}",
+                "output_key": "step2_result"
+            }
+        },
+        {
+            "id": "large_data_200k",
+            "type": "operator", 
+            "config": {
+                "code": "print(\"3단계: 300KB+ 데이터 생성 (S3 오프로드 트리거)\")\nlarge_data = \"LARGE_MIXED_S3_\" * 25000  # ~375KB\nsize_300k = len(large_data)\ntriggers_s3 = size_300k > 250000\nsize_kb = size_300k/1024\nprint(f\"대용량 데이터 생성: {size_300k} bytes ({size_kb:.1f}KB, S3 트리거: {triggers_s3})\")\n# result 변수로 명시적 반환\nresult = {\n    'data_300k': large_data,\n    'size_300k': size_300k,\n    'step3_result': {'step': 3, 'size_kb': size_kb, 'triggers_s3': triggers_s3}\n}",
+                "output_key": "step3_result"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "small_data_10k",
+            "target": "medium_data_50k",
+            "type": "normal"
+        },
+        {
+            "source": "medium_data_50k",
+            "target": "large_data_200k", 
+            "type": "normal"
+        }
+    ],
+    "start_node": "small_data_10k"
+}

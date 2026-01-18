@@ -1,0 +1,42 @@
+{
+    "workflow_name": "S3 Initialize Test Workflow",
+    "description": "S3에서 initial_state를 로드하는 테스트",
+    "nodes": [
+        {
+            "id": "verify_s3_init",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 초기화 검증\")\n# 이 노드가 실행되었다면 S3에서 상태를 성공적으로 로드했다는 의미\nverify_key = state.get('S3_INIT_TEST')\nif verify_key:\n    print(f\"✅ S3에서 initial_state 로드 성공: {verify_key}\")\n    s3_init_result = {'initialized_from_s3': True, 'verify_key': verify_key}\nelse:\n    print(\"❌ S3 초기화 실패 또는 데이터 누락\")\n    s3_init_result = {'initialized_from_s3': False, 'error': 'verify_key_missing'}\nprint(f\"검증 결과: {s3_init_result}\")\n# result 변수로 명시적 반환\nresult = {'s3_init_result': s3_init_result}",
+                "output_key": "s3_init_result"
+            }
+        },
+        {
+            "id": "process_s3_data",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 데이터 처리\")\n# S3에서 로드된 large_initial_payload를 처리\npayload = state.get('large_initial_payload', '')\npayload_size = len(payload)\nprint(f\"Payload 크기: {payload_size} bytes ({payload_size/1024:.1f}KB)\")\n# result 변수로 명시적 반환\nresult = {\n    'process_result': {\n        'processed': True,\n        'payload_size_kb': payload_size / 1024,\n        'was_large': payload_size > 100000\n    }\n}",
+                "output_key": "process_result"
+            }
+        },
+        {
+            "id": "validator_node",
+            "type": "operator",
+            "config": {
+                "code": "if state.get('s3_init_result', {}).get('initialized_from_s3'):\n    state['TEST_RESULT'] = '✅ SUCCESS: S3 초기화 및 데이터 로드 성공'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: S3 초기화 실패'"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "verify_s3_init",
+            "target": "process_s3_data",
+            "type": "normal"
+        },
+        {
+            "source": "process_s3_data",
+            "target": "validator_node",
+            "type": "normal"
+        }
+    ],
+    "start_node": "verify_s3_init"
+}

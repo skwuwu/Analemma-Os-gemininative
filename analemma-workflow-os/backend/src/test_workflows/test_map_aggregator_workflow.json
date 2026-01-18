@@ -1,0 +1,63 @@
+{
+    "workflow_name": "Map Aggregator Test",
+    "description": "Map State and Aggregator logic verification (result aggregation after parallel execution)",
+    "nodes": [
+        {
+            "id": "parallel_node",
+            "type": "parallel_group",
+            "config": {
+                "branches": [
+                    {
+                        "branch_id": "branch_A",
+                        "nodes": [
+                            {
+                                "id": "branch_A_step1",
+                                "type": "operator",
+                                "config": {
+                                    "code": "print('Branch A executing')\nresult = {'branch_A_result': 'Success A', 'timestamp_A': 12345}"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "branch_id": "branch_B",
+                        "nodes": [
+                            {
+                                "id": "branch_B_step1",
+                                "type": "operator",
+                                "config": {
+                                    "code": "print('Branch B executing')\nresult = {'branch_B_result': 'Success B', 'timestamp_B': 67890}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "id": "aggregator_node",
+            "type": "aggregator",
+            "config": {
+                "code": "print('Aggregator node (placeholder code, logic handled by segment runner)')"
+            }
+        },
+        {
+            "id": "validator_node",
+            "type": "operator",
+            "config": {
+                "code": "if 'branch_A_result' in state and 'branch_B_result' in state:\n    state['TEST_RESULT'] = '✅ SUCCESS: All branch results aggregated'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: Some data missing'"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "parallel_node",
+            "target": "aggregator_node"
+        },
+        {
+            "source": "aggregator_node",
+            "target": "validator_node"
+        }
+    ],
+    "start_node": "parallel_node"
+}

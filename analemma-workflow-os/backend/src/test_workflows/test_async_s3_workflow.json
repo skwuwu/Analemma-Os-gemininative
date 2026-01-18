@@ -1,0 +1,33 @@
+{
+    "workflow_name": "Async S3 Heavy File Test",
+    "description": "S3 대용량 파일 비동기 처리 테스트",
+    "nodes": [
+        {
+            "id": "s3_heavy_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 대용량 파일 비동기 테스트 준비\")\n# 매우 큰 데이터 생성 (500KB+)\nheavy_s3_data = \"HEAVY_S3_ASYNC_\" * 30000  # ~500KB\nstate['heavy_s3_payload'] = heavy_s3_data\nstate['heavy_size'] = len(heavy_s3_data)\nresult = {'size_kb': state['heavy_size']/1024, 'triggers_s3_offload': state['heavy_size'] > 250000, 'requires_async': True}\nstate['s3_heavy_result'] = result\nprint(f\"대용량 S3 데이터: {state['heavy_size']} bytes\")",
+                "output_key": "s3_heavy_result"
+            }
+        },
+        {
+            "id": "async_s3_process",
+            "type": "aiModel",
+            "config": {
+                "prompt_content": "Process this heavy S3 data asynchronously with comprehensive analysis: {{heavy_s3_payload}}",
+                "model": "anthropic.claude-3-opus-20240229-v1:0",
+                "max_tokens": 5000,
+                "temperature": 0.2,
+                "force_async": true
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "s3_heavy_prep",
+            "target": "async_s3_process",
+            "type": "normal"
+        }
+    ],
+    "start_node": "s3_heavy_prep"
+}

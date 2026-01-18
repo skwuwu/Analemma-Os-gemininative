@@ -1,0 +1,42 @@
+{
+    "workflow_name": "Idempotency Duplicate Test",
+    "description": "중복 실행 감지 테스트 - 같은 idempotency_key로 재실행 시 차단되는지 검증",
+    "nodes": [
+        {
+            "id": "idempotency_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"멱등성 중복 실행 테스트 준비\")\nstate['idempotency_test_started'] = True\nstate['execution_attempt'] = 1\nresult = {\n    'test_type': 'idempotency_duplicate',\n    'should_be_blocked_on_retry': True,\n    'execution_id': state.get('execution_id', 'unknown')\n}\nstate['prep_result'] = result\nprint(f\"첫 번째 실행 준비 완료: {result}\")",
+                "output_key": "prep_result"
+            }
+        },
+        {
+            "id": "idempotency_main_work",
+            "type": "operator",
+            "config": {
+                "code": "print(\"멱등성 테스트 메인 작업 실행\")\nif state.get('idempotency_test_started'):\n    state['main_work_completed'] = True\n    state['unique_execution_marker'] = f\"exec_{hash(str(state.get('execution_id', 'unknown')))}_{state.get('execution_attempt', 1)}\"\n    result = {\n        'status': 'main_work_done',\n        'execution_marker': state['unique_execution_marker'],\n        'timestamp': str(hash('idempotency_test'))\n    }\n    state['main_result'] = result\n    print(f\"메인 작업 완료: {result}\")\nelse:\n    raise RuntimeError(\"멱등성 테스트 준비가 되지 않음\")",
+                "output_key": "main_result"
+            }
+        },
+        {
+            "id": "idempotency_validator",
+            "type": "operator",
+            "config": {
+                "code": "print(\"멱등성 테스트 검증 시작\")\nsuccess_conditions = [\n    state.get('idempotency_test_started') == True,\n    state.get('main_work_completed') == True,\n    'unique_execution_marker' in state,\n    'prep_result' in state,\n    'main_result' in state\n]\n\nall_passed = all(success_conditions)\nprint(f\"검증 조건들: {success_conditions}\")\nprint(f\"모든 조건 통과: {all_passed}\")\n\nif all_passed:\n    state['TEST_RESULT'] = '✅ SUCCESS: 멱등성 테스트 첫 실행 성공 - 중복 실행 시 차단되어야 함'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print(\"✅ 멱등성 테스트 검증 성공\")\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: 멱등성 테스트 실패 - 조건 미충족'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(\"❌ 멱등성 테스트 검증 실패\")\n\nstate['validation_details'] = {\n    'test_type': 'idempotency_duplicate',\n    'conditions_checked': len(success_conditions),\n    'conditions_passed': sum(success_conditions),\n    'execution_marker': state.get('unique_execution_marker', 'none')\n}"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "idempotency_prep",
+            "target": "idempotency_main_work",
+            "type": "normal"
+        },
+        {
+            "source": "idempotency_main_work",
+            "target": "idempotency_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "idempotency_prep"
+}

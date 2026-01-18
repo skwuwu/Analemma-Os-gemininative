@@ -1,0 +1,55 @@
+{
+    "workflow_name": "Payload S3 Offload Test",
+    "description": "StateDataManager S3 오프로딩 기능 테스트 - 대용량 필드 자동 S3 저장 검증",
+    "nodes": [
+        {
+            "id": "s3_offload_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 오프로딩 테스트 준비\")\nstate['s3_offload_test_started'] = True\n# S3 오프로딩을 트리거할 대용량 context 데이터 생성\nlarge_context = 'LARGE_CONTEXT_DATA_FOR_S3_OFFLOAD_' * 3000  # ~120KB context\nstate['context'] = large_context\nstate['context_size_kb'] = len(large_context) / 1024\nresult = {\n    'test_type': 'payload_s3_offload',\n    'context_size_kb': state['context_size_kb'],\n    'should_trigger_s3_offload': state['context_size_kb'] > 50,  # 50KB 임계값\n    'field_name': 'context'\n}\nstate['prep_result'] = result\nprint(f\"S3 오프로딩 테스트 데이터 생성: context {state['context_size_kb']:.1f}KB (임계값: 50KB)\")",
+                "output_key": "prep_result"
+            }
+        },
+        {
+            "id": "s3_offload_llm_responses",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 오프로딩용 LLM 응답 데이터 생성\")\nif state.get('s3_offload_test_started'):\n    # 대용량 LLM 응답 시뮬레이션\n    large_llm_responses = {\n        'response_1': 'LLM_RESPONSE_DATA_PATTERN_' * 2000,  # ~60KB\n        'response_2': 'ANOTHER_LLM_RESPONSE_PATTERN_' * 1500,  # ~45KB\n        'response_3': 'FINAL_LLM_RESPONSE_PATTERN_' * 1000   # ~30KB\n    }\n    state['llm_responses'] = large_llm_responses\n    \n    # 각 응답 크기 계산\n    response_sizes = {k: len(v) / 1024 for k, v in large_llm_responses.items()}\n    total_llm_size_kb = sum(response_sizes.values())\n    state['llm_responses_size_kb'] = total_llm_size_kb\n    \n    result = {\n        'status': 'llm_responses_generated',\n        'response_sizes_kb': response_sizes,\n        'total_llm_size_kb': total_llm_size_kb,\n        'should_offload_llm_responses': total_llm_size_kb > 50\n    }\n    state['llm_result'] = result\n    print(f\"LLM 응답 데이터 생성: 총 {total_llm_size_kb:.1f}KB\")\nelse:\n    raise RuntimeError(\"S3 오프로딩 테스트 준비가 되지 않음\")",
+                "output_key": "llm_result"
+            }
+        },
+        {
+            "id": "s3_offload_generated_content",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 오프로딩용 생성 콘텐츠 데이터 생성\")\nif state.get('s3_offload_test_started'):\n    # 대용량 생성 콘텐츠 시뮬레이션\n    large_generated_content = {\n        'document': 'GENERATED_DOCUMENT_CONTENT_' * 4000,  # ~120KB\n        'summary': 'GENERATED_SUMMARY_CONTENT_' * 1000,   # ~30KB\n        'analysis': 'GENERATED_ANALYSIS_CONTENT_' * 2000  # ~60KB\n    }\n    state['generated_content'] = large_generated_content\n    \n    # 생성 콘텐츠 크기 계산\n    content_sizes = {k: len(v) / 1024 for k, v in large_generated_content.items()}\n    total_content_size_kb = sum(content_sizes.values())\n    state['generated_content_size_kb'] = total_content_size_kb\n    \n    # 전체 페이로드 크기 계산\n    total_payload_kb = (\n        state.get('context_size_kb', 0) + \n        state.get('llm_responses_size_kb', 0) + \n        total_content_size_kb\n    )\n    state['total_payload_size_kb'] = total_payload_kb\n    \n    result = {\n        'status': 'generated_content_created',\n        'content_sizes_kb': content_sizes,\n        'total_content_size_kb': total_content_size_kb,\n        'total_payload_size_kb': total_payload_kb,\n        'multiple_fields_need_offload': True\n    }\n    state['content_result'] = result\n    print(f\"생성 콘텐츠 데이터 생성: 총 {total_content_size_kb:.1f}KB, 전체 페이로드: {total_payload_kb:.1f}KB\")\nelse:\n    raise RuntimeError(\"S3 오프로딩 테스트 준비가 되지 않음\")",
+                "output_key": "content_result"
+            }
+        },
+        {
+            "id": "s3_offload_validator",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 오프로딩 테스트 검증 시작\")\n\n# 검증 조건들\nsuccess_conditions = [\n    state.get('s3_offload_test_started') == True,\n    state.get('context_size_kb', 0) > 50,  # context 필드가 50KB 초과\n    state.get('llm_responses_size_kb', 0) > 50,  # llm_responses 필드가 50KB 초과\n    state.get('generated_content_size_kb', 0) > 50,  # generated_content 필드가 50KB 초과\n    state.get('total_payload_size_kb', 0) > 200,  # 전체 페이로드가 200KB 초과\n    'context' in state,\n    'llm_responses' in state,\n    'generated_content' in state,\n    'prep_result' in state,\n    'llm_result' in state,\n    'content_result' in state\n]\n\nall_passed = all(success_conditions)\ntotal_size = state.get('total_payload_size_kb', 0)\nfields_to_offload = []\n\n# S3 오프로딩이 필요한 필드들 확인\nif state.get('context_size_kb', 0) > 50:\n    fields_to_offload.append('context')\nif state.get('llm_responses_size_kb', 0) > 50:\n    fields_to_offload.append('llm_responses')\nif state.get('generated_content_size_kb', 0) > 50:\n    fields_to_offload.append('generated_content')\n\nprint(f\"검증 조건들: {success_conditions}\")\nprint(f\"총 페이로드 크기: {total_size:.1f}KB\")\nprint(f\"S3 오프로딩 대상 필드들: {fields_to_offload}\")\nprint(f\"모든 조건 통과: {all_passed}\")\n\nif all_passed:\n    state['TEST_RESULT'] = f'✅ SUCCESS: S3 오프로딩 테스트 성공 - {total_size:.1f}KB 페이로드, {len(fields_to_offload)}개 필드 오프로딩 예상'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print(\"✅ S3 오프로딩 테스트 검증 성공\")\nelse:\n    state['TEST_RESULT'] = f'❌ FAILURE: S3 오프로딩 테스트 실패 - 크기: {total_size:.1f}KB, 조건 미충족'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(\"❌ S3 오프로딩 테스트 검증 실패\")\n\nstate['validation_details'] = {\n    'test_type': 'payload_s3_offload',\n    'total_payload_size_kb': total_size,\n    'context_size_kb': state.get('context_size_kb', 0),\n    'llm_responses_size_kb': state.get('llm_responses_size_kb', 0),\n    'generated_content_size_kb': state.get('generated_content_size_kb', 0),\n    'fields_to_offload': fields_to_offload,\n    'offload_threshold_kb': 50,\n    'conditions_checked': len(success_conditions),\n    'conditions_passed': sum(success_conditions)\n}"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "s3_offload_prep",
+            "target": "s3_offload_llm_responses",
+            "type": "normal"
+        },
+        {
+            "source": "s3_offload_llm_responses",
+            "target": "s3_offload_generated_content",
+            "type": "normal"
+        },
+        {
+            "source": "s3_offload_generated_content",
+            "target": "s3_offload_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "s3_offload_prep"
+}

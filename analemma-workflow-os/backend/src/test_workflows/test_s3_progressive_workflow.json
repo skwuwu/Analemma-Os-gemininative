@@ -1,0 +1,43 @@
+{
+    "workflow_name": "S3 Progressive Test Workflow",
+    "description": "점진적 업로드/처리 테스트",
+    "nodes": [
+        {
+            "id": "progressive_step1",
+            "type": "operator",
+            "config": {
+                "code": "print(\"점진적 테스트 1단계: 초기 데이터\")\ndata1 = \"PROG1_\" * 5000  # ~30KB\nsize1 = len(data1)\nprint(f\"1단계: {size1} bytes\")\n# result 변수로 명시적 반환\nresult = {\n    'prog_data1': data1,\n    'size1': size1,\n    'prog1_result': {'step': 1, 'size_kb': size1/1024}\n}",
+                "output_key": "prog1_result"
+            }
+        },
+        {
+            "id": "progressive_step2",
+            "type": "operator",
+            "config": {
+                "code": "print(\"점진적 테스트 2단계: 증가된 데이터\")\n# 이전 단계 데이터 가져오기\ndata1 = state.get('prog_data1', '')\nif not data1:\n    print(\"⚠️ prog_data1이 누락됨, 폴백 사용\")\n    data1 = \"PROG1_\" * 5000\ndata2 = data1 + (\"PROG2_\" * 15000)  # ~120KB 총합\nsize2 = len(data2)\nprint(f\"2단계: {size2} bytes\")\n# result 변수로 명시적 반환\nresult = {\n    'prog_data2': data2,\n    'size2': size2,\n    'prog2_result': {'step': 2, 'size_kb': size2/1024}\n}",
+                "output_key": "prog2_result"
+            }
+        },
+        {
+            "id": "progressive_final",
+            "type": "operator",
+            "config": {
+                "code": "print(\"점진적 테스트 최종단계: 대용량 데이터\")\n# 이전 단계 데이터 가져오기\ndata2 = state.get('prog_data2', '')\nif not data2:\n    print(\"⚠️ prog_data2가 누락됨, 폴백 사용\")\n    data2 = \"PROG1_\" * 5000 + \"PROG2_\" * 15000\nfinal_data = data2 + (\"PROGFINAL_\" * 20000)  # ~270KB 총합\nfinal_size = len(final_data)\ntriggers_s3 = final_size > 250000\nprint(f\"최종: {final_size} bytes (S3: {triggers_s3})\")\n# result 변수로 명시적 반환\nresult = {\n    'final_prog_data': final_data,\n    'final_size': final_size,\n    'prog_final_result': {'step': 'final', 'size_kb': final_size/1024, 'triggers_s3': triggers_s3}\n}",
+                "output_key": "prog_final_result"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "progressive_step1",
+            "target": "progressive_step2",
+            "type": "normal"
+        },
+        {
+            "source": "progressive_step2",
+            "target": "progressive_final",
+            "type": "normal"
+        }
+    ],
+    "start_node": "progressive_step1"
+}

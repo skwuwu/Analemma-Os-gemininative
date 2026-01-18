@@ -1,0 +1,33 @@
+{
+    "workflow_name": "Async LLM Test Workflow",
+    "description": "비동기 LLM 처리 테스트",
+    "nodes": [
+        {
+            "id": "async_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"비동기 LLM 테스트 준비\")\nstate['async_ready'] = True\nresult = {'status': 'prepared_for_async', 'test_type': 'async_llm'}\nstate['async_prep_result'] = result\nprint(\"비동기 LLM 준비 완료\")",
+                "output_key": "async_prep_result"
+            }
+        },
+        {
+            "id": "async_llm_call",
+            "type": "aiModel",
+            "config": {
+                "prompt_content": "This is a complex async LLM test that requires heavy processing and should trigger async execution due to model type and token requirements.",
+                "model": "anthropic.claude-3-opus-20240229-v1:0",
+                "max_tokens": 3000,
+                "temperature": 0.5,
+                "force_async": true
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "async_prep",
+            "target": "async_llm_call", 
+            "type": "normal"
+        }
+    ],
+    "start_node": "async_prep"
+}

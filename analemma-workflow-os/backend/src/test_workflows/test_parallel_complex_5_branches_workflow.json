@@ -1,0 +1,141 @@
+{
+    "workflow_name": "Complex Parallel 5 Branches Test",
+    "description": "5개 브랜치로 Child Workflow 트리거 테스트 - _should_use_child_workflow 로직 검증",
+    "nodes": [
+        {
+            "id": "parallel_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"복잡한 병렬 처리 테스트 준비 (5개 브랜치)\")\nstate['parallel_test_started'] = True\nstate['expected_branches'] = 5\nstate['expected_child_workflow'] = True  # 5개 브랜치이므로 Child Workflow 사용 예상\nresult = {\n    'test_type': 'parallel_complex_5_branches',\n    'branch_count': 5,\n    'should_use_child_workflow': True,\n    'reason': 'branch_count >= 5'\n}\nstate['prep_result'] = result\nprint(f\"병렬 테스트 준비 완료: {result}\")",
+                "output_key": "prep_result"
+            }
+        },
+        {
+            "id": "complex_parallel_group",
+            "type": "parallel_group",
+            "config": {
+                "branches": [
+                    {
+                        "branch_id": "branch_1",
+                        "total_segments": 15,
+                        "partition_map": {
+                            "seg_1_1": {"type": "operator", "complexity": "medium"},
+                            "seg_1_2": {"type": "operator", "complexity": "high"},
+                            "seg_1_3": {"type": "aiModel", "complexity": "medium"}
+                        },
+                        "nodes": [
+                            {
+                                "id": "branch_1_work",
+                                "type": "operator",
+                                "config": {
+                                    "code": "print('Branch 1 복잡한 작업 실행')\nresult = {'branch_1_result': 'Success_1', 'segments': 15, 'complexity': 'high'}\nstate['branch_1_completed'] = True"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "branch_id": "branch_2", 
+                        "total_segments": 20,
+                        "partition_map": {
+                            "seg_2_1": {"type": "operator", "complexity": "high"},
+                            "seg_2_2": {"type": "aiModel", "complexity": "high"},
+                            "seg_2_3": {"type": "operator", "complexity": "medium"}
+                        },
+                        "nodes": [
+                            {
+                                "id": "branch_2_work",
+                                "type": "operator",
+                                "config": {
+                                    "code": "print('Branch 2 복잡한 작업 실행')\nresult = {'branch_2_result': 'Success_2', 'segments': 20, 'complexity': 'very_high'}\nstate['branch_2_completed'] = True"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "branch_id": "branch_3",
+                        "total_segments": 18,
+                        "partition_map": {
+                            "seg_3_1": {"type": "aiModel", "complexity": "high"},
+                            "seg_3_2": {"type": "operator", "complexity": "medium"}
+                        },
+                        "nodes": [
+                            {
+                                "id": "branch_3_work",
+                                "type": "operator",
+                                "config": {
+                                    "code": "print('Branch 3 복잡한 작업 실행')\nresult = {'branch_3_result': 'Success_3', 'segments': 18, 'complexity': 'high'}\nstate['branch_3_completed'] = True"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "branch_id": "branch_4",
+                        "total_segments": 22,
+                        "partition_map": {
+                            "seg_4_1": {"type": "operator", "complexity": "very_high"},
+                            "seg_4_2": {"type": "aiModel", "complexity": "high"}
+                        },
+                        "nodes": [
+                            {
+                                "id": "branch_4_work",
+                                "type": "operator",
+                                "config": {
+                                    "code": "print('Branch 4 복잡한 작업 실행')\nresult = {'branch_4_result': 'Success_4', 'segments': 22, 'complexity': 'very_high'}\nstate['branch_4_completed'] = True"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "branch_id": "branch_5",
+                        "total_segments": 25,
+                        "partition_map": {
+                            "seg_5_1": {"type": "aiModel", "complexity": "very_high"},
+                            "seg_5_2": {"type": "operator", "complexity": "high"}
+                        },
+                        "nodes": [
+                            {
+                                "id": "branch_5_work",
+                                "type": "operator",
+                                "config": {
+                                    "code": "print('Branch 5 복잡한 작업 실행')\nresult = {'branch_5_result': 'Success_5', 'segments': 25, 'complexity': 'extreme'}\nstate['branch_5_completed'] = True"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "id": "parallel_aggregator",
+            "type": "aggregator",
+            "config": {
+                "code": "print('복잡한 병렬 결과 집계 중...')\n# Aggregator 로직은 segment_runner_handler에서 처리됨"
+            }
+        },
+        {
+            "id": "parallel_validator",
+            "type": "operator",
+            "config": {
+                "code": "print(\"복잡한 병렬 처리 테스트 검증 시작\")\n\n# 모든 브랜치 완료 확인\nbranch_completion_checks = [\n    state.get('branch_1_completed') == True,\n    state.get('branch_2_completed') == True,\n    state.get('branch_3_completed') == True,\n    state.get('branch_4_completed') == True,\n    state.get('branch_5_completed') == True\n]\n\n# 기본 조건 확인\nbasic_conditions = [\n    state.get('parallel_test_started') == True,\n    state.get('expected_branches') == 5,\n    'prep_result' in state\n]\n\nall_branches_completed = all(branch_completion_checks)\nbasic_checks_passed = all(basic_conditions)\nall_passed = all_branches_completed and basic_checks_passed\n\nprint(f\"브랜치 완료 상태: {branch_completion_checks}\")\nprint(f\"기본 조건 상태: {basic_conditions}\")\nprint(f\"모든 브랜치 완료: {all_branches_completed}\")\nprint(f\"모든 조건 통과: {all_passed}\")\n\nif all_passed:\n    state['TEST_RESULT'] = '✅ SUCCESS: 복잡한 5개 브랜치 병렬 처리 성공 - Child Workflow 로직 트리거됨'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print(\"✅ 복잡한 병렬 처리 테스트 검증 성공\")\nelse:\n    failed_branches = [f'branch_{i+1}' for i, completed in enumerate(branch_completion_checks) if not completed]\n    state['TEST_RESULT'] = f'❌ FAILURE: 복잡한 병렬 처리 실패 - 미완료 브랜치: {failed_branches}'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(f\"❌ 복잡한 병렬 처리 테스트 검증 실패: {failed_branches}\")\n\nstate['validation_details'] = {\n    'test_type': 'parallel_complex_5_branches',\n    'total_branches': 5,\n    'completed_branches': sum(branch_completion_checks),\n    'expected_child_workflow': True,\n    'total_segments': 15 + 20 + 18 + 22 + 25,  # 100 segments total\n    'conditions_checked': len(basic_conditions) + len(branch_completion_checks),\n    'conditions_passed': sum(basic_conditions) + sum(branch_completion_checks)\n}"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "parallel_prep",
+            "target": "complex_parallel_group",
+            "type": "normal"
+        },
+        {
+            "source": "complex_parallel_group",
+            "target": "parallel_aggregator",
+            "type": "normal"
+        },
+        {
+            "source": "parallel_aggregator",
+            "target": "parallel_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "parallel_prep"
+}

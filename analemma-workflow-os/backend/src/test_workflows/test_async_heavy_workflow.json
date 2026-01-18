@@ -1,0 +1,33 @@
+{
+    "workflow_name": "Async Heavy Prompt Test",
+    "description": "Large prompt async processing test",
+    "nodes": [
+        {
+            "id": "heavy_prompt_gen",
+            "type": "operator",
+            "config": {
+                "code": "print(\"Generating large prompt...\")\nheavy_prompt = \"This is a very long prompt for async processing. \" * 1000  # ~50KB prompt\nstate['heavy_prompt'] = heavy_prompt\nstate['prompt_size'] = len(heavy_prompt)\nresult = {'prompt_size_kb': state['prompt_size']/1024, 'requires_async': state['prompt_size'] > 10000}\nstate['heavy_gen_result'] = result\nprint(f\"Large prompt generated: {state['prompt_size']} bytes\")",
+                "output_key": "heavy_gen_result"
+            }
+        },
+        {
+            "id": "heavy_llm_process",
+            "type": "aiModel", 
+            "config": {
+                "prompt_content": "{{heavy_prompt}}",
+                "model": "anthropic.claude-3-opus-20240229-v1:0",
+                "max_tokens": 4000,
+                "temperature": 0.3,
+                "force_async": true
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "heavy_prompt_gen",
+            "target": "heavy_llm_process",
+            "type": "normal"
+        }
+    ],
+    "start_node": "heavy_prompt_gen"
+}

@@ -1,0 +1,44 @@
+{
+    "workflow_name": "Continue Test Workflow",
+    "description": "다음 단계 진행 시뮬레이션 테스트",
+    "nodes": [
+        {
+            "id": "continue_step1",
+            "type": "operator",
+            "config": {
+                "code": "print(\"1단계: 준비\")\nstate['step1_done'] = True\nresult = {'step': 1, 'status': 'ready_for_next'}\nstate['step1_result'] = result\nprint(\"1단계 완료 - 다음 단계로 진행\")",
+                "output_key": "step1_result"
+            }
+        },
+        {
+            "id": "continue_step2",
+            "type": "aiModel",
+            "config": {
+                "model": "claude-3-sonnet",
+                "max_tokens": 500,
+                "prompt": "2단계 처리를 완료하고 CONTINUE 상태를 확인해주세요. 상태: {step1_result}",
+                "temperature": 0.7
+            }
+        },
+        {
+            "id": "validator_node",
+            "type": "operator",
+            "config": {
+                "code": "if state.get('step1_done'):\n    state['TEST_RESULT'] = '✅ SUCCESS: 단계별 진행 정상 확인됨'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: 단계 진행 실패'"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "continue_step1",
+            "target": "continue_step2",
+            "type": "normal"
+        },
+        {
+            "source": "continue_step2",
+            "target": "validator_node",
+            "type": "normal"
+        }
+    ],
+    "start_node": "continue_step1"
+}

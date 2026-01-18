@@ -1,0 +1,91 @@
+{
+    "workflow_name": "Extreme Multimodal Complex Test Workflow",
+    "description": "Complex multimodal test with video + multiple images analysis",
+    "nodes": [
+        {
+            "id": "multimodal_init",
+            "type": "operator",
+            "config": {
+                "code": "print(\"Multimodal complex test initialization\")\nvideo_uri = state.get('video_input_uri', 's3://test-bucket/sample_video.mp4')\nimage_uris = state.get('image_input_uris', [\n    's3://test-bucket/spec_sheet_1.jpg',\n    's3://test-bucket/spec_sheet_2.jpg',\n    's3://test-bucket/spec_sheet_3.jpg'\n])\nstate['multimodal_inputs'] = {\n    'video': video_uri,\n    'images': image_uris,\n    'analysis_modes': ['video_summary', 'spec_extraction', 'feature_comparison']\n}\nstate['multimodal_results'] = []\nprint(f\"Multimodal inputs: 1 video + {len(image_uris)} images\")",
+                "output_key": "multimodal_inputs"
+            }
+        },
+        {
+            "id": "video_analysis",
+            "type": "aiModel",
+            "config": {
+                "model": "gemini-1.5-pro",
+                "max_tokens": 1000,
+                "prompt": "비디오를 분석하여 제품 데모의 주요 특징을 요약해주세요. 비디오: {multimodal_inputs[video]}",
+                "temperature": 0.3,
+                "multimodal": true,
+                "video_enabled": true
+            }
+        },
+        {
+            "id": "image_batch_analysis",
+            "type": "for_each",
+            "config": {
+                "items_path": "multimodal_inputs.images",
+                "item_key": "current_image",
+                "max_iterations": 5,
+                "body_nodes": ["image_processor"]
+            }
+        },
+        {
+            "id": "image_processor",
+            "type": "aiModel",
+            "config": {
+                "model": "gemini-1.5-flash",
+                "max_tokens": 500,
+                "prompt": "이미지에서 제품 스펙을 추출해주세요. 이미지: {current_image}",
+                "temperature": 0.2,
+                "multimodal": true,
+                "vision_enabled": true
+            }
+        },
+        {
+            "id": "multimodal_aggregator",
+            "type": "operator",
+            "config": {
+                "code": "video_result = state.get('video_analysis', {})\nimage_results = state.get('image_batch_results', [])\nstate['multimodal_summary'] = {\n    'video_features': video_result.get('features', []),\n    'spec_count': len(image_results),\n    'analysis_complete': True\n}\nstate['multimodal_results'].append(state['multimodal_summary'])\nprint(f\"Multimodal analysis complete: Video + {len(image_results)} images processed\")",
+                "output_key": "multimodal_summary"
+            }
+        },
+        {
+            "id": "multimodal_validator",
+            "type": "operator",
+            "config": {
+                "code": "summary = state.get('multimodal_summary', {})\nif summary.get('analysis_complete') and state.get('multimodal_test_enabled'):\n    spec_count = summary.get('spec_count', 0)\n    state['TEST_RESULT'] = f\"✅ SUCCESS: Multimodal 복합 분석 완료 (Video + {spec_count} Images)\"\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: Multimodal 분석 실패'\nprint(f\"Multimodal test result: {state['TEST_RESULT']}\")"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "multimodal_init",
+            "target": "video_analysis",
+            "type": "normal"
+        },
+        {
+            "source": "video_analysis",
+            "target": "image_batch_analysis",
+            "type": "normal"
+        },
+        {
+            "source": "image_batch_analysis",
+            "target": "image_processor",
+            "type": "for_each_body"
+        },
+        {
+            "source": "image_processor",
+            "target": "multimodal_aggregator",
+            "type": "for_each_exit"
+        },
+        {
+            "source": "multimodal_aggregator",
+            "target": "multimodal_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "multimodal_init"
+}

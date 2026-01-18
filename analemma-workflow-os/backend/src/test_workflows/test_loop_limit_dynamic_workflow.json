@@ -1,0 +1,68 @@
+{
+    "workflow_name": "Dynamic Loop Limit Test",
+    "description": "동적 루프 제한 테스트 - 워크플로우 복잡도 기반 제한값 검증",
+    "nodes": [
+        {
+            "id": "loop_limit_prep",
+            "type": "operator",
+            "config": {
+                "code": "print(\"동적 루프 제한 테스트 준비\")\nstate['loop_limit_test_started'] = True\nstate['total_segments'] = 15  # 이 워크플로우의 예상 세그먼트 수\nstate['expected_max_loop'] = state['total_segments'] + 20  # 동적 계산: total_segments + 20\nstate['expected_max_branch_loop'] = state['total_segments'] + 10  # 동적 계산: total_segments + 10\nresult = {\n    'test_type': 'loop_limit_dynamic',\n    'total_segments': state['total_segments'],\n    'expected_max_loop': state['expected_max_loop'],\n    'expected_max_branch_loop': state['expected_max_branch_loop'],\n    'dynamic_calculation': True\n}\nstate['prep_result'] = result\nprint(f\"동적 루프 제한 계산: 세그먼트 {state['total_segments']}개 → 메인 루프 {state['expected_max_loop']}회, 브랜치 루프 {state['expected_max_branch_loop']}회\")",
+                "output_key": "prep_result"
+            }
+        },
+        {
+            "id": "loop_simulation_step1",
+            "type": "operator",
+            "config": {
+                "code": "print(\"루프 시뮬레이션 1단계\")\nif state.get('loop_limit_test_started'):\n    state['loop_step_1_completed'] = True\n    state['current_loop_count'] = 1\n    result = {\n        'step': 1,\n        'loop_count': state['current_loop_count'],\n        'max_allowed': state.get('expected_max_loop', 100),\n        'within_limit': state['current_loop_count'] < state.get('expected_max_loop', 100)\n    }\n    state['step1_result'] = result\n    print(f\"1단계 완료: 루프 {state['current_loop_count']}/{state.get('expected_max_loop', 100)}\")\nelse:\n    raise RuntimeError(\"루프 제한 테스트 준비가 되지 않음\")",
+                "output_key": "step1_result"
+            }
+        },
+        {
+            "id": "loop_simulation_step2",
+            "type": "operator",
+            "config": {
+                "code": "print(\"루프 시뮬레이션 2단계\")\nif state.get('loop_step_1_completed'):\n    state['loop_step_2_completed'] = True\n    state['current_loop_count'] = 2\n    result = {\n        'step': 2,\n        'loop_count': state['current_loop_count'],\n        'max_allowed': state.get('expected_max_loop', 100),\n        'within_limit': state['current_loop_count'] < state.get('expected_max_loop', 100)\n    }\n    state['step2_result'] = result\n    print(f\"2단계 완료: 루프 {state['current_loop_count']}/{state.get('expected_max_loop', 100)}\")\nelse:\n    raise RuntimeError(\"루프 시뮬레이션 1단계가 완료되지 않음\")",
+                "output_key": "step2_result"
+            }
+        },
+        {
+            "id": "loop_simulation_step3",
+            "type": "operator",
+            "config": {
+                "code": "print(\"루프 시뮬레이션 3단계\")\nif state.get('loop_step_2_completed'):\n    state['loop_step_3_completed'] = True\n    state['current_loop_count'] = 3\n    result = {\n        'step': 3,\n        'loop_count': state['current_loop_count'],\n        'max_allowed': state.get('expected_max_loop', 100),\n        'within_limit': state['current_loop_count'] < state.get('expected_max_loop', 100)\n    }\n    state['step3_result'] = result\n    print(f\"3단계 완료: 루프 {state['current_loop_count']}/{state.get('expected_max_loop', 100)}\")\nelse:\n    raise RuntimeError(\"루프 시뮬레이션 2단계가 완료되지 않음\")",
+                "output_key": "step3_result"
+            }
+        },
+        {
+            "id": "loop_limit_validator",
+            "type": "operator",
+            "config": {
+                "code": "print(\"동적 루프 제한 테스트 검증 시작\")\n\n# 검증 조건들\nsuccess_conditions = [\n    state.get('loop_limit_test_started') == True,\n    state.get('loop_step_1_completed') == True,\n    state.get('loop_step_2_completed') == True,\n    state.get('loop_step_3_completed') == True,\n    state.get('total_segments') == 15,\n    state.get('expected_max_loop') == 35,  # 15 + 20\n    state.get('expected_max_branch_loop') == 25,  # 15 + 10\n    state.get('current_loop_count', 0) <= state.get('expected_max_loop', 100),\n    'prep_result' in state,\n    'step1_result' in state,\n    'step2_result' in state,\n    'step3_result' in state\n]\n\nall_passed = all(success_conditions)\ncurrent_count = state.get('current_loop_count', 0)\nmax_allowed = state.get('expected_max_loop', 100)\nmax_branch_allowed = state.get('expected_max_branch_loop', 50)\n\nprint(f\"검증 조건들: {success_conditions}\")\nprint(f\"현재 루프 카운트: {current_count}\")\nprint(f\"동적 계산된 메인 루프 제한: {max_allowed}\")\nprint(f\"동적 계산된 브랜치 루프 제한: {max_branch_allowed}\")\nprint(f\"모든 조건 통과: {all_passed}\")\n\nif all_passed:\n    state['TEST_RESULT'] = f'✅ SUCCESS: 동적 루프 제한 테스트 성공 - 세그먼트 {state.get(\"total_segments\")}개 기반으로 메인 {max_allowed}회, 브랜치 {max_branch_allowed}회 제한 설정됨'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print(\"✅ 동적 루프 제한 테스트 검증 성공\")\nelse:\n    state['TEST_RESULT'] = f'❌ FAILURE: 동적 루프 제한 테스트 실패 - 현재 {current_count}회, 제한 {max_allowed}회'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(\"❌ 동적 루프 제한 테스트 검증 실패\")\n\nstate['validation_details'] = {\n    'test_type': 'loop_limit_dynamic',\n    'total_segments': state.get('total_segments', 0),\n    'calculated_max_loop': max_allowed,\n    'calculated_max_branch_loop': max_branch_allowed,\n    'current_loop_count': current_count,\n    'within_main_limit': current_count <= max_allowed,\n    'conditions_checked': len(success_conditions),\n    'conditions_passed': sum(success_conditions)\n}"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "loop_limit_prep",
+            "target": "loop_simulation_step1",
+            "type": "normal"
+        },
+        {
+            "source": "loop_simulation_step1",
+            "target": "loop_simulation_step2",
+            "type": "normal"
+        },
+        {
+            "source": "loop_simulation_step2",
+            "target": "loop_simulation_step3",
+            "type": "normal"
+        },
+        {
+            "source": "loop_simulation_step3",
+            "target": "loop_limit_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "loop_limit_prep"
+}

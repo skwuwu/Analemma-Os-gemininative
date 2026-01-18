@@ -1,0 +1,16 @@
+{
+    "workflow_name": "S3 Large Data Test (100KB+)",
+    "description": "100KB 대용량 S3 업로드 테스트",
+    "nodes": [
+        {
+            "id": "large_data_node",
+            "type": "operator",
+            "config": {
+                "code": "print(\"S3 대용량 데이터 테스트 (300KB+ S3 오프로드 트리거)\")\n# 300KB 이상 데이터 생성하여 확실히 S3 오프로드 트리거\nlarge_data = \"LARGE_S3_TEST_DATA_\" * 20000  # ~320KB\npayload_size = len(large_data)\nexceeds_threshold = payload_size > 250000\nprint(f\"생성 크기: {payload_size} bytes ({payload_size/1024:.1f}KB, S3 오프로드: {exceeds_threshold})\")\n# result 변수로 명시적 반환\nresult = {\n    'large_s3_payload': large_data,\n    'payload_size': payload_size,\n    'large_s3_result': {\n        'data_size_bytes': payload_size,\n        'exceeds_s3_threshold': exceeds_threshold,\n        'test_type': 'large_s3_upload_verification'\n    }\n}",
+                "output_key": "large_s3_result"
+            }
+        }
+    ],
+    "edges": [],
+    "start_node": "large_data_node"
+}

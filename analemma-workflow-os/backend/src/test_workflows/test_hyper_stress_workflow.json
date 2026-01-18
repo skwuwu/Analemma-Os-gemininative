@@ -1,0 +1,69 @@
+{
+    "workflow_name": "Hyper Stress V3 Test Workflow",
+    "description": "V3 stress test with nested Map, Multi-HITL, and partial sync",
+    "nodes": [
+        {
+            "id": "stress_init",
+            "type": "operator",
+            "config": {
+                "code": "print(\"Hyper Stress V3 initialization\")\nouter_items = state.get('expected_outer_count', 4)\nstate['outer_loop_items'] = list(range(outer_items))\nstate['inner_items_per_outer'] = [2, 3, 2, 3]  # Total 10\nstate['multi_hitl_points'] = [1, 3]  # HITL at positions 1 and 3\nstate['stress_metrics'] = {'nested_map_count': 0, 'hitl_count': 0}\nprint(f\"Stress test configured: {outer_items} outer items, {sum(state['inner_items_per_outer'])} total inner items\")",
+                "output_key": "stress_config"
+            }
+        },
+        {
+            "id": "outer_map_processor",
+            "type": "for_each",
+            "config": {
+                "items_path": "outer_loop_items",
+                "item_key": "outer_item",
+                "max_iterations": 5,
+                "body_nodes": ["inner_map_processor"]
+            }
+        },
+        {
+            "id": "inner_map_processor",
+            "type": "operator",
+            "config": {
+                "code": "outer_idx = state.get('outer_item', 0)\ninner_count = state['inner_items_per_outer'][outer_idx]\nstate['current_inner_items'] = list(range(inner_count))\nstate['stress_metrics']['nested_map_count'] += 1\nprint(f\"Processing outer item {outer_idx} with {inner_count} inner items\")",
+                "output_key": "inner_config"
+            }
+        },
+        {
+            "id": "hitl_checkpoint",
+            "type": "operator",
+            "config": {
+                "code": "outer_idx = state.get('outer_item', 0)\nif outer_idx in state.get('multi_hitl_points', []):\n    state['stress_metrics']['hitl_count'] += 1\n    state['hitl_status'] = 'PAUSED_FOR_APPROVAL'\n    print(f\"HITL checkpoint triggered at outer item {outer_idx}\")\nelse:\n    state['hitl_status'] = 'AUTO_APPROVED'\n    print(f\"Auto-approved at outer item {outer_idx}\")"
+            }
+        },
+        {
+            "id": "stress_validator",
+            "type": "operator",
+            "config": {
+                "code": "metrics = state.get('stress_metrics', {})\nexpected_nested = state.get('expected_outer_count', 4)\nexpected_hitl = len(state.get('multi_hitl_points', []))\nif metrics.get('nested_map_count', 0) >= expected_nested:\n    state['TEST_RESULT'] = f\"✅ SUCCESS: Nested Map 완료 ({metrics['nested_map_count']} cycles, {metrics['hitl_count']} HITLs)\"\nelse:\n    state['TEST_RESULT'] = f\"❌ FAILURE: Nested Map 불완전 ({metrics['nested_map_count']}/{expected_nested})\"\nprint(f\"Hyper Stress V3 test result: {state['TEST_RESULT']}\")"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "stress_init",
+            "target": "outer_map_processor",
+            "type": "normal"
+        },
+        {
+            "source": "outer_map_processor",
+            "target": "inner_map_processor",
+            "type": "for_each_body"
+        },
+        {
+            "source": "inner_map_processor",
+            "target": "hitl_checkpoint",
+            "type": "normal"
+        },
+        {
+            "source": "hitl_checkpoint",
+            "target": "stress_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "stress_init"
+}

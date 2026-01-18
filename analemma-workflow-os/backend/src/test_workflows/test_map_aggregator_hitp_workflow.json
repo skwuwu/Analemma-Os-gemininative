@@ -1,0 +1,83 @@
+{
+    "workflow_name": "Map Aggregator HITP Test",
+    "description": "Map State Aggregation 후 HITP(일시정지) 로직 검증",
+    "nodes": [
+        {
+            "id": "parallel_node",
+            "type": "parallel_group",
+            "config": {
+                "branches": [
+                    {
+                        "branch_id": "branch_1",
+                        "nodes": [
+                            {
+                                "id": "b1_step1",
+                                "type": "operator",
+                                "config": {
+                                    "code": "result = {'data_1': 'Hello from Branch 1'}"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "branch_id": "branch_2",
+                        "nodes": [
+                            {
+                                "id": "b2_step1",
+                                "type": "operator",
+                                "config": {
+                                    "code": "result = {'data_2': 'Hello from Branch 2'}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "id": "aggregator_node",
+            "type": "aggregator",
+            "config": {
+                "code": "print('Aggregating...')"
+            }
+        },
+        {
+            "id": "validator_node",
+            "type": "operator",
+            "config": {
+                "code": "if 'data_1' in state and 'data_2' in state:\n    state['TEST_RESULT'] = '✅ SUCCESS: 모든 브랜치 결과 집계됨'\nelse:\n    state['TEST_RESULT'] = '❌ FAILURE: 일부 데이터 누락'"
+            }
+        },
+        {
+            "id": "hitp_node",
+            "type": "hitp",
+            "config": {
+                "message": "Aggregation 완료. 아래 데이터에서 [TEST_RESULT: ✅ SUCCESS]를 확인하고 승인하세요.",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "feedback": {
+                            "type": "string",
+                            "description": "결과에 대한 피드백"
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "parallel_node",
+            "target": "aggregator_node"
+        },
+        {
+            "source": "aggregator_node",
+            "target": "validator_node"
+        },
+        {
+            "source": "validator_node",
+            "target": "hitp_node"
+        }
+    ],
+    "start_node": "parallel_node"
+}
