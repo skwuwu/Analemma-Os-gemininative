@@ -7,7 +7,7 @@ import operator
 import concurrent.futures
 import logging
 import random
-from typing import TypedDict, Dict, Any, List, Optional, Annotated, Union, Callable
+from typing import TypedDict, Dict, Any, List, Optional, Annotated, Union, Callable, Tuple
 from functools import partial
 import socket
 import ipaddress
