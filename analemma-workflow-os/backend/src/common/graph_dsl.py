@@ -72,14 +72,55 @@ class NodeConfig(BaseModel):
     # route_draft_quality
     threshold: Optional[float] = None
     
-    # group
+    # group / subgraph
     subgraph_id: Optional[str] = None
+    subgraph_ref: Optional[str] = None  # 참조할 서브그래프 ID
+    subgraph_inline: Optional[Dict[str, Any]] = None  # 인라인 서브그래프 정의
+    skill_ref: Optional[str] = None  # Skill 참조
+    input_mapping: Optional[Dict[str, str]] = None  # 부모→자식 상태 매핑
+    output_mapping: Optional[Dict[str, str]] = None  # 자식→부모 상태 매핑
+    error_handling: Optional[str] = None  # "fail", "ignore", "fallback"
+    max_depth: Optional[int] = None  # 최대 재귀 깊이
+    
+    # for_each / distributed_map 공통
+    items_path: Optional[str] = None  # 반복할 아이템 경로
+    body_nodes: Optional[List[str]] = None  # 루프 내 실행할 노드 ID 목록
+    max_iterations: Optional[int] = None  # 최대 반복 횟수
+    continue_on_error: Optional[bool] = None  # 에러 시 계속 진행
+    
+    # parallel
+    branches: Optional[List[Dict[str, Any]]] = None  # 병렬 브랜치 정의
+    wait_for_all: Optional[bool] = None  # 모든 브랜치 완료 대기
+    
+    # route_condition (conditional)
+    conditions: Optional[List[Dict[str, Any]]] = None  # 조건 목록
+    default_node: Optional[str] = None  # 기본 대상 노드
+    
+    # retry_wrapper
+    target_node: Optional[str] = None  # 재시도 대상 노드
+    max_attempts: Optional[int] = None  # 최대 재시도 횟수
+    backoff_rate: Optional[float] = None  # 백오프 배율
+    
+    # error_handler (catch)
+    try_nodes: Optional[List[str]] = None  # 시도할 노드 목록
+    catch_handlers: Optional[List[Dict[str, Any]]] = None  # 에러 핸들러 목록
+    finally_node: Optional[str] = None  # 항상 실행할 노드
+    
+    # wait_for_approval
+    approval_message: Optional[str] = None  # 승인 요청 메시지
+    timeout_seconds: Optional[int] = None  # 타임아웃 초
+    approver_roles: Optional[List[str]] = None  # 승인 가능 역할
 
 
 class WorkflowNode(BaseModel):
     """Workflow node definition"""
     id: str
-    type: Literal["operator", "llm_chat", "api_call", "db_query", "for_each", "route_draft_quality", "group", "aiModel"]
+    type: Literal[
+        "operator", "llm_chat", "api_call", "db_query", "for_each", 
+        "route_draft_quality", "group", "subgraph", "aiModel",
+        "parallel", "distributed_map", "route_condition", 
+        "retry_wrapper", "error_handler", "wait_for_approval"
+    ]
     label: Optional[str] = None
     position: Position
     config: Optional[NodeConfig] = None

@@ -1569,6 +1569,103 @@ register_node("nested_for_each", nested_for_each_runner)  # V3 Hyper-Stress: Nes
 register_node("vision", vision_runner)  # Gemini Vision multimodal analysis
 register_node("image_analysis", vision_runner)  # Alias for vision
 
+# SubGraph/Group 노드 러너 - DynamicWorkflowBuilder에서 재귀적으로 처리
+def subgraph_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    SubGraph/Group 노드 실행 핸들러.
+    
+    실제 서브그래프 컴파일 및 실행은 DynamicWorkflowBuilder에서 처리됩니다.
+    이 핸들러는 세그먼트 러너에서 직접 호출될 때를 위한 폴백입니다.
+    
+    Config 옵션:
+    - subgraph_ref: 참조할 서브그래프 ID
+    - subgraph_inline: 인라인 서브그래프 정의
+    - skill_ref: 참조할 Skill ID
+    - input_mapping: 부모→자식 상태 매핑
+    - output_mapping: 자식→부모 상태 매핑
+    """
+    node_id = config.get("id", "subgraph")
+    logger.info(f"📦 SubGraph 노드 실행: {node_id}")
+    
+    try:
+        # DynamicWorkflowBuilder import
+        from src.services.workflow.builder import DynamicWorkflowBuilder
+        
+        # 서브그래프 정의 해석
+        subgraph_def = None
+        
+        if config.get("subgraph_inline"):
+            subgraph_def = config["subgraph_inline"]
+        elif config.get("subgraph_ref"):
+            # subgraph_ref는 워크플로우 컨텍스트에서 해석되어야 함
+            # 여기서는 state에서 subgraphs를 찾음
+            subgraphs = state.get("_workflow_subgraphs", {})
+            ref = config["subgraph_ref"]
+            if ref in subgraphs:
+                subgraph_def = subgraphs[ref]
+            else:
+                logger.warning(f"SubGraph 참조 '{ref}'를 찾을 수 없습니다.")
+                return {"subgraph_error": f"SubGraph ref not found: {ref}"}
+        elif config.get("skill_ref"):
+            # Skill 기반 서브그래프
+            try:
+                from src.services.skill_repository import get_skill_repository
+                repo = get_skill_repository()
+                skill = repo.get_latest_skill(config["skill_ref"])
+                if skill and skill.get("skill_type") == "subgraph_based":
+                    subgraph_def = skill.get("subgraph_config")
+            except ImportError:
+                logger.warning("SkillRepository를 사용할 수 없습니다.")
+        
+        if not subgraph_def:
+            logger.warning(f"SubGraph 정의를 찾을 수 없습니다: {node_id}")
+            return {"subgraph_status": "skipped", "reason": "no_definition"}
+        
+        # 입력 매핑 적용
+        input_mapping = config.get("input_mapping", {})
+        child_state = {}
+        for parent_key, child_key in input_mapping.items():
+            if parent_key in state:
+                child_state[child_key] = state[parent_key]
+        
+        # 기본 필드 상속
+        for key in ["execution_id", "workflow_id", "owner_id"]:
+            if key in state and key not in child_state:
+                child_state[key] = state[key]
+        
+        # 서브그래프 빌드 및 실행
+        builder = DynamicWorkflowBuilder(subgraph_def, use_lightweight_state=True)
+        compiled = builder.build()
+        child_output = compiled.invoke(child_state)
+        
+        # 출력 매핑 적용
+        output_mapping = config.get("output_mapping", {})
+        result = {}
+        for child_key, parent_key in output_mapping.items():
+            if child_key in child_output:
+                result[parent_key] = child_output[child_key]
+        
+        # step_history 병합
+        if "step_history" in child_output:
+            current_history = state.get("step_history", [])
+            result["step_history"] = current_history + child_output["step_history"]
+        
+        logger.info(f"✅ SubGraph 노드 완료: {node_id}")
+        return result
+        
+    except Exception as e:
+        logger.exception(f"❌ SubGraph 노드 실행 실패: {node_id}")
+        error_handling = config.get("error_handling", "fail")
+        if error_handling == "ignore":
+            return {"subgraph_status": "error_ignored", "error": str(e)}
+        elif error_handling == "fallback":
+            return {"subgraph_status": "fallback", "error": str(e)}
+        else:
+            raise
+
+register_node("group", subgraph_runner)  # SubGraph 노드 (group 타입)
+register_node("subgraph", subgraph_runner)  # SubGraph 노드 (subgraph 타입)
+
 
 def _get_mock_config(mock_behavior: str) -> Dict[str, Any]:
     """Returns test configurations for mock behaviors."""

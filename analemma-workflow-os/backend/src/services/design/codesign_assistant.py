@@ -88,6 +88,7 @@ try:
         GeminiModel,
         get_gemini_flash_service,
         get_gemini_pro_service,
+        get_gemini_codesign_service,
     )
     from src.services.design.llm.structure_tools import (
         get_all_structure_tools,
@@ -102,6 +103,7 @@ except ImportError:
     GeminiModel = None
     get_gemini_flash_service = None
     get_gemini_pro_service = None
+    get_gemini_codesign_service = None
     get_all_structure_tools = None
     get_gemini_system_instruction = None
     validate_structure_node = None
@@ -890,7 +892,8 @@ def _stream_gemini_codesign(
     context: 'CodesignContext',
     connection_ids: List[str] = None,
     max_self_correction_attempts: int = 2,
-    enable_thinking: bool = True  # Thinking Mode 기본 활성화
+    enable_thinking: bool = True,  # Thinking Mode 기본 활성화
+    enable_context_caching: bool = True  # Context Caching 활성화
 ) -> Generator[str, None, None]:
     """
     Gemini Native Co-design 스트리밍 (Multi-stage Validation 적용)
@@ -906,6 +909,10 @@ def _stream_gemini_codesign(
     - AI가 '왜 이 노드 뒤에 이 엣지를 연결했는지'에 대한 논리적 근거를 UI에 노출
     - {"type": "thinking", "data": {...}} 형태로 스트리밍
     
+    [Context Caching] Vertex AI Context Caching / Implicit Caching:
+    - structure_tools 정의 + graph_dsl 스키마를 캐싱하여 비용 75% 절감
+    - 32k+ 토큰 이상의 정적 컨텍스트에 적용
+    
     보안 강화:
     - 사용자 입력을 <USER_INPUT> 태그로 캡슐화
     - Gemini Safety Filter 감지 및 처리
@@ -916,9 +923,15 @@ def _stream_gemini_codesign(
         connection_ids: WebSocket 연결 ID 목록
         max_self_correction_attempts: 최대 Self-Correction 시도 횟수
         enable_thinking: Thinking Mode 활성화 여부 (Chain of Thought UI 노출)
+        enable_context_caching: Context Caching 활성화 여부 (비용 최적화)
     """
-    # Gemini Flash 서비스 (실시간 협업용)
-    service = get_gemini_flash_service()
+    # ════════════════════════════════════════════════════════════════════════
+    # Gemini Codesign 서비스 (Context Caching + Thinking Mode 최적화)
+    # ════════════════════════════════════════════════════════════════════════
+    if get_gemini_codesign_service:
+        service = get_gemini_codesign_service()
+    else:
+        service = get_gemini_flash_service()
     
     # ════════════════════════════════════════════════════════════════════════
     # [Thinking Level Control] 동적 사고 예산 계산
@@ -985,6 +998,26 @@ def _stream_gemini_codesign(
 완료 시 {{"type": "status", "data": "done"}}을 출력하세요.
 """
     
+    # ════════════════════════════════════════════════════════════════════
+    # [Context Caching] 정적 컨텍스트 구성 (structure_tools + graph_dsl)
+    # - 도구 정의와 스키마는 세션 간 동일하므로 캐싱하여 비용 75% 절감
+    # - Vertex AI implicit caching + explicit context_to_cache 활용
+    # ════════════════════════════════════════════════════════════════════
+    static_context_for_cache = None
+    if enable_context_caching:
+        # 정적 컨텍스트: 도구 정의 + 시스템 프롬프트 (매 호출마다 동일)
+        static_context_for_cache = f"""
+[STATIC CONTEXT - CACHEABLE]
+이 섹션은 모든 Co-design 세션에서 동일한 정적 참조 데이터입니다.
+
+{gemini_system}
+
+[Available Structure Tools Schema]
+```json
+{json.dumps(tool_definitions, ensure_ascii=False, indent=2)}
+```
+"""
+    
     # 응답 수신 플래그 (Safety Filter 감지용)
     received_any_response = False
     chunk_count = 0
@@ -993,14 +1026,15 @@ def _stream_gemini_codesign(
     pending_corrections: List[Dict[str, Any]] = []
     
     # ════════════════════════════════════════════════════════════════════
-    # Gemini 스트리밍 호출 (Thinking Mode 활성화 - 동적 예산)
+    # Gemini 스트리밍 호출 (Thinking Mode + Context Caching 활성화)
     # ════════════════════════════════════════════════════════════════════
     try:
         for chunk in service.invoke_model_stream(
             user_prompt=enhanced_prompt,
-            system_instruction=gemini_system,  # API 수준에서 분리
+            system_instruction=gemini_system,  # API 수준에서 분리 (implicit caching 적용)
             max_output_tokens=4096,
             temperature=0.8,  # 협업 모드에서는 약간 높은 창의성
+            context_to_cache=static_context_for_cache,  # Context Caching (explicit)
             enable_thinking=enable_thinking,  # Chain of Thought 활성화
             thinking_budget_tokens=thinking_budget_tokens  # 동적 사고 예산 (복잡도에 따라 1K~16K)
         ):

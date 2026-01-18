@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 
 class StructureType(Enum):
-    """워크플로우 구조 타입"""
+    """Workflow structure types"""
     LOOP = "loop"
     MAP = "map"
     PARALLEL = "parallel"
@@ -31,7 +31,7 @@ class StructureType(Enum):
 
 
 class StructureDefinition(BaseModel):
-    """구조 도구 정의"""
+    """Structure tool definition"""
     name: str
     type: StructureType
     description: str
@@ -623,30 +623,211 @@ CATCH_STRUCTURE = StructureDefinition(
 
 
 # ============================================================
-# 8. Wait for Approval 구조 - 인간 개입 (HITL)
+# 7. SubGraph structure - Reusable nested workflow
+# ============================================================
+SUBGRAPH_STRUCTURE = StructureDefinition(
+    name="subgraph",
+    type=StructureType.SUBGRAPH,
+    description="""A reusable nested workflow structure.
+Modularizes complex workflows and can be used recursively within other structures (Loop, Parallel, etc.).
+SubGraph exchanges data between parent and child through independent state mapping.""",
+    schema={
+        "type": "object",
+        "required": ["id", "type"],
+        "properties": {
+            "id": {
+                "type": "string",
+                "description": "Unique node ID (e.g., subgraph_1, group_analysis)"
+            },
+            "type": {
+                "type": "string",
+                "enum": ["group", "subgraph"],
+                "description": "Node type (group or subgraph)"
+            },
+            "data": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "SubGraph description"}
+                }
+            },
+            "config": {
+                "type": "object",
+                "properties": {
+                    "subgraph_ref": {
+                        "type": "string",
+                        "description": "SubGraph ID to reference (lookup from subgraphs dictionary)"
+                    },
+                    "subgraph_inline": {
+                        "type": "object",
+                        "description": "Inline subgraph definition (includes nodes, edges)",
+                        "properties": {
+                            "nodes": {
+                                "type": "array",
+                                "description": "List of nodes inside the subgraph",
+                                "items": {"type": "object"}
+                            },
+                            "edges": {
+                                "type": "array",
+                                "description": "List of edges inside the subgraph",
+                                "items": {"type": "object"}
+                            }
+                        }
+                    },
+                    "skill_ref": {
+                        "type": "string",
+                        "description": "Skill ID to reference (lookup from SkillRepository)"
+                    },
+                    "input_mapping": {
+                        "type": "object",
+                        "description": "Parent state → child input mapping (e.g., {'parent_key': 'child_key'})",
+                        "additionalProperties": {"type": "string"}
+                    },
+                    "output_mapping": {
+                        "type": "object",
+                        "description": "Child output → parent state mapping (e.g., {'child_key': 'parent_key'})",
+                        "additionalProperties": {"type": "string"}
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "default": 300,
+                        "description": "Subgraph execution timeout (seconds)"
+                    },
+                    "error_handling": {
+                        "type": "string",
+                        "enum": ["fail", "ignore", "fallback"],
+                        "default": "fail",
+                        "description": "Error handling mode"
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Maximum recursion depth (prevents infinite nesting)"
+                    }
+                }
+            },
+            "metadata": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "SubGraph display name"},
+                    "version": {"type": "string", "description": "SubGraph version"},
+                    "author": {"type": "string", "description": "Author"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Tags for search/classification"
+                    }
+                }
+            },
+            "position": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"},
+                    "y": {"type": "number"}
+                }
+            }
+        }
+    },
+    examples=[
+        {
+            "id": "subgraph_data_pipeline",
+            "type": "group",
+            "data": {"label": "Data Pipeline", "description": "Data collection and cleansing sub-workflow"},
+            "config": {
+                "subgraph_ref": "data_pipeline_v1",
+                "input_mapping": {
+                    "raw_data": "input_data",
+                    "config": "pipeline_config"
+                },
+                "output_mapping": {
+                    "processed_data": "result",
+                    "metadata": "processing_metadata"
+                },
+                "timeout_seconds": 600,
+                "error_handling": "fallback"
+            },
+            "metadata": {
+                "name": "Data Pipeline",
+                "version": "1.0.0",
+                "tags": ["data", "etl", "pipeline"]
+            },
+            "position": {"x": 200, "y": 150}
+        },
+        {
+            "id": "inline_analysis_group",
+            "type": "subgraph",
+            "data": {"label": "Inline Analysis Group", "description": "Inline subgraph for document analysis"},
+            "config": {
+                "subgraph_inline": {
+                    "nodes": [
+                        {"id": "extract", "type": "operator", "config": {"code": "state['text'] = extract_text(state['doc'])"}},
+                        {"id": "analyze", "type": "llm_chat", "config": {"prompt_content": "Analyze: {{text}}"}}
+                    ],
+                    "edges": [
+                        {"source": "extract", "target": "analyze"}
+                    ]
+                },
+                "input_mapping": {"document": "doc"},
+                "output_mapping": {"analysis_result": "result"},
+                "max_depth": 3
+            },
+            "position": {"x": 300, "y": 200}
+        },
+        {
+            "id": "nested_loop_with_subgraph",
+            "type": "group",
+            "data": {"label": "Nested Processing", "description": "SubGraph example used within a Loop"},
+            "config": {
+                "skill_ref": "document_processor_skill",
+                "input_mapping": {"item": "current_document"},
+                "output_mapping": {"processed": "result"}
+            },
+            "position": {"x": 400, "y": 250}
+        }
+    ],
+    use_cases=[
+        "Modularize complex workflows into reusable components",
+        "Encapsulate compound processing logic within Loop/Parallel structures",
+        "Apply skill-based reusable workflow patterns",
+        "Share workflow components across teams",
+        "Manage versioned workflow fragments",
+        "Handle recursive data processing (e.g., tree structure traversal)"
+    ],
+    ui_hints={
+        "suggested_width": 280,
+        "color_code": "#9C27B0",
+        "icon": "folder_special",
+        "expandable": True,
+        "show_internal_preview": True
+    }
+)
+
+
+# ============================================================
+# 8. Wait for Approval structure - Human intervention (HITL)
 # ============================================================
 WAIT_FOR_APPROVAL_STRUCTURE = StructureDefinition(
     name="wait_for_approval",
     type=StructureType.WAIT_FOR_APPROVAL,
-    description="AI가 판단하기 어려운 구간에서 인간의 승인을 기다리는 구조. Glassbox AI의 핵심 요소입니다.",
+    description="A structure that waits for human approval at points where AI judgment is uncertain. Core element of Glassbox AI.",
     schema={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
             "id": {
                 "type": "string",
-                "description": "노드 고유 ID (예: approval_1)"
+                "description": "Unique node ID (e.g., approval_1)"
             },
             "type": {
                 "type": "string",
                 "const": "wait_for_approval",
-                "description": "노드 타입 (고정값: wait_for_approval)"
+                "description": "Node type (fixed value: wait_for_approval)"
             },
             "data": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "UI에 표시될 노드 이름"},
-                    "description": {"type": "string", "description": "노드 설명"}
+                    "label": {"type": "string", "description": "Node name displayed in UI"},
+                    "description": {"type": "string", "description": "Node description"}
                 }
             },
             "config": {
@@ -655,39 +836,39 @@ WAIT_FOR_APPROVAL_STRUCTURE = StructureDefinition(
                 "properties": {
                     "approval_message": {
                         "type": "string",
-                        "description": "사용자에게 표시할 승인 요청 메시지"
+                        "description": "Approval request message to display to user"
                     },
                     "timeout_seconds": {
                         "type": "integer",
                         "default": 3600,
-                        "description": "승인 대기 시간 초과 (기본 1시간)"
+                        "description": "Approval wait timeout (default 1 hour)"
                     },
                     "approver_roles": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "승인 가능한 사용자 역할 목록"
+                        "description": "List of user roles allowed to approve"
                     },
                     "auto_approve_conditions": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "expression": {"type": "string", "description": "자동 승인 조건 표현식"},
-                                "action": {"type": "string", "enum": ["approve", "reject"], "description": "자동 승인 시 액션"}
+                                "expression": {"type": "string", "description": "Auto-approval condition expression"},
+                                "action": {"type": "string", "enum": ["approve", "reject"], "description": "Action on auto-approval"}
                             }
                         },
-                        "description": "자동 승인 조건 목록"
+                        "description": "List of auto-approval conditions"
                     },
                     "escalation_rules": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "after_seconds": {"type": "integer", "description": "에스컬레이션 대기 시간"},
-                                "escalate_to": {"type": "string", "description": "에스컬레이션 대상 역할"}
+                                "after_seconds": {"type": "integer", "description": "Escalation wait time"},
+                                "escalate_to": {"type": "string", "description": "Escalation target role"}
                             }
                         },
-                        "description": "에스컬레이션 규칙"
+                        "description": "Escalation rules"
                     }
                 }
             },
@@ -704,9 +885,9 @@ WAIT_FOR_APPROVAL_STRUCTURE = StructureDefinition(
         {
             "id": "approval_high_value_transaction",
             "type": "wait_for_approval",
-            "data": {"label": "고액 거래 승인", "description": "100만원 이상 거래는 관리자 승인 필요"},
+            "data": {"label": "High-Value Transaction Approval", "description": "Transactions over threshold require manager approval"},
             "config": {
-                "approval_message": "고액 거래가 발생했습니다. 승인하시겠습니까?",
+                "approval_message": "A high-value transaction has occurred. Do you approve?",
                 "timeout_seconds": 7200,
                 "approver_roles": ["manager", "supervisor"],
                 "auto_approve_conditions": [
@@ -720,11 +901,11 @@ WAIT_FOR_APPROVAL_STRUCTURE = StructureDefinition(
         }
     ],
     use_cases=[
-        "고액 거래 승인",
-        "민감한 데이터 접근 승인",
-        "AI 신뢰도가 낮은 판단 승인",
-        "규정 준수 확인 승인",
-        "중요한 의사결정 승인"
+        "Require human approval for decisions exceeding defined thresholds",
+        "Gate access to sensitive data or operations",
+        "Validate AI outputs with low confidence scores",
+        "Ensure regulatory compliance before proceeding",
+        "Confirm critical business decisions"
     ],
     ui_hints={
         "suggested_width": 250,
@@ -752,7 +933,7 @@ ALL_STRUCTURE_DEFINITIONS: List[StructureDefinition] = [
 
 def get_all_structure_tools() -> List[Dict[str, Any]]:
     """
-    모든 구조적 도구 정의를 Gemini/LLM 호출용 JSON 형식으로 반환
+    Returns all structural tool definitions in JSON format for Gemini/LLM calls
     """
     tools = []
     for struct in ALL_STRUCTURE_DEFINITIONS:
@@ -768,7 +949,7 @@ def get_all_structure_tools() -> List[Dict[str, Any]]:
 
 
 def get_structure_tool(name: str) -> Optional[StructureDefinition]:
-    """이름으로 구조 도구 조회"""
+    """Lookup structure tool by name"""
     for struct in ALL_STRUCTURE_DEFINITIONS:
         if struct.name == name:
             return struct
@@ -776,68 +957,79 @@ def get_structure_tool(name: str) -> Optional[StructureDefinition]:
 
 
 def get_structure_tools_by_type(type_: StructureType) -> List[StructureDefinition]:
-    """타입으로 구조 도구 조회"""
+    """Lookup structure tools by type"""
     return [s for s in ALL_STRUCTURE_DEFINITIONS if s.type == type_]
 
 
 def get_gemini_system_instruction(mode: str = "detailed") -> str:
     """
-    Gemini 시스템 지침용 구조 도구 문서 생성
+    Generate structure tool documentation for Gemini system instructions
     
     Args:
-        mode: "detailed" (전체 스키마 포함) 또는 "brief" (이름과 용도만 포함)
+        mode: "detailed" (includes full schema) or "brief" (names and purposes only)
     
     Returns:
-        시스템 지침 텍스트
+        System instruction text
     """
+    # Meta-instruction for pattern-based reasoning
+    meta_instruction = """
+**IMPORTANT: Pattern-Based Reasoning**
+The Use Cases provided below are representative examples only. You should analyze 
+the logical patterns (Iterative, Parallel, Conditional, Error Handling, etc.) of workflows 
+and actively use structural tools when appropriate, even in situations not explicitly 
+covered by the examples. Focus on the underlying pattern, not the specific domain.
+"""
+    
     if mode == "brief":
-        # 요약 모드: 이름과 용도만 포함
+        # Summary mode: names and purposes only
         tools_doc = []
         for struct in ALL_STRUCTURE_DEFINITIONS:
             doc = f"""
 ### {struct.name.upper()} ({struct.type.value})
 {struct.description}
 
-**사용 사례:**
+**Use Cases:**
 {chr(10).join(f'- {uc}' for uc in struct.use_cases)}
 """
             tools_doc.append(doc)
         
         return f"""
-# Analemma OS 워크플로우 구조 도구 (요약 모드)
+# Analemma OS Workflow Structure Tools (Summary Mode)
 
-이 문서는 워크플로우 설계 시 사용할 수 있는 구조적 도구들을 요약합니다.
-각 도구는 특정 제어 흐름 패턴을 구현하며, 상세 스키마는 별도 참조하세요.
+This document summarizes the structural tools available for workflow design.
+Each tool implements a specific control flow pattern. Refer to detailed schema separately.
+
+{meta_instruction}
 
 {''.join(tools_doc)}
 
 ---
-**중요 규칙:**
-1. 데이터 컬렉션 처리 시 Loop 또는 Map 구조 사용을 먼저 검토하세요.
-2. 독립적인 여러 작업은 Parallel 구조로 동시 실행하세요.
-3. 조건 분기가 필요하면 Conditional 구조를 사용하세요.
-4. 외부 API 호출에는 Retry 구조를 함께 사용하세요.
-5. 모든 에러 발생 가능 구간에 Catch 구조를 적용하세요.
-6. AI 신뢰도가 낮은 구간에는 Wait for Approval 구조를 사용하세요.
+**Key Rules:**
+1. Consider using Loop or Map structure first when processing data collections.
+2. Use Parallel structure for concurrent execution of independent tasks.
+3. Use Conditional structure when branching is needed.
+4. Always pair external API calls with Retry structure.
+5. Apply Catch structure to all error-prone sections.
+6. Use Wait for Approval structure when AI confidence is low.
 """
     
     else:
-        # 상세 모드: 전체 스키마 포함
+        # Detailed mode: includes full schema
         tools_doc = []
         for struct in ALL_STRUCTURE_DEFINITIONS:
             doc = f"""
 ### {struct.name.upper()} ({struct.type.value})
 {struct.description}
 
-**사용 사례:**
+**Use Cases:**
 {chr(10).join(f'- {uc}' for uc in struct.use_cases)}
 
-**JSON 스키마:**
+**JSON Schema:**
 ```json
 {json.dumps(struct.schema, ensure_ascii=False, indent=2)}
 ```
 
-**예시:**
+**Example:**
 ```json
 {json.dumps(struct.examples[0], ensure_ascii=False, indent=2)}
 ```
@@ -845,43 +1037,45 @@ def get_gemini_system_instruction(mode: str = "detailed") -> str:
             tools_doc.append(doc)
         
         return f"""
-# Analemma OS 워크플로우 구조 도구
+# Analemma OS Workflow Structure Tools
 
-이 문서는 워크플로우 설계 시 사용할 수 있는 구조적 도구들을 정의합니다.
-각 도구는 특정 제어 흐름 패턴을 구현하며, JSON 스키마를 엄격히 따라야 합니다.
+This document defines the structural tools available for workflow design.
+Each tool implements a specific control flow pattern and must strictly follow the JSON schema.
+
+{meta_instruction}
 
 {''.join(tools_doc)}
 
 ---
-**중요 규칙:**
-1. 데이터 컬렉션 처리 시 Loop 또는 Map 구조 사용을 먼저 검토하세요.
-2. 독립적인 여러 작업은 Parallel 구조로 동시 실행하세요.
-3. 조건 분기가 필요하면 Conditional 구조를 사용하세요.
-4. 외부 API 호출에는 Retry 구조를 함께 사용하세요.
-5. 모든 에러 발생 가능 구간에 Catch 구조를 적용하세요.
-6. AI 신뢰도가 낮은 구간에는 Wait for Approval 구조를 사용하세요.
+**Key Rules:**
+1. Consider using Loop or Map structure first when processing data collections.
+2. Use Parallel structure for concurrent execution of independent tasks.
+3. Use Conditional structure when branching is needed.
+4. Always pair external API calls with Retry structure.
+5. Apply Catch structure to all error-prone sections.
+6. Use Wait for Approval structure when AI confidence is low.
 """
 
 
 def validate_structure_node(node: Dict[str, Any], all_node_ids: Optional[List[str]] = None) -> List[str]:
     """
-    구조 노드의 유효성 검증
+    Validate a structure node
     
     Args:
-        node: 검증할 노드
-        all_node_ids: 전체 워크플로우의 노드 ID 목록 (참조 무결성 검증용)
+        node: Node to validate
+        all_node_ids: List of all node IDs in the workflow (for referential integrity)
     
     Returns:
-        검증 오류 메시지 목록 (빈 리스트면 유효)
+        List of validation error messages (empty list if valid)
     """
     errors = []
     
     node_type = node.get("type")
     if not node_type:
-        errors.append("노드에 type 필드가 없습니다.")
+        errors.append("Node is missing the 'type' field.")
         return errors
     
-    # 구조 노드 타입 매핑
+    # Structure node type mapping
     type_to_struct = {
         "for_each": LOOP_STRUCTURE,
         "distributed_map": MAP_STRUCTURE,
@@ -890,57 +1084,58 @@ def validate_structure_node(node: Dict[str, Any], all_node_ids: Optional[List[st
         "retry_wrapper": RETRY_STRUCTURE,
         "error_handler": CATCH_STRUCTURE,
         "group": SUBGRAPH_STRUCTURE,
+        "subgraph": SUBGRAPH_STRUCTURE,  # supports both group and subgraph
         "wait_for_approval": WAIT_FOR_APPROVAL_STRUCTURE,
     }
     
     struct = type_to_struct.get(node_type)
     if not struct:
-        # 일반 노드이므로 구조 검증 스킵
+        # Regular node, skip structure validation
         return errors
     
-    # 필수 필드 검증
+    # Required field validation
     required_fields = struct.schema.get("required", [])
     for field in required_fields:
         if field not in node:
-            errors.append(f"{struct.name} 노드에 필수 필드 '{field}'가 없습니다.")
+            errors.append(f"{struct.name} node is missing required field '{field}'.")
     
-    # config 필수 필드 검증
+    # Config required field validation
     config = node.get("config", {})
     config_schema = struct.schema.get("properties", {}).get("config", {})
     config_required = config_schema.get("required", [])
     
     for field in config_required:
         if field not in config:
-            errors.append(f"{struct.name} 노드의 config에 필수 필드 '{field}'가 없습니다.")
+            errors.append(f"{struct.name} node config is missing required field '{field}'.")
     
-    # 참조 무결성 검증 (all_node_ids가 제공된 경우)
+    # Referential integrity validation (if all_node_ids provided)
     if all_node_ids:
-        # body_nodes 검증 (Loop, Map 등)
+        # body_nodes validation (Loop, Map, etc.)
         body_nodes = config.get("body_nodes", [])
         if isinstance(body_nodes, list):
             for node_id in body_nodes:
                 if node_id not in all_node_ids:
-                    errors.append(f"{struct.name} 노드의 body_nodes에 존재하지 않는 노드 ID '{node_id}'가 참조되었습니다.")
+                    errors.append(f"{struct.name} node body_nodes references non-existent node ID '{node_id}'.")
         
-        # target_node 검증 (Conditional, Retry 등)
+        # target_node validation (Conditional, Retry, etc.)
         target_node = config.get("target_node")
         if target_node and target_node not in all_node_ids:
-            errors.append(f"{struct.name} 노드의 target_node에 존재하지 않는 노드 ID '{target_node}'가 참조되었습니다.")
+            errors.append(f"{struct.name} node target_node references non-existent node ID '{target_node}'.")
         
-        # default_node 검증
+        # default_node validation
         default_node = config.get("default_node")
         if default_node and default_node not in all_node_ids:
-            errors.append(f"{struct.name} 노드의 default_node에 존재하지 않는 노드 ID '{default_node}'가 참조되었습니다.")
+            errors.append(f"{struct.name} node default_node references non-existent node ID '{default_node}'.")
         
-        # conditions의 target_node 검증
+        # conditions target_node validation
         conditions = config.get("conditions", [])
         if isinstance(conditions, list):
             for i, cond in enumerate(conditions):
                 target = cond.get("target_node")
                 if target and target not in all_node_ids:
-                    errors.append(f"{struct.name} 노드의 conditions[{i}] target_node에 존재하지 않는 노드 ID '{target}'가 참조되었습니다.")
+                    errors.append(f"{struct.name} node conditions[{i}] target_node references non-existent node ID '{target}'.")
         
-        # branches의 nodes 검증
+        # branches nodes validation
         branches = config.get("branches", [])
         if isinstance(branches, list):
             for i, branch in enumerate(branches):
@@ -948,26 +1143,207 @@ def validate_structure_node(node: Dict[str, Any], all_node_ids: Optional[List[st
                 if isinstance(nodes, list):
                     for node_id in nodes:
                         if node_id not in all_node_ids:
-                            errors.append(f"{struct.name} 노드의 branches[{i}]에 존재하지 않는 노드 ID '{node_id}'가 참조되었습니다.")
+                            errors.append(f"{struct.name} node branches[{i}] references non-existent node ID '{node_id}'.")
         
-        # try_nodes 검증
+        # try_nodes validation
         try_nodes = config.get("try_nodes", [])
         if isinstance(try_nodes, list):
             for node_id in try_nodes:
                 if node_id not in all_node_ids:
-                    errors.append(f"{struct.name} 노드의 try_nodes에 존재하지 않는 노드 ID '{node_id}'가 참조되었습니다.")
+                    errors.append(f"{struct.name} node try_nodes references non-existent node ID '{node_id}'.")
         
-        # catch_handlers의 handler_node 검증
+        # catch_handlers handler_node validation
         catch_handlers = config.get("catch_handlers", [])
         if isinstance(catch_handlers, list):
             for i, handler in enumerate(catch_handlers):
                 handler_node = handler.get("handler_node")
                 if handler_node and handler_node not in all_node_ids:
-                    errors.append(f"{struct.name} 노드의 catch_handlers[{i}] handler_node에 존재하지 않는 노드 ID '{handler_node}'가 참조되었습니다.")
+                    errors.append(f"{struct.name} node catch_handlers[{i}] handler_node references non-existent node ID '{handler_node}'.")
         
-        # finally_node 검증
+        # finally_node validation
         finally_node = config.get("finally_node")
         if finally_node and finally_node not in all_node_ids:
-            errors.append(f"{struct.name} 노드의 finally_node에 존재하지 않는 노드 ID '{finally_node}'가 참조되었습니다.")
+            errors.append(f"{struct.name} node finally_node references non-existent node ID '{finally_node}'.")
     
     return errors
+
+
+# ============================================================
+# Recursive depth validation utility
+# ============================================================
+
+MAX_NESTING_DEPTH = 10  # Global maximum nesting depth
+
+
+def validate_nesting_depth(
+    workflow: Dict[str, Any],
+    max_depth: int = MAX_NESTING_DEPTH
+) -> List[str]:
+    """
+    Validates the nesting depth of structure nodes in a workflow.
+    
+    Checks depth limits to prevent infinite recursion in complex nested structures
+    like Loop inside Parallel, SubGraph inside Parallel, etc.
+    
+    Args:
+        workflow: Complete workflow definition (includes nodes, edges, subgraphs)
+        max_depth: Maximum allowed nesting depth (default: 10)
+    
+    Returns:
+        List of validation error messages (empty list if valid)
+    """
+    errors = []
+    nodes = workflow.get("nodes", [])
+    subgraphs = workflow.get("subgraphs", {})
+    
+    # Node ID → node definition mapping
+    node_map = {n.get("id"): n for n in nodes if n.get("id")}
+    
+    # Structure node types
+    structure_types = {
+        "for_each", "distributed_map", "parallel", "route_condition",
+        "retry_wrapper", "error_handler", "group", "subgraph", "wait_for_approval"
+    }
+    
+    def calculate_depth(node_id: str, visited: set, current_depth: int) -> int:
+        """
+        Recursively calculates the nesting depth of a node.
+        """
+        if node_id in visited:
+            # Circular reference detected
+            return current_depth
+        
+        node = node_map.get(node_id)
+        if not node:
+            return current_depth
+        
+        node_type = node.get("type", "")
+        config = node.get("config", {})
+        
+        # Increase depth for structure nodes
+        if node_type in structure_types:
+            current_depth += 1
+            visited = visited | {node_id}
+            
+            # Check depth limit
+            if current_depth > max_depth:
+                errors.append(
+                    f"Node '{node_id}' nesting depth ({current_depth}) exceeds "
+                    f"maximum allowed depth ({max_depth})."
+                )
+                return current_depth
+            
+            # Calculate child node depths
+            child_node_ids = []
+            
+            # body_nodes (Loop, Map)
+            child_node_ids.extend(config.get("body_nodes", []))
+            
+            # branches (Parallel)
+            for branch in config.get("branches", []):
+                child_node_ids.extend(branch.get("nodes", []))
+            
+            # try_nodes (Catch)
+            child_node_ids.extend(config.get("try_nodes", []))
+            
+            # target_node, default_node (Conditional, Retry)
+            if config.get("target_node"):
+                child_node_ids.append(config["target_node"])
+            if config.get("default_node"):
+                child_node_ids.append(config["default_node"])
+            
+            # conditions target_node (Conditional)
+            for cond in config.get("conditions", []):
+                if cond.get("target_node"):
+                    child_node_ids.append(cond["target_node"])
+            
+            # catch_handlers handler_node (Catch)
+            for handler in config.get("catch_handlers", []):
+                if handler.get("handler_node"):
+                    child_node_ids.append(handler["handler_node"])
+            
+            # finally_node (Catch)
+            if config.get("finally_node"):
+                child_node_ids.append(config["finally_node"])
+            
+            # Recursively check child nodes
+            max_child_depth = current_depth
+            for child_id in child_node_ids:
+                child_depth = calculate_depth(child_id, visited, current_depth)
+                max_child_depth = max(max_child_depth, child_depth)
+            
+            # Check SubGraph inline definition
+            if node_type in ("group", "subgraph"):
+                subgraph_inline = config.get("subgraph_inline", {})
+                if subgraph_inline:
+                    inline_nodes = subgraph_inline.get("nodes", [])
+                    inline_node_map = {n.get("id"): n for n in inline_nodes if n.get("id")}
+                    
+                    # Temporarily extend node_map
+                    original_node_map = node_map.copy()
+                    node_map.update(inline_node_map)
+                    
+                    for inline_node in inline_nodes:
+                        inline_id = inline_node.get("id")
+                        if inline_id:
+                            child_depth = calculate_depth(inline_id, visited, current_depth)
+                            max_child_depth = max(max_child_depth, child_depth)
+                    
+                    # Restore node_map
+                    node_map.clear()
+                    node_map.update(original_node_map)
+                
+                # Check referenced subgraph
+                subgraph_ref = config.get("subgraph_ref")
+                if subgraph_ref and subgraph_ref in subgraphs:
+                    ref_subgraph = subgraphs[subgraph_ref]
+                    ref_nodes = ref_subgraph.get("nodes", [])
+                    ref_node_map = {n.get("id"): n for n in ref_nodes if n.get("id")}
+                    
+                    original_node_map = node_map.copy()
+                    node_map.update(ref_node_map)
+                    
+                    for ref_node in ref_nodes:
+                        ref_id = ref_node.get("id")
+                        if ref_id:
+                            child_depth = calculate_depth(ref_id, visited, current_depth)
+                            max_child_depth = max(max_child_depth, child_depth)
+                    
+                    node_map.clear()
+                    node_map.update(original_node_map)
+            
+            return max_child_depth
+        
+        return current_depth
+    
+    # Start depth calculation from all top-level nodes
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id:
+            calculate_depth(node_id, set(), 0)
+    
+    return errors
+
+
+def get_structure_type_for_node(node_type: str) -> Optional[StructureDefinition]:
+    """
+    Returns the structure definition for a given node type.
+    
+    Args:
+        node_type: Node type string
+    
+    Returns:
+        StructureDefinition or None (for regular nodes)
+    """
+    type_to_struct = {
+        "for_each": LOOP_STRUCTURE,
+        "distributed_map": MAP_STRUCTURE,
+        "parallel": PARALLEL_STRUCTURE,
+        "route_condition": CONDITIONAL_STRUCTURE,
+        "retry_wrapper": RETRY_STRUCTURE,
+        "error_handler": CATCH_STRUCTURE,
+        "group": SUBGRAPH_STRUCTURE,
+        "subgraph": SUBGRAPH_STRUCTURE,
+        "wait_for_approval": WAIT_FOR_APPROVAL_STRUCTURE,
+    }
+    return type_to_struct.get(node_type)

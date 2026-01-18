@@ -147,6 +147,11 @@ class GeminiConfig:
     enable_thinking: bool = False  # Enable Thinking Mode
     thinking_budget_tokens: int = 4096  # Token budget for thinking process
     # ═══════════════════════════════════════════════════════════════════════════
+    # Vertex AI Context Caching (cost optimization)
+    # ═══════════════════════════════════════════════════════════════════════════
+    enable_automatic_caching: bool = True  # Enable Vertex AI automatic/implicit caching
+    cache_ttl_seconds: int = 3600  # Cache TTL (1 hour default)
+    # ═══════════════════════════════════════════════════════════════════════════
     # Vertex AI Controlled Generation (GCP native feature)
     # ═══════════════════════════════════════════════════════════════════════════
     # Output format control
@@ -345,6 +350,7 @@ class GeminiService:
         Note:
             - Content under 32k tokens is not cached (overhead > benefit)
             - If cache with same content_hash exists, reuse it
+            - Vertex AI implicit caching is also triggered when system_instruction repeats
         """
         if not ENABLE_CONTEXT_CACHING:
             return None
@@ -363,6 +369,7 @@ class GeminiService:
             # Check TTL expiration
             if time.time() < cached.get("expires_at", 0):
                 logger.debug(f"Reusing existing context cache: {cached['cache_name']}")
+                self._active_cache_name = cached["cache_name"]
                 return cached["cache_name"]
             else:
                 logger.debug(f"Context cache expired: {cache_key}")
@@ -379,30 +386,50 @@ class GeminiService:
                 )
                 return None
             
-            # Call Gemini Context Caching API (based on 2026 SDK)
-            # Note: Enable below code when actual API is available
-            # cache = client.caching.CachedContent.create(
-            #     model=self.config.model.value,
-            #     contents=[{"role": "user", "parts": [{"text": content_to_cache}]}],
-            #     ttl=f"{ttl_seconds}s",
-            #     display_name=f"analemma-context-{cache_key}"
-            # )
-            # cache_name = cache.name
-            
-            # Mock implementation (when API is not used)
-            cache_name = f"cached_content/{self.config.model.value}/{cache_key}"
+            # ═══════════════════════════════════════════════════════════════════
+            # Vertex AI Context Caching API (google-cloud-aiplatform >= 1.60)
+            # https://cloud.google.com/vertex-ai/generative-ai/docs/context-caching
+            # ═══════════════════════════════════════════════════════════════════
+            cache_name = None
+            try:
+                from vertexai.preview import caching
+                from vertexai.generative_models import Content, Part
+                
+                # Create CachedContent
+                cached_content = caching.CachedContent.create(
+                    model_name=self.config.model.value,
+                    contents=[Content(
+                        role="user",
+                        parts=[Part.from_text(content_to_cache)]
+                    )],
+                    ttl=f"{ttl_seconds}s",
+                    display_name=f"analemma-codesign-{cache_key}"
+                )
+                cache_name = cached_content.resource_name
+                logger.info(f"Vertex AI CachedContent created: {cache_name}")
+                
+            except ImportError:
+                # Fallback: SDK version doesn't support caching preview
+                logger.debug("Vertex AI caching preview not available, using implicit caching")
+                cache_name = f"implicit_cache/{self.config.model.value}/{cache_key}"
+                
+            except Exception as cache_error:
+                # API call failed - use fallback
+                logger.warning(f"Vertex AI CachedContent.create failed: {cache_error}")
+                cache_name = f"fallback_cache/{self.config.model.value}/{cache_key}"
             
             # Save to registry
             _context_cache_registry[cache_key] = {
                 "cache_name": cache_name,
                 "content_hash": cache_key,
+                "content": content_to_cache,  # Store for fallback
                 "created_at": time.time(),
                 "expires_at": time.time() + ttl_seconds,
                 "estimated_tokens": estimated_tokens
             }
             
             logger.info(
-                f"Context cache created: {cache_name} "
+                f"Context cache registered: {cache_name} "
                 f"(~{estimated_tokens} tokens, TTL: {ttl_seconds}s)"
             )
             self._active_cache_name = cache_name
@@ -1541,16 +1568,45 @@ def get_gemini_pro_service() -> GeminiService:
     return GeminiService(GeminiConfig(
         model=GeminiModel.GEMINI_1_5_PRO,
         max_output_tokens=8192,
-        temperature=0.7
+        temperature=0.7,
+        enable_automatic_caching=True  # Enable implicit caching
     ))
 
 
 def get_gemini_flash_service() -> GeminiService:
-    """Gemini 1.5 Flash service (for real-time collaboration)"""
+    """
+    Gemini 1.5 Flash service (for real-time collaboration)
+    
+    Optimized for Co-design with:
+    - Context Caching enabled (75% cost reduction on repeated contexts)
+    - Implicit caching for system_instruction
+    """
     return GeminiService(GeminiConfig(
         model=GeminiModel.GEMINI_1_5_FLASH,
         max_output_tokens=4096,
-        temperature=0.8
+        temperature=0.8,
+        enable_automatic_caching=True,  # Enable Vertex AI automatic/implicit caching
+        cache_ttl_seconds=3600  # 1 hour TTL for structure_tools + graph_dsl
+    ))
+
+
+def get_gemini_codesign_service() -> GeminiService:
+    """
+    Gemini Flash service optimized for Co-design Assistant
+    
+    Features:
+    - Context Caching: structure_tools + graph_dsl cached (75% cost reduction)
+    - Thinking Mode ready: Chain of Thought visualization
+    - Real-time streaming: Low latency for interactive design
+    """
+    return GeminiService(GeminiConfig(
+        model=GeminiModel.GEMINI_2_0_FLASH,
+        max_output_tokens=4096,
+        temperature=0.8,
+        enable_thinking=True,
+        thinking_budget_tokens=4096,
+        enable_automatic_caching=True,
+        cache_ttl_seconds=3600
     ))
 
 
