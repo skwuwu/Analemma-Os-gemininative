@@ -252,6 +252,12 @@ def lambda_handler(event, context):
         workflow_config = {}
         logger.warning("Proceeding with empty workflow_config (risk of later failure)")
 
+    # [Fix] Merge top-level initial_state into workflow_config for test mode
+    # When using test_workflow_config, initial_state may be at top level, not inside workflow_config
+    if raw_input.get('initial_state') and not workflow_config.get('initial_state'):
+        workflow_config['initial_state'] = raw_input.get('initial_state')
+        logger.info(f"Merged top-level initial_state into workflow_config: {list(raw_input.get('initial_state', {}).keys())}")
+
     # 3. MOCK_MODE: Force partitioning (prepare for no DB data)
     if raw_input.get('test_workflow_config'):
          if not _HAS_PARTITION:

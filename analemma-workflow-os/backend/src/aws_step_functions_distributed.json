@@ -998,8 +998,7 @@
               "notification_type": "execution_progress",
               "message": "Workflow execution failed",
               "distributed_execution": true,
-              "error_info.$": "$.execution_result.error_info",
-              "final_result_error.$": "$.final_result.Payload.error"
+              "error_info.$": "$.execution_result.error_info"
             }
           }
         ]
