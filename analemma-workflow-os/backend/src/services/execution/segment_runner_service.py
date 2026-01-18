@@ -27,7 +27,7 @@ except ImportError:
     RingLevel = None
 
 # Services
-from src.services.state.state_manager import StateManager
+from src.services.state.state_manager import StateManager, mask_pii_in_state
 from src.services.recovery.self_healing_service import SelfHealingService
 # Legacy Imports (for now, until further refactoring)
 from src.services.workflow.repository import WorkflowRepository
@@ -1452,7 +1452,7 @@ class SegmentRunnerService:
                         # 상태를 유지하면서 내부 세그먼트 체인 순차 실행
                         return {
                             "status": "SEQUENTIAL_BRANCH",
-                            "final_state": initial_state,
+                            "final_state": mask_pii_in_state(initial_state),
                             "final_state_s3_path": None,
                             "next_segment_to_run": segment_id + 1,
                             "new_history_logs": [],
@@ -1488,7 +1488,7 @@ class SegmentRunnerService:
                 logger.info(f"[Kernel] ⏭️ No valid branches to execute, skipping parallel group")
                 return {
                     "status": "SUCCEEDED",
-                    "final_state": initial_state,
+                    "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
                     "next_segment_to_run": segment_id + 1,
                     "new_history_logs": [],
@@ -1515,7 +1515,7 @@ class SegmentRunnerService:
                 
                 return {
                     "status": "SCHEDULED_PARALLEL",
-                    "final_state": initial_state,
+                    "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
                     "next_segment_to_run": segment_id + 1,
                     "new_history_logs": [],
@@ -1530,7 +1530,7 @@ class SegmentRunnerService:
             # PARALLEL_GROUP: 기본 병렬 실행
             return {
                 "status": "PARALLEL_GROUP",
-                "final_state": initial_state,
+                "final_state": mask_pii_in_state(initial_state),
                 "final_state_s3_path": None,
                 "next_segment_to_run": segment_id + 1,
                 "new_history_logs": [],
@@ -1559,7 +1559,7 @@ class SegmentRunnerService:
             
             return {
                 "status": "SKIPPED",
-                "final_state": initial_state,
+                "final_state": mask_pii_in_state(initial_state),
                 "final_state_s3_path": None,
                 "next_segment_to_run": segment_id + 1,
                 "new_history_logs": [],
@@ -1590,7 +1590,7 @@ class SegmentRunnerService:
                 logger.error(f"[Kernel] 🛡️ SIGKILL triggered by Ring Protection: {len(critical_violations)} critical violations")
                 return {
                     "status": "SIGKILL",
-                    "final_state": initial_state,
+                    "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
                     "next_segment_to_run": None,
                     "new_history_logs": [],
