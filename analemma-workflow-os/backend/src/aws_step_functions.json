@@ -163,7 +163,9 @@
         "max_concurrency.$": "$.Payload.max_concurrency",
         "distributed_mode.$": "$.Payload.distributed_mode",
         "llm_segments.$": "$.Payload.llm_segments",
-        "hitp_segments.$": "$.Payload.hitp_segments"
+        "hitp_segments.$": "$.Payload.hitp_segments",
+        "distributed_strategy.$": "$.Payload.distributed_strategy",
+        "distributed_strategy_detail.$": "$.Payload.distributed_strategy_detail"
       },
       "ResultPath": "$.state_data",
       "Catch": [
@@ -277,10 +279,168 @@
           ],
           "Comment": "EventBridge publish failure should not stop workflow",
           "ResultPath": "$.notification_error",
-          "Next": "ExecuteSegment"
+          "Next": "SelectDistributedStrategy"
         }
       ],
-      "Next": "ExecuteSegment"
+      "Next": "SelectDistributedStrategy"
+    },
+    "SelectDistributedStrategy": {
+      "Type": "Choice",
+      "Comment": "🚀 Hybrid Mode: Select execution strategy based on workflow characteristics",
+      "Choices": [
+        {
+          "Variable": "$.state_data.distributed_strategy",
+          "StringEquals": "MAP_REDUCE",
+          "Next": "ExecuteMapReduceMode"
+        },
+        {
+          "Variable": "$.state_data.distributed_strategy",
+          "StringEquals": "BATCHED",
+          "Next": "ExecuteBatchedMode"
+        }
+      ],
+      "Default": "ExecuteSegment"
+    },
+    "ExecuteMapReduceMode": {
+      "Type": "Map",
+      "Comment": "🚀 MAP_REDUCE: High-concurrency parallel execution with S3 aggregation",
+      "MaxConcurrencyPath": "$.state_data.max_concurrency",
+      "ItemsPath": "$.state_data.segment_manifest",
+      "Parameters": {
+        "segment_config.$": "$$.Map.Item.Value.segment_config",
+        "segment_id.$": "$$.Map.Item.Value.segment_id",
+        "execution_order.$": "$$.Map.Item.Value.execution_order",
+        "workflow_config.$": "$.state_data.workflow_config",
+        "current_state.$": "$.state_data.current_state",
+        "ownerId.$": "$.state_data.ownerId",
+        "workflowId.$": "$.state_data.workflowId",
+        "idempotency_key.$": "$.state_data.idempotency_key",
+        "total_segments.$": "$.state_data.total_segments",
+        "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
+        "execution_mode": "MAP_REDUCE"
+      },
+      "Iterator": {
+        "StartAt": "MapReduceSegmentRunner",
+        "States": {
+          "MapReduceSegmentRunner": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ExecuteSegmentArn}",
+              "InvocationType": "RequestResponse",
+              "Payload.$": "$"
+            },
+            "ResultSelector": {
+              "status.$": "$.Payload.status",
+              "segment_id.$": "$.Payload.segment_id",
+              "output_s3_path.$": "$.Payload.final_state_s3_path"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": ["Lambda.TooManyRequestsException"],
+                "IntervalSeconds": 5,
+                "MaxAttempts": 10,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.map_reduce_results",
+      "Next": "AggregateMapReduceResults"
+    },
+    "AggregateMapReduceResults": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Comment": "Aggregate all Map-Reduce results from S3 into final state",
+      "Parameters": {
+        "FunctionName": "${AggregateResultsArn}",
+        "Payload": {
+          "map_results.$": "$.map_reduce_results",
+          "ownerId.$": "$.state_data.ownerId",
+          "workflowId.$": "$.state_data.workflowId",
+          "execution_mode": "MAP_REDUCE"
+        }
+      },
+      "ResultSelector": {
+        "final_state.$": "$.Payload.final_state",
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.aggregation_result",
+      "Next": "NotifyWorkflowCompleted"
+    },
+    "ExecuteBatchedMode": {
+      "Type": "Map",
+      "Comment": "🚀 BATCHED: Controlled batch processing with moderate concurrency",
+      "MaxConcurrency": 10,
+      "ItemsPath": "$.state_data.segment_manifest",
+      "Parameters": {
+        "segment_config.$": "$$.Map.Item.Value.segment_config",
+        "segment_id.$": "$$.Map.Item.Value.segment_id",
+        "execution_order.$": "$$.Map.Item.Value.execution_order",
+        "dependencies.$": "$$.Map.Item.Value.dependencies",
+        "workflow_config.$": "$.state_data.workflow_config",
+        "current_state.$": "$.state_data.current_state",
+        "ownerId.$": "$.state_data.ownerId",
+        "workflowId.$": "$.state_data.workflowId",
+        "idempotency_key.$": "$.state_data.idempotency_key",
+        "total_segments.$": "$.state_data.total_segments",
+        "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
+        "execution_mode": "BATCHED"
+      },
+      "Iterator": {
+        "StartAt": "BatchedSegmentRunner",
+        "States": {
+          "BatchedSegmentRunner": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ExecuteSegmentArn}",
+              "InvocationType": "RequestResponse",
+              "Payload.$": "$"
+            },
+            "ResultSelector": {
+              "status.$": "$.Payload.status",
+              "segment_id.$": "$.Payload.segment_id",
+              "final_state.$": "$.Payload.final_state"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": ["Lambda.TooManyRequestsException"],
+                "IntervalSeconds": 3,
+                "MaxAttempts": 5,
+                "BackoffRate": 2.0,
+                "JitterStrategy": "FULL"
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.batched_results",
+      "Next": "AggregateBatchedResults"
+    },
+    "AggregateBatchedResults": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Comment": "Aggregate batched execution results",
+      "Parameters": {
+        "FunctionName": "${AggregateResultsArn}",
+        "Payload": {
+          "batch_results.$": "$.batched_results",
+          "ownerId.$": "$.state_data.ownerId",
+          "workflowId.$": "$.state_data.workflowId",
+          "execution_mode": "BATCHED"
+        }
+      },
+      "ResultSelector": {
+        "final_state.$": "$.Payload.final_state",
+        "status.$": "$.Payload.status"
+      },
+      "ResultPath": "$.aggregation_result",
+      "Next": "NotifyWorkflowCompleted"
     },
     "ExecuteSegment": {
       "Type": "Task",
@@ -1029,6 +1189,49 @@
     "WorkflowSucceeded": {
       "Type": "Succeed",
       "Comment": "워크플로우가 성공적으로 완료되었습니다. - 최종 출력에 S3 경로 포함"
+    },
+    "NotifyWorkflowCompleted": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Comment": "🚀 Hybrid Mode: Publish completion event for MAP_REDUCE/BATCHED modes",
+      "Parameters": {
+        "Entries": [
+          {
+            "EventBusName": "${WorkflowEventBusArn}",
+            "Source": "backend-workflow.lifecycle",
+            "DetailType": "WorkflowLifecycleEvent",
+            "Detail": {
+              "execution_id.$": "$$.Execution.Id",
+              "conversation_id.$": "$$.Execution.Id",
+              "ownerId.$": "$.state_data.ownerId",
+              "workflowId.$": "$.state_data.workflowId",
+              "status": "COMPLETED",
+              "notification_type": "execution_progress",
+              "message": "Workflow completed via hybrid distributed mode",
+              "distributed_strategy.$": "$.state_data.distributed_strategy",
+              "final_state.$": "$.aggregation_result.final_state"
+            }
+          }
+        ]
+      },
+      "ResultPath": "$.completion_notification_result",
+      "Next": "PrepareHybridModeOutput"
+    },
+    "PrepareHybridModeOutput": {
+      "Type": "Pass",
+      "Comment": "🚀 Hybrid Mode: Prepare final output for MAP_REDUCE/BATCHED execution",
+      "Parameters": {
+        "status": "SUCCEEDED",
+        "execution_id.$": "$$.Execution.Id",
+        "ownerId.$": "$.state_data.ownerId",
+        "workflowId.$": "$.state_data.workflowId",
+        "final_state.$": "$.aggregation_result.final_state",
+        "distributed_strategy.$": "$.state_data.distributed_strategy",
+        "distributed_strategy_detail.$": "$.state_data.distributed_strategy_detail",
+        "total_segments.$": "$.state_data.total_segments",
+        "start_time.$": "$.state_data.start_time"
+      },
+      "Next": "WorkflowSucceeded"
     },
     "NotifyExecutionFailure": {
       "Type": "Task",

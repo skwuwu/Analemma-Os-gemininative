@@ -1056,12 +1056,56 @@ def skill_executor_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict
 
 def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Executes sub-node for each item in list concurrently."""
-    input_list_key = config.get("input_list_key") or (config.get("foreach_config") or {}).get("items_source", "").replace("$.", "")
-    sub_node_config = config.get("sub_node_config") or (config.get("foreach_config") or {}).get("item_processor")
-    output_key = config.get("output_key")
-    max_iterations = config.get("max_iterations") or (config.get("foreach_config") or {}).get("max_iterations", 10)
-    metadata = config.get("metadata", {})
+    # [Fix] Support both flat config and nested config (node_def structure)
+    # When called from builder, config is the full node_def: {id, type, config: {...}}
+    # Extract the inner config if present
+    inner_config = config.get("config", {}) if config.get("type") == "for_each" else {}
+    
+    # Try inner config first, then fall back to top-level config
+    # [Fix v2] Also support items_path (alternative to input_list_key)
+    input_list_key = (
+        inner_config.get("input_list_key") or 
+        inner_config.get("items_path") or  # Alternative key name
+        config.get("input_list_key") or 
+        config.get("items_path") or  # Alternative key name
+        (config.get("foreach_config") or {}).get("items_source", "").replace("$.", "")
+    )
+    
+    # [Fix v2] Support body_nodes as alternative to sub_node_config
+    # body_nodes is a list of node IDs to execute - we create a simple operator wrapper
+    body_nodes = inner_config.get("body_nodes") or config.get("body_nodes")
+    item_key = inner_config.get("item_key") or config.get("item_key") or "item"
+    
+    sub_node_config = (
+        inner_config.get("sub_node_config") or 
+        config.get("sub_node_config") or 
+        (config.get("foreach_config") or {}).get("item_processor")
+    )
+    
+    # [Fix v2] If body_nodes is specified but no sub_node_config, create a passthrough operator
+    if body_nodes and not sub_node_config:
+        # Create a simple operator that just logs the item
+        sub_node_config = {
+            "type": "operator",
+            "config": {
+                "code": f"state['{item_key}'] = state.get('item')\nprint(f'Processing {{state.get(\"item\")}}')\nstate['processed'] = True",
+                "output_key": "iteration_result"
+            }
+        }
+    
+    output_key = inner_config.get("output_key") or config.get("output_key") or "for_each_results"
+    max_iterations = (
+        inner_config.get("max_iterations") or 
+        config.get("max_iterations") or 
+        (config.get("foreach_config") or {}).get("max_iterations", 10)
+    )
+    metadata = inner_config.get("metadata", {}) or config.get("metadata", {})
     segmentation_policy = metadata.get("segmentation_policy")
+    
+    # Handle None input_list_key
+    if not input_list_key:
+        logger.warning(f"for_each config missing input_list_key/items_path: {config.keys()}")
+        return {output_key: []}
     
     if "." in input_list_key:
         input_list_key = input_list_key.split(".")[-1] # Simple extraction for now

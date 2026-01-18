@@ -129,7 +129,8 @@ class SegmentRunnerService:
         # 2. Extract Context
         auth_user_id = event.get('ownerId') or event.get('owner_id') or event.get('user_id')
         workflow_id = event.get('workflowId') or event.get('workflow_id')
-        segment_id = event.get('segment_to_run', 0)
+        # 🚀 [Hybrid Mode] Support both segment_id (hybrid) and segment_to_run (legacy)
+        segment_id = event.get('segment_id') or event.get('segment_to_run', 0)
         s3_bucket = os.environ.get("S3_BUCKET") or os.environ.get("SKELETON_S3_BUCKET")
         
         # 3. Load State (Inline or S3)
@@ -146,37 +147,45 @@ class SegmentRunnerService:
         partition_map = event.get('partition_map')
         partition_map_s3_path = event.get('partition_map_s3_path')
         
-        # [Critical Fix] Support S3 Offloaded Partition Map with retry
-        if not partition_map and partition_map_s3_path:
-            try:
-                import boto3
-                import json
-                s3 = boto3.client('s3')
-                bucket_name = partition_map_s3_path.replace("s3://", "").split("/")[0]
-                key_name = "/".join(partition_map_s3_path.replace("s3://", "").split("/")[1:])
-                
-                logger.info(f"Loading partition_map from S3: {partition_map_s3_path}")
-                
-                # [v2.1] S3 get_object에 재시도 적용
-                def _get_partition_map():
-                    obj = s3.get_object(Bucket=bucket_name, Key=key_name)
-                    return json.loads(obj['Body'].read().decode('utf-8'))
-                
-                if RETRY_UTILS_AVAILABLE:
-                    partition_map = retry_call(
-                        _get_partition_map,
-                        max_retries=2,
-                        base_delay=0.5,
-                        max_delay=5.0
-                    )
-                else:
-                    partition_map = _get_partition_map()
-                    
-            except Exception as e:
-                logger.error(f"Failed to load partition_map from S3 after retries: {e}")
-                # Fallback to dynamic partitioning (handled in _resolve_segment_config)
+        # 🚀 [Hybrid Mode] Direct segment_config support for MAP_REDUCE/BATCHED modes
+        direct_segment_config = event.get('segment_config')
+        execution_mode = event.get('execution_mode')
         
-        segment_config = self._resolve_segment_config(workflow_config, partition_map, segment_id)
+        if direct_segment_config and execution_mode in ('MAP_REDUCE', 'BATCHED'):
+            logger.info(f"[Hybrid Mode] Using direct segment_config for {execution_mode} mode")
+            segment_config = direct_segment_config
+        else:
+            # [Critical Fix] Support S3 Offloaded Partition Map with retry
+            if not partition_map and partition_map_s3_path:
+                try:
+                    import boto3
+                    import json
+                    s3 = boto3.client('s3')
+                    bucket_name = partition_map_s3_path.replace("s3://", "").split("/")[0]
+                    key_name = "/".join(partition_map_s3_path.replace("s3://", "").split("/")[1:])
+                    
+                    logger.info(f"Loading partition_map from S3: {partition_map_s3_path}")
+                    
+                    # [v2.1] S3 get_object에 재시도 적용
+                    def _get_partition_map():
+                        obj = s3.get_object(Bucket=bucket_name, Key=key_name)
+                        return json.loads(obj['Body'].read().decode('utf-8'))
+                    
+                    if RETRY_UTILS_AVAILABLE:
+                        partition_map = retry_call(
+                            _get_partition_map,
+                            max_retries=2,
+                            base_delay=0.5,
+                            max_delay=5.0
+                        )
+                    else:
+                        partition_map = _get_partition_map()
+                        
+                except Exception as e:
+                    logger.error(f"Failed to load partition_map from S3 after retries: {e}")
+                    # Fallback to dynamic partitioning (handled in _resolve_segment_config)
+            
+            segment_config = self._resolve_segment_config(workflow_config, partition_map, segment_id)
         
         # [Critical Fix] parallel_group 타입 세그먼트는 바로 PARALLEL_GROUP status 반환
         # ASL의 ProcessParallelSegments가 branches를 받아서 Map으로 병렬 실행함

@@ -30,6 +30,95 @@ WORKFLOWS_TABLE = os.environ.get('WORKFLOWS_TABLE', 'WorkflowsTableV3')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+def _calculate_distributed_strategy(
+    total_segments: int,
+    llm_segments: int,
+    hitp_segments: int,
+    partition_map: list
+) -> dict:
+    """
+    🚀 하이브리드 분산 실행 전략 결정
+    
+    Returns:
+        dict: {
+            "strategy": "SAFE" | "BATCHED" | "MAP_REDUCE" | "RECURSIVE",
+            "max_concurrency": int,
+            "batch_size": int (for BATCHED mode),
+            "reason": str
+        }
+    """
+    # 🔍 워크플로우 특성 분석
+    llm_ratio = llm_segments / max(total_segments, 1)
+    hitp_ratio = hitp_segments / max(total_segments, 1)
+    
+    # 🔗 의존성 분석: 독립 실행 가능한 세그먼트 그룹 계산
+    independent_segments = 0
+    max_dependency_depth = 0
+    
+    for segment in partition_map:
+        deps = segment.get("dependencies", [])
+        if not deps:
+            independent_segments += 1
+        max_dependency_depth = max(max_dependency_depth, len(deps))
+    
+    independence_ratio = independent_segments / max(total_segments, 1)
+    
+    logger.info(f"[Strategy Analysis] segments={total_segments}, llm_ratio={llm_ratio:.2f}, "
+                f"hitp_ratio={hitp_ratio:.2f}, independence_ratio={independence_ratio:.2f}, "
+                f"max_dep_depth={max_dependency_depth}")
+    
+    # 📊 전략 결정 로직
+    # 1. HITP가 포함된 경우: 반드시 SAFE 모드 (인간 승인 필요)
+    if hitp_segments > 0:
+        return {
+            "strategy": "SAFE",
+            "max_concurrency": 1,
+            "batch_size": 1,
+            "reason": f"HITP segments detected ({hitp_segments}), requires sequential human approval"
+        }
+    
+    # 2. 소규모 워크플로우: SAFE 모드
+    if total_segments <= 10:
+        return {
+            "strategy": "SAFE",
+            "max_concurrency": min(total_segments, 5),
+            "batch_size": 1,
+            "reason": f"Small workflow ({total_segments} segments), SAFE mode sufficient"
+        }
+    
+    # 3. 대규모 + 높은 독립성 + LLM 비율 높음: MAP_REDUCE 모드
+    if total_segments > 100 and independence_ratio > 0.5 and llm_ratio > 0.3:
+        return {
+            "strategy": "MAP_REDUCE",
+            "max_concurrency": 100,  # 높은 병렬성
+            "batch_size": 25,
+            "reason": f"High independence ({independence_ratio:.1%}), LLM-heavy ({llm_ratio:.1%}), optimal for Map-Reduce"
+        }
+    
+    # 4. 중간 규모 또는 혼합 워크플로우: BATCHED 모드
+    if total_segments > 10:
+        # 배치 크기 동적 결정: LLM 비율 높으면 작은 배치
+        if llm_ratio > 0.5:
+            batch_size = 10
+            max_concurrency = 10
+        else:
+            batch_size = 20
+            max_concurrency = 20
+            
+        return {
+            "strategy": "BATCHED",
+            "max_concurrency": max_concurrency,
+            "batch_size": batch_size,
+            "reason": f"Medium workflow ({total_segments} segments), batched processing optimal"
+        }
+    
+    # 5. 기본: SAFE 모드
+    return {
+        "strategy": "SAFE",
+        "max_concurrency": 2,
+        "batch_size": 1,
+        "reason": "Default fallback to SAFE mode"
+    }
 
 def _calculate_dynamic_concurrency(
     total_segments: int,
@@ -332,9 +421,22 @@ def lambda_handler(event, context):
             "type": segment.get("type", "normal")
         })
     
+    # � [MOVED UP] Hybrid Distributed Strategy Calculation - BEFORE S3 offload decision
+    distributed_strategy = _calculate_distributed_strategy(
+        total_segments=total_segments,
+        llm_segments=llm_segments,
+        hitp_segments=hitp_segments,
+        partition_map=partition_map
+    )
+    
+    logger.info(f"[Distributed Strategy] {distributed_strategy['strategy']}: {distributed_strategy['reason']}")
+    
     # 🚨 [Critical Fix] Detect distributed mode and offload large data to S3
     is_distributed_mode = total_segments > 300  # Distributed mode threshold
     partition_map_for_return = partition_map  # Default: return all
+    
+    # 🚀 [Hybrid Mode Compatibility] MAP_REDUCE/BATCHED 모드에서는 segment_manifest 인라인 유지
+    uses_inline_manifest = distributed_strategy["strategy"] in ("MAP_REDUCE", "BATCHED")
     
     # AWS Clients
     s3_client = None
@@ -342,12 +444,12 @@ def lambda_handler(event, context):
     
     # Initialize boto3 client only when S3 upload needed
     if bucket and owner_id and workflow_id:
-        if len(segment_manifest) > 50 or is_distributed_mode:
+        if (len(segment_manifest) > 50 and not uses_inline_manifest) or is_distributed_mode:
             import boto3
             s3_client = boto3.client('s3')
 
-    # 1. Manifest Offloading (when exceeding 50 items)
-    if len(segment_manifest) > 50 and s3_client:
+    # 1. Manifest Offloading (when exceeding 50 items AND not using inline manifest for hybrid mode)
+    if len(segment_manifest) > 50 and s3_client and not uses_inline_manifest:
         try:
             manifest_key = f"workflow-manifests/{owner_id}/{workflow_id}/segment_manifest.json"
             manifest_data = json.dumps(segment_manifest, ensure_ascii=False)
@@ -424,6 +526,9 @@ def lambda_handler(event, context):
         owner_id=owner_id
     )
     
+    # 🚀 Override max_concurrency with strategy-recommended value (strategy calculated earlier)
+    max_concurrency = distributed_strategy.get("max_concurrency", max_concurrency)
+    
     logger.info(f"[FIXED_ROBUST] Returning state data. partition_map_s3_path: '{partition_map_s3_path}'")
 
     return {
@@ -458,6 +563,10 @@ def lambda_handler(event, context):
         # Distributed Mode Flag
         "distributed_mode": is_distributed_mode,
         "max_concurrency": max_concurrency,
+        
+        # 🚀 Hybrid Distributed Strategy
+        "distributed_strategy": distributed_strategy["strategy"],
+        "distributed_strategy_detail": distributed_strategy,
         
         # [Fix] Pass MOCK_MODE - for simulator E2E testing (HITP auto resume, etc.)
         "MOCK_MODE": mock_mode,

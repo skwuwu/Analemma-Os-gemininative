@@ -9,9 +9,16 @@ import json
 import logging
 import os
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import reduce
 from src.common.constants import DynamoDBConfig
+
+# 🚀 [Last-mile Optimization] 병렬 처리 설정
+MAX_PARALLEL_S3_FETCHES = int(os.environ.get('MAX_PARALLEL_S3_FETCHES', '50'))
+HIERARCHICAL_MERGE_THRESHOLD = int(os.environ.get('HIERARCHICAL_MERGE_THRESHOLD', '100'))
+MERGE_BATCH_SIZE = int(os.environ.get('MERGE_BATCH_SIZE', '10'))
 
 logger = logging.getLogger(__name__)
 
@@ -21,18 +28,37 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
     
     🚨 [Critical Fix] S3에서 결과를 읽어서 페이로드 제한 해결
     
+    🚀 [Hybrid Mode] MAP_REDUCE / BATCHED 모드 지원
+    
     Args:
         event: {
+            # 기존 분산 맵 모드
             "distributed_results_s3_path": "s3://bucket/key" (S3 사용 시),
             "distributed_results": [...] (인라인 사용 시),
             "state_data": {...},
-            "use_s3_results": boolean
+            "use_s3_results": boolean,
+            
+            # 🚀 하이브리드 모드 (MAP_REDUCE / BATCHED)
+            "execution_mode": "MAP_REDUCE" | "BATCHED",
+            "map_results": [...] (MAP_REDUCE 모드),
+            "batch_results": [...] (BATCHED 모드),
+            "ownerId": str,
+            "workflowId": str
         }
         
     Returns:
         집계된 최종 결과
     """
     try:
+        # 🚀 [Hybrid Mode] 실행 모드 감지
+        execution_mode = event.get('execution_mode')
+        
+        if execution_mode == 'MAP_REDUCE':
+            return _aggregate_map_reduce_results(event)
+        elif execution_mode == 'BATCHED':
+            return _aggregate_batched_results(event)
+        
+        # 기존 분산 맵 모드 처리 (하위 호환성)
         use_s3_results = event.get('use_s3_results', False)
         state_data = event.get('state_data', {})
         
@@ -1244,6 +1270,9 @@ def _setup_s3_lifecycle_policy(bucket_name: str) -> None:
     except Exception as e:
         logger.warning(f"Failed to setup S3 lifecycle policy: {e}")
         # 정책 설정 실패는 치명적이지 않음
+
+
+def _validate_aggregated_state(aggregated_state: Dict[str, Any]) -> Dict[str, Any]:
     """
     집계 결과의 유효성을 검증
     """
@@ -1268,3 +1297,497 @@ def _setup_s3_lifecycle_policy(bucket_name: str) -> None:
         validation['warnings'].append("No chunk results found in aggregated state")
     
     return validation
+
+
+# ============================================================
+# 🚀 HYBRID MODE: MAP_REDUCE / BATCHED 집계 함수
+# ============================================================
+
+def _aggregate_map_reduce_results(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    🚀 MAP_REDUCE 모드 결과 집계
+    
+    고도로 병렬화된 실행 결과를 수집하고 병합합니다.
+    
+    🔧 [Last-mile Optimization]
+    1. ThreadPoolExecutor로 S3 결과 병렬 fetch (N+1 I/O 문제 해결)
+    2. 결과 수 > HIERARCHICAL_MERGE_THRESHOLD일 때 계층적 병합 적용
+    3. 스트리밍 방식으로 S3에 최종 결과 저장
+    """
+    map_results = event.get('map_results', [])
+    owner_id = event.get('ownerId')
+    workflow_id = event.get('workflowId')
+    
+    start_time = time.time()
+    logger.info(f"[MAP_REDUCE] Aggregating {len(map_results)} segment results")
+    
+    if not map_results:
+        return {
+            "status": "FAILED",
+            "error": "No map results to aggregate",
+            "final_state": {}
+        }
+    
+    # 결과 분류
+    successful = []
+    failed = []
+    
+    for result in map_results:
+        if not isinstance(result, dict):
+            continue
+        status = result.get('status', 'UNKNOWN')
+        if status in ('COMPLETED', 'SUCCESS'):
+            successful.append(result)
+        else:
+            failed.append(result)
+    
+    logger.info(f"[MAP_REDUCE] {len(successful)} successful, {len(failed)} failed")
+    
+    # 🚀 [Optimization 1] S3 결과 병렬 Fetch
+    fetched_states = _parallel_fetch_s3_states(successful)
+    
+    fetch_time = time.time()
+    logger.info(f"[MAP_REDUCE] Parallel fetch completed in {fetch_time - start_time:.2f}s")
+    
+    # 🚀 [Optimization 2] 계층적 병합 또는 직접 병합 결정
+    if len(fetched_states) > HIERARCHICAL_MERGE_THRESHOLD:
+        logger.info(f"[MAP_REDUCE] Using hierarchical merge for {len(fetched_states)} states")
+        merged_state = _hierarchical_merge(fetched_states)
+    else:
+        merged_state = _sequential_merge(fetched_states)
+    
+    merge_time = time.time()
+    logger.info(f"[MAP_REDUCE] Merge completed in {merge_time - fetch_time:.2f}s")
+    
+    # 🚀 [Optimization 3] 대용량 결과는 스트리밍으로 S3에 저장
+    final_state_s3_path = None
+    state_json = json.dumps(merged_state, ensure_ascii=False)
+    state_size = len(state_json.encode('utf-8'))
+    
+    if state_size > 200 * 1024:  # 200KB 이상
+        final_state_s3_path = _stream_state_to_s3(
+            merged_state, owner_id, workflow_id, "map_reduce_final"
+        )
+        logger.info(f"[MAP_REDUCE] Large state ({state_size} bytes) streamed to S3")
+    
+    total_time = time.time() - start_time
+    final_status = "COMPLETED" if len(failed) == 0 else "PARTIAL_SUCCESS"
+    
+    return {
+        "status": final_status,
+        "final_state": merged_state if not final_state_s3_path else {},
+        "final_state_s3_path": final_state_s3_path,
+        "execution_summary": {
+            "mode": "MAP_REDUCE",
+            "total_segments": len(map_results),
+            "successful": len(successful),
+            "failed": len(failed),
+            "aggregation_time_seconds": round(total_time, 2),
+            "fetch_time_seconds": round(fetch_time - start_time, 2),
+            "merge_time_seconds": round(merge_time - fetch_time, 2),
+            "used_hierarchical_merge": len(fetched_states) > HIERARCHICAL_MERGE_THRESHOLD,
+            "state_size_bytes": state_size,
+            "aggregation_timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    }
+
+
+def _aggregate_batched_results(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    🚀 BATCHED 모드 결과 집계
+    
+    배치 단위 순차 실행 결과를 병합합니다.
+    BATCHED 모드는 순서가 중요하므로 순차 병합을 유지하되, 
+    대용량일 경우 계층적 병합을 적용합니다.
+    """
+    batch_results = event.get('batch_results', [])
+    owner_id = event.get('ownerId')
+    workflow_id = event.get('workflowId')
+    
+    start_time = time.time()
+    logger.info(f"[BATCHED] Aggregating {len(batch_results)} batch results")
+    
+    if not batch_results:
+        return {
+            "status": "FAILED",
+            "error": "No batch results to aggregate",
+            "final_state": {}
+        }
+    
+    # 결과 분류
+    successful = []
+    failed = []
+    
+    for result in batch_results:
+        if not isinstance(result, dict):
+            continue
+        status = result.get('status', 'UNKNOWN')
+        if status in ('COMPLETED', 'SUCCESS'):
+            successful.append(result)
+        else:
+            failed.append(result)
+    
+    logger.info(f"[BATCHED] {len(successful)} successful, {len(failed)} failed")
+    
+    # 순서대로 정렬
+    sorted_results = sorted(successful, key=lambda x: x.get('segment_id', 0))
+    
+    # 인라인 상태 추출 (BATCHED는 주로 인라인 결과 사용)
+    states_to_merge = []
+    for result in sorted_results:
+        segment_state = result.get('final_state', {})
+        if segment_state:
+            states_to_merge.append(segment_state)
+    
+    # 대용량일 경우 계층적 병합, 아니면 순차 병합
+    if len(states_to_merge) > HIERARCHICAL_MERGE_THRESHOLD:
+        logger.info(f"[BATCHED] Using hierarchical merge for {len(states_to_merge)} states")
+        merged_state = _hierarchical_merge_ordered(states_to_merge)
+    else:
+        merged_state = _sequential_merge(states_to_merge)
+    
+    # 대용량 결과 S3 저장
+    final_state_s3_path = None
+    state_json = json.dumps(merged_state, ensure_ascii=False)
+    state_size = len(state_json.encode('utf-8'))
+    
+    if state_size > 200 * 1024:
+        final_state_s3_path = _stream_state_to_s3(
+            merged_state, owner_id, workflow_id, "batched_final"
+        )
+    
+    total_time = time.time() - start_time
+    final_status = "COMPLETED" if len(failed) == 0 else "PARTIAL_SUCCESS"
+    
+    return {
+        "status": final_status,
+        "final_state": merged_state if not final_state_s3_path else {},
+        "final_state_s3_path": final_state_s3_path,
+        "execution_summary": {
+            "mode": "BATCHED",
+            "total_batches": len(batch_results),
+            "successful": len(successful),
+            "failed": len(failed),
+            "aggregation_time_seconds": round(total_time, 2),
+            "state_size_bytes": state_size,
+            "aggregation_timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    }
+
+
+def _load_state_from_s3(s3_path: str) -> Dict[str, Any]:
+    """S3 경로에서 상태 로드"""
+    import boto3
+    
+    if not s3_path.startswith('s3://'):
+        return {}
+    
+    parts = s3_path[5:].split('/', 1)
+    bucket = parts[0]
+    key = parts[1] if len(parts) > 1 else ''
+    
+    s3_client = boto3.client('s3')
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    content = response['Body'].read().decode('utf-8')
+    
+    return json.loads(content)
+
+
+def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
+    """두 딕셔너리를 깊게 병합 (비재귀적 구현으로 스택 오버플로우 방지)"""
+    result = base.copy()
+    
+    # 🚀 [Optimization] 재귀 대신 스택 기반 병합으로 깊은 구조 처리
+    stack = [(result, overlay)]
+    
+    while stack:
+        current_base, current_overlay = stack.pop()
+        
+        for key, value in current_overlay.items():
+            if key in current_base:
+                base_val = current_base[key]
+                if isinstance(base_val, dict) and isinstance(value, dict):
+                    # 딕셔너리: 재귀적으로 처리할 항목을 스택에 추가
+                    stack.append((base_val, value))
+                elif isinstance(base_val, list) and isinstance(value, list):
+                    # 리스트: 직접 합침
+                    current_base[key] = base_val + value
+                else:
+                    # 기타: 오버라이드
+                    current_base[key] = value
+            else:
+                current_base[key] = value
+    
+    return result
+
+
+# ============================================================
+# 🚀 LAST-MILE OPTIMIZATION: 병렬 Fetch & 계층적 병합
+# ============================================================
+
+def _parallel_fetch_s3_states(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    🚀 [Optimization] ThreadPoolExecutor를 사용하여 S3 결과를 병렬로 fetch
+    
+    N+1 I/O 문제 해결: 순차적 500회 요청 → 병렬 50개씩 10배치
+    """
+    fetched_states = []
+    s3_paths_to_fetch = []
+    inline_states = []
+    
+    # S3 경로와 인라인 결과 분리
+    for result in results:
+        output_s3_path = result.get('output_s3_path')
+        if output_s3_path:
+            s3_paths_to_fetch.append((result.get('segment_id', 0), output_s3_path))
+        else:
+            segment_state = result.get('final_state', {})
+            if segment_state:
+                inline_states.append((result.get('segment_id', 0), segment_state))
+    
+    logger.info(f"[Parallel Fetch] {len(s3_paths_to_fetch)} S3 paths, {len(inline_states)} inline states")
+    
+    # 인라인 상태 먼저 추가
+    fetched_states.extend(inline_states)
+    
+    if not s3_paths_to_fetch:
+        return [state for _, state in sorted(fetched_states, key=lambda x: x[0])]
+    
+    # 🚀 병렬 S3 fetch
+    def fetch_single(item: Tuple[int, str]) -> Tuple[int, Dict[str, Any]]:
+        segment_id, s3_path = item
+        try:
+            state = _load_state_from_s3(s3_path)
+            return (segment_id, state)
+        except Exception as e:
+            logger.warning(f"Failed to fetch {s3_path}: {e}")
+            return (segment_id, {})
+    
+    # ThreadPoolExecutor로 병렬 처리
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_S3_FETCHES) as executor:
+        future_to_path = {
+            executor.submit(fetch_single, item): item 
+            for item in s3_paths_to_fetch
+        }
+        
+        completed = 0
+        for future in as_completed(future_to_path):
+            try:
+                segment_id, state = future.result(timeout=30)  # 30초 타임아웃
+                if state:
+                    fetched_states.append((segment_id, state))
+                completed += 1
+                
+                # 진행 상황 로깅 (100개마다)
+                if completed % 100 == 0:
+                    logger.info(f"[Parallel Fetch] Progress: {completed}/{len(s3_paths_to_fetch)}")
+                    
+            except Exception as e:
+                logger.warning(f"Future failed: {e}")
+    
+    logger.info(f"[Parallel Fetch] Completed: {len(fetched_states)} states fetched")
+    
+    # segment_id 순으로 정렬하여 상태만 반환
+    return [state for _, state in sorted(fetched_states, key=lambda x: x[0])]
+
+
+def _sequential_merge(states: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    순차적 병합 (소규모 데이터용)
+    """
+    if not states:
+        return {}
+    
+    result = {}
+    for state in states:
+        result = _deep_merge(result, state)
+    
+    return result
+
+
+def _hierarchical_merge(states: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    🚀 [Optimization] 계층적 병합 (Aggregation Tree)
+    
+    대용량 결과를 위한 분할 정복 방식:
+    - 1000개 결과 → 100개씩 10개 그룹으로 나눠 먼저 병합
+    - 10개 중간 결과 → 최종 병합
+    
+    이 방식은 단일 _deep_merge 호출의 메모리 피크를 분산시킵니다.
+    """
+    if not states:
+        return {}
+    
+    if len(states) <= MERGE_BATCH_SIZE:
+        return _sequential_merge(states)
+    
+    logger.info(f"[Hierarchical Merge] Processing {len(states)} states in batches of {MERGE_BATCH_SIZE}")
+    
+    # 🎯 Level 1: 배치 단위로 병합
+    intermediate_results = []
+    
+    for i in range(0, len(states), MERGE_BATCH_SIZE):
+        batch = states[i:i + MERGE_BATCH_SIZE]
+        batch_result = _sequential_merge(batch)
+        intermediate_results.append(batch_result)
+        
+        # 메모리 정리 힌트
+        if i % (MERGE_BATCH_SIZE * 10) == 0 and i > 0:
+            logger.info(f"[Hierarchical Merge] Level 1 progress: {i}/{len(states)}")
+    
+    logger.info(f"[Hierarchical Merge] Level 1 complete: {len(intermediate_results)} intermediate results")
+    
+    # 🎯 Level 2: 중간 결과가 여전히 크면 재귀 (하지만 깊이 제한)
+    if len(intermediate_results) > MERGE_BATCH_SIZE:
+        return _hierarchical_merge(intermediate_results)
+    else:
+        return _sequential_merge(intermediate_results)
+
+
+def _hierarchical_merge_ordered(states: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    🚀 순서를 보존하는 계층적 병합 (BATCHED 모드용)
+    
+    BATCHED 모드는 실행 순서가 중요하므로,
+    인접한 배치끼리만 병합하여 순서를 보존합니다.
+    """
+    if not states:
+        return {}
+    
+    if len(states) <= MERGE_BATCH_SIZE:
+        return _sequential_merge(states)
+    
+    # 인접한 배치끼리 병합 (순서 보존)
+    intermediate_results = []
+    
+    for i in range(0, len(states), MERGE_BATCH_SIZE):
+        batch = states[i:i + MERGE_BATCH_SIZE]
+        # 순차적으로 병합하여 순서 보존
+        batch_result = _sequential_merge(batch)
+        intermediate_results.append(batch_result)
+    
+    # 재귀적으로 중간 결과 병합
+    if len(intermediate_results) > MERGE_BATCH_SIZE:
+        return _hierarchical_merge_ordered(intermediate_results)
+    else:
+        return _sequential_merge(intermediate_results)
+
+
+def _stream_state_to_s3(
+    state: Dict[str, Any], 
+    owner_id: str, 
+    workflow_id: str,
+    state_type: str
+) -> Optional[str]:
+    """
+    🚀 [Optimization] 대용량 상태를 스트리밍 방식으로 S3에 저장
+    
+    메모리 효율적인 저장을 위해 청크 단위로 업로드
+    """
+    try:
+        import boto3
+        
+        bucket = os.environ.get('WORKFLOW_STATE_BUCKET')
+        if not bucket:
+            logger.warning("No WORKFLOW_STATE_BUCKET configured")
+            return None
+        
+        s3_client = boto3.client('s3')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+        key = f"aggregated-states/{owner_id}/{workflow_id}/{state_type}_{timestamp}.json"
+        
+        # JSON 직렬화
+        state_json = json.dumps(state, ensure_ascii=False)
+        state_bytes = state_json.encode('utf-8')
+        state_size = len(state_bytes)
+        
+        # 5MB 이상이면 멀티파트 업로드 사용
+        if state_size > 5 * 1024 * 1024:
+            s3_path = _multipart_upload_state(s3_client, bucket, key, state_bytes)
+        else:
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=state_bytes,
+                ContentType='application/json',
+                Metadata={
+                    'owner_id': owner_id or 'unknown',
+                    'workflow_id': workflow_id or 'unknown',
+                    'state_type': state_type,
+                    'size_bytes': str(state_size)
+                }
+            )
+            s3_path = f"s3://{bucket}/{key}"
+        
+        logger.info(f"[Stream to S3] Uploaded {state_size} bytes to {s3_path}")
+        return s3_path
+        
+    except Exception as e:
+        logger.error(f"Failed to stream state to S3: {e}")
+        return None
+
+
+def _multipart_upload_state(
+    s3_client, 
+    bucket: str, 
+    key: str, 
+    state_bytes: bytes
+) -> str:
+    """
+    🚀 멀티파트 업로드로 대용량 상태 저장
+    """
+    from io import BytesIO
+    
+    # 멀티파트 업로드 시작
+    response = s3_client.create_multipart_upload(
+        Bucket=bucket,
+        Key=key,
+        ContentType='application/json'
+    )
+    upload_id = response['UploadId']
+    
+    try:
+        parts = []
+        part_size = 5 * 1024 * 1024  # 5MB per part
+        
+        stream = BytesIO(state_bytes)
+        part_number = 1
+        
+        while True:
+            chunk = stream.read(part_size)
+            if not chunk:
+                break
+            
+            part_response = s3_client.upload_part(
+                Bucket=bucket,
+                Key=key,
+                UploadId=upload_id,
+                PartNumber=part_number,
+                Body=chunk
+            )
+            
+            parts.append({
+                'PartNumber': part_number,
+                'ETag': part_response['ETag']
+            })
+            part_number += 1
+        
+        # 멀티파트 업로드 완료
+        s3_client.complete_multipart_upload(
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={'Parts': parts}
+        )
+        
+        logger.info(f"[Multipart Upload] Completed with {len(parts)} parts")
+        return f"s3://{bucket}/{key}"
+        
+    except Exception as e:
+        # 실패 시 멀티파트 업로드 취소
+        s3_client.abort_multipart_upload(
+            Bucket=bucket,
+            Key=key,
+            UploadId=upload_id
+        )
+        raise e

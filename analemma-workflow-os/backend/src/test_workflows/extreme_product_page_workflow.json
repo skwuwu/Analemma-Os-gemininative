@@ -6,7 +6,7 @@
             "id": "multimodal_init",
             "type": "operator",
             "config": {
-                "code": "print(\"Multimodal complex test initialization\")\nvideo_uri = state.get('video_input_uri', 's3://test-bucket/sample_video.mp4')\nimage_uris = state.get('image_input_uris', [\n    's3://test-bucket/spec_sheet_1.jpg',\n    's3://test-bucket/spec_sheet_2.jpg',\n    's3://test-bucket/spec_sheet_3.jpg'\n])\nstate['multimodal_inputs'] = {\n    'video': video_uri,\n    'images': image_uris,\n    'analysis_modes': ['video_summary', 'spec_extraction', 'feature_comparison']\n}\nstate['multimodal_results'] = []\nprint(f\"Multimodal inputs: 1 video + {len(image_uris)} images\")",
+                "code": "print(\"Multimodal complex test initialization\")\nvideo_uri = state.get('video_input_uri', 's3://test-bucket/sample_video.mp4')\nimage_uris = state.get('image_input_uris', [\n    's3://test-bucket/spec_sheet_1.jpg',\n    's3://test-bucket/spec_sheet_2.jpg',\n    's3://test-bucket/spec_sheet_3.jpg'\n])\nstate['multimodal_inputs'] = {\n    'video': video_uri,\n    'images': image_uris,\n    'analysis_modes': ['video_summary', 'spec_extraction', 'feature_comparison']\n}\nstate['multimodal_results'] = []\nstate['image_uris'] = image_uris\nprint(f\"Multimodal inputs: 1 video + {len(image_uris)} images\")",
                 "output_key": "multimodal_inputs"
             }
         },
@@ -27,22 +27,20 @@
             "id": "image_batch_analysis",
             "type": "for_each",
             "config": {
-                "items_path": "multimodal_inputs.images",
-                "item_key": "current_image",
+                "input_list_key": "image_uris",
+                "output_key": "image_batch_results",
                 "max_iterations": 5,
-                "body_nodes": ["image_processor"]
-            }
-        },
-        {
-            "id": "image_processor",
-            "type": "aiModel",
-            "config": {
-                "model": "gemini-1.5-flash",
-                "max_tokens": 500,
-                "prompt": "이미지에서 제품 스펙을 추출해주세요. 이미지: {current_image}",
-                "temperature": 0.2,
-                "multimodal": true,
-                "vision_enabled": true
+                "sub_node_config": {
+                    "type": "aiModel",
+                    "config": {
+                        "model": "gemini-1.5-flash",
+                        "max_tokens": 500,
+                        "prompt": "이미지에서 제품 스펙을 추출해주세요. 이미지: {item}",
+                        "temperature": 0.2,
+                        "multimodal": true,
+                        "vision_enabled": true
+                    }
+                }
             }
         },
         {
@@ -74,11 +72,6 @@
         },
         {
             "source": "image_batch_analysis",
-            "target": "image_processor",
-            "type": "normal"
-        },
-        {
-            "source": "image_processor",
             "target": "multimodal_aggregator",
             "type": "normal"
         },

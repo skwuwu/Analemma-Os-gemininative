@@ -14,32 +14,30 @@
             "id": "outer_map_processor",
             "type": "for_each",
             "config": {
-                "items_path": "outer_loop_items",
-                "item_key": "outer_item",
+                "input_list_key": "outer_loop_items",
+                "output_key": "outer_map_results",
                 "max_iterations": 5,
-                "body_nodes": ["inner_map_processor"]
-            }
-        },
-        {
-            "id": "inner_map_processor",
-            "type": "operator",
-            "config": {
-                "code": "outer_idx = state.get('outer_item', 0)\ninner_count = state['inner_items_per_outer'][outer_idx]\nstate['current_inner_items'] = list(range(inner_count))\nstate['stress_metrics']['nested_map_count'] += 1\nprint(f\"Processing outer item {outer_idx} with {inner_count} inner items\")",
-                "output_key": "inner_config"
+                "sub_node_config": {
+                    "type": "operator",
+                    "config": {
+                        "code": "outer_idx = state.get('item', 0)\ninner_items_per_outer = state.get('inner_items_per_outer', [2, 3, 2, 3])\ninner_count = inner_items_per_outer[outer_idx] if outer_idx < len(inner_items_per_outer) else 2\nstate['current_inner_items'] = list(range(inner_count))\nstate['outer_idx_processed'] = outer_idx\nstate['nested_map_count'] = state.get('nested_map_count', 0) + 1\nprint(f\"Processing outer item {outer_idx} with {inner_count} inner items\")",
+                        "output_key": "inner_config"
+                    }
+                }
             }
         },
         {
             "id": "hitl_checkpoint",
             "type": "operator",
             "config": {
-                "code": "outer_idx = state.get('outer_item', 0)\nif outer_idx in state.get('multi_hitl_points', []):\n    state['stress_metrics']['hitl_count'] += 1\n    state['hitl_status'] = 'PAUSED_FOR_APPROVAL'\n    print(f\"HITL checkpoint triggered at outer item {outer_idx}\")\nelse:\n    state['hitl_status'] = 'AUTO_APPROVED'\n    print(f\"Auto-approved at outer item {outer_idx}\")"
+                "code": "outer_results = state.get('outer_map_results', [])\\nprocessed_count = len(outer_results)\\nmulti_hitl_points = state.get('multi_hitl_points', [])\\nif processed_count > 0 and (processed_count - 1) in multi_hitl_points:\\n    state['hitl_count'] = state.get('hitl_count', 0) + 1\\n    state['hitl_status'] = 'PAUSED_FOR_APPROVAL'\\n    print(f'HITL checkpoint triggered after processing {processed_count} items')\\nelse:\\n    state['hitl_status'] = 'AUTO_APPROVED'\\n    print(f'Auto-approved after processing {processed_count} items')"
             }
         },
         {
             "id": "stress_validator",
             "type": "operator",
             "config": {
-                "code": "metrics = state.get('stress_metrics', {})\nexpected_nested = state.get('expected_outer_count', 4)\nexpected_hitl = len(state.get('multi_hitl_points', []))\nif metrics.get('nested_map_count', 0) >= expected_nested:\n    state['TEST_RESULT'] = f\"✅ SUCCESS: Nested Map 완료 ({metrics['nested_map_count']} cycles, {metrics['hitl_count']} HITLs)\"\nelse:\n    state['TEST_RESULT'] = f\"❌ FAILURE: Nested Map 불완전 ({metrics['nested_map_count']}/{expected_nested})\"\nprint(f\"Hyper Stress V3 test result: {state['TEST_RESULT']}\")"
+                "code": "outer_results = state.get('outer_map_results', [])\\nnested_map_count = len(outer_results)\\nhitl_count = state.get('hitl_count', 0)\\nexpected_nested = state.get('expected_outer_count', 4)\\nif nested_map_count >= expected_nested:\\n    state['TEST_RESULT'] = f'✅ SUCCESS: Nested Map 완료 ({nested_map_count} cycles, {hitl_count} HITLs)'\\nelse:\\n    state['TEST_RESULT'] = f'❌ FAILURE: Nested Map 불완전 ({nested_map_count}/{expected_nested})'\\nprint(f'Hyper Stress V3 test result: {state[\"TEST_RESULT\"]}')"
             }
         }
     ],
@@ -51,11 +49,6 @@
         },
         {
             "source": "outer_map_processor",
-            "target": "inner_map_processor",
-            "type": "normal"
-        },
-        {
-            "source": "inner_map_processor",
             "target": "hitl_checkpoint",
             "type": "normal"
         },

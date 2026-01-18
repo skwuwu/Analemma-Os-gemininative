@@ -8,7 +8,7 @@
       "id": "data_ingestion",
       "node_name": "Large-scale Data Collection",
       "description": "Collect 50+ RSS feeds or 200+ technical documents (scenario exceeding 256KB)",
-      "type": "llm",
+      "type": "llm_chat",
       "llm_config": {
         "provider": "bedrock",
         "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -28,12 +28,12 @@
       "id": "category_dispatcher",
       "node_name": "Parallel classification by field",
       "description": "Parallel classification of collected data into AI, Cloud, Security, SaaS fields",
-      "type": "map",
+      "type": "for_each",
       "map_config": {
         "items_source": "$.raw_data_collection.categories",
         "max_concurrency": 4,
         "item_processor": {
-          "type": "llm",
+          "type": "llm_chat",
           "llm_config": {
             "provider": "bedrock",
             "model_id": "anthropic.claude-3-5-haiku-20241022-v1:0",
@@ -55,7 +55,7 @@
       "id": "saas_analyzer_with_failure",
       "node_name": "SaaS field analysis (failure injection)",
       "description": "Intentional API error during SaaS category analysis",
-      "type": "llm",
+      "type": "llm_chat",
       "llm_config": {
         "provider": "bedrock",
         "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -82,12 +82,12 @@
       "id": "foreach_article_analysis",
       "node_name": "개별 기사 순차 분석",
       "description": "각 분야 내 개별 기사를 순차적으로 심층 분석",
-      "type": "foreach",
+      "type": "for_each",
       "foreach_config": {
         "items_source": "$.categorized_data.all_articles",
         "max_iterations": 20,
         "item_processor": {
-          "type": "llm",
+          "type": "llm_chat",
           "llm_config": {
             "provider": "bedrock",
             "model_id": "anthropic.claude-3-5-haiku-20241022-v1:0",
@@ -109,7 +109,7 @@
       "id": "low_confidence_filter",
       "node_name": "신뢰도 필터링",
       "description": "신뢰도 60% 미만 항목 감지 및 사용자 승인 요청",
-      "type": "condition",
+      "type": "operator",
       "condition": {
         "expression": "$.detailed_article_analysis.low_confidence_items | length > 0",
         "true_branch": "human_approval_request",
@@ -125,7 +125,7 @@
       "id": "human_approval_request",
       "node_name": "사용자 승인 대기 (HITL)",
       "description": "낮은 신뢰도 항목에 대한 사용자 검토 요청",
-      "type": "human_approval",
+      "type": "operator",
       "approval_config": {
         "timeout_seconds": 3600,
         "fallback_action": "skip_low_confidence",
@@ -143,7 +143,7 @@
       "id": "aggregate_report",
       "node_name": "최종 리포트 집계",
       "description": "모든 분석 결과를 하나의 리포트로 통합",
-      "type": "llm",
+      "type": "llm_chat",
       "llm_config": {
         "provider": "bedrock",
         "model_id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -163,7 +163,7 @@
       "id": "user_correction_processing",
       "node_name": "사용자 수정사항 처리",
       "description": "사용자가 최종 리포트에서 수정한 내용을 반영",
-      "type": "llm",
+      "type": "llm_chat",
       "llm_config": {
         "provider": "bedrock",
         "model_id": "anthropic.claude-3-5-haiku-20241022-v1:0",
@@ -183,7 +183,7 @@
       "id": "cost_calculation",
       "node_name": "비용 정산",
       "description": "전체 워크플로우의 LLM 비용 계산",
-      "type": "function",
+      "type": "operator",
       "function_name": "calculate_workflow_cost",
       "input_variables": ["execution_metadata", "token_usage"],
       "output_key": "cost_detail",

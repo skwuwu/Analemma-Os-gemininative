@@ -2082,7 +2082,7 @@ Resources:
     Properties:
       Name: !Sub "WorkflowOrchestrator-${StageName}"
       DefinitionUri: src/aws_step_functions.json
-      # Force update: 2026-01-09T15:40 - partition_map_s3_path empty string fix
+      # Force update: 2026-01-09T18:00 - Hybrid distributed mode (SAFE/BATCHED/MAP_REDUCE)
       DefinitionSubstitutions:
         InitializeStateDataArn: !GetAtt InitializeStateDataFunction.Arn
         WorkflowEventBusArn: !GetAtt WorkflowEventBus.Arn
@@ -2092,6 +2092,7 @@ Resources:
         StoreTaskTokenArn: !GetAtt StoreTaskTokenFunction.Arn
         MergeCallbackArn: !GetAtt MergeCallbackFunction.Arn
         AsyncLLMHandlerArn: !GetAtt AsyncLLMHandlerFunction.Arn
+        AggregateResultsArn: !GetAtt AggregateDistributedResultsFunction.Arn
         IdempotencyTable: !Ref IdempotencyTableV3
         # Express Workflow removed - using alternative Event History mitigation strategies
       Policies:
@@ -2114,6 +2115,8 @@ Resources:
             FunctionName: !Ref StoreTaskTokenFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref StateDataManagerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AggregateDistributedResultsFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref FinalizerFunction
         - DynamoDBCrudPolicy:
