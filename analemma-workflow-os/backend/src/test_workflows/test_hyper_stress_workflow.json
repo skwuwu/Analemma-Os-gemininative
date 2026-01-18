@@ -30,14 +30,14 @@
             "id": "hitl_checkpoint",
             "type": "operator",
             "config": {
-                "code": "outer_results = state.get('outer_map_results', [])\\nprocessed_count = len(outer_results)\\nmulti_hitl_points = state.get('multi_hitl_points', [])\\nif processed_count > 0 and (processed_count - 1) in multi_hitl_points:\\n    state['hitl_count'] = state.get('hitl_count', 0) + 1\\n    state['hitl_status'] = 'PAUSED_FOR_APPROVAL'\\n    print(f'HITL checkpoint triggered after processing {processed_count} items')\\nelse:\\n    state['hitl_status'] = 'AUTO_APPROVED'\\n    print(f'Auto-approved after processing {processed_count} items')"
+                "code": "outer_results = state.get('outer_map_results', [])\nprocessed_count = len(outer_results)\nmulti_hitl_points = state.get('multi_hitl_points', [])\nif processed_count > 0 and (processed_count - 1) in multi_hitl_points:\n    state['hitl_count'] = state.get('hitl_count', 0) + 1\n    state['hitl_status'] = 'PAUSED_FOR_APPROVAL'\n    print(f'HITL checkpoint triggered after processing {processed_count} items')\nelse:\n    state['hitl_status'] = 'AUTO_APPROVED'\n    print(f'Auto-approved after processing {processed_count} items')"
             }
         },
         {
             "id": "stress_validator",
             "type": "operator",
             "config": {
-                "code": "outer_results = state.get('outer_map_results', [])\\nnested_map_count = len(outer_results)\\nhitl_count = state.get('hitl_count', 0)\\nexpected_nested = state.get('expected_outer_count', 4)\\nif nested_map_count >= expected_nested:\\n    state['TEST_RESULT'] = f'✅ SUCCESS: Nested Map 완료 ({nested_map_count} cycles, {hitl_count} HITLs)'\\nelse:\\n    state['TEST_RESULT'] = f'❌ FAILURE: Nested Map 불완전 ({nested_map_count}/{expected_nested})'\\nprint(f'Hyper Stress V3 test result: {state[\"TEST_RESULT\"]}')"
+                "code": "outer_results = state.get('outer_map_results', [])\nnested_map_count = len(outer_results)\nhitl_count = state.get('hitl_count', 0)\nexpected_nested = state.get('expected_outer_count', 4)\nif nested_map_count >= expected_nested:\n    state['TEST_RESULT'] = f'✅ SUCCESS: Nested Map 완료 ({nested_map_count} cycles, {hitl_count} HITLs)'\nelse:\n    state['TEST_RESULT'] = f'❌ FAILURE: Nested Map 불완전 ({nested_map_count}/{expected_nested})'\nprint(f'Hyper Stress V3 test result: {state[\"TEST_RESULT\"]}')"
             }
         }
     ],

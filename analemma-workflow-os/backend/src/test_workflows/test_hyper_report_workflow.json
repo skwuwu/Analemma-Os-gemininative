@@ -29,23 +29,22 @@
       "node_name": "Parallel classification by field",
       "description": "Parallel classification of collected data into AI, Cloud, Security, SaaS fields",
       "type": "for_each",
-      "map_config": {
-        "items_source": "$.raw_data_collection.categories",
-        "max_concurrency": 4,
-        "item_processor": {
+      "config": {
+        "input_list_key": "categories",
+        "output_key": "categorized_data",
+        "max_iterations": 4,
+        "sub_node_config": {
           "type": "llm_chat",
-          "llm_config": {
+          "config": {
             "provider": "bedrock",
             "model_id": "anthropic.claude-3-5-haiku-20241022-v1:0",
             "temperature": 0.2,
             "max_tokens": 2048,
             "system_prompt": "You are a technical document classification expert. Classify the given article into the correct category.",
-            "user_prompt_template": "Analyze the articles in the following category:\n\nCategory: {{ item.category }}\nArticle list: {{ item.articles | tojson }}\n\nReturn each article's core keywords, importance (1-10), and related technology stack as JSON."
+            "prompt": "Analyze the articles in the following category:\n\nCategory: {item}\n\nReturn each article's core keywords, importance (1-10), and related technology stack as JSON."
           }
         }
       },
-      "input_variables": ["raw_data_collection"],
-      "output_key": "categorized_data",
       "metadata": {
         "test_parallel_execution": true,
         "expected_segments": 4
@@ -83,23 +82,22 @@
       "node_name": "개별 기사 순차 분석",
       "description": "각 분야 내 개별 기사를 순차적으로 심층 분석",
       "type": "for_each",
-      "foreach_config": {
-        "items_source": "$.categorized_data.all_articles",
+      "config": {
+        "input_list_key": "categorized_data",
+        "output_key": "detailed_article_analysis",
         "max_iterations": 20,
-        "item_processor": {
+        "sub_node_config": {
           "type": "llm_chat",
-          "llm_config": {
+          "config": {
             "provider": "bedrock",
             "model_id": "anthropic.claude-3-5-haiku-20241022-v1:0",
             "temperature": 0.3,
             "max_tokens": 1024,
             "system_prompt": "당신은 개별 기술 기사를 심층 분석하는 전문가입니다.",
-            "user_prompt_template": "다음 기사를 분석하세요:\n\n제목: {{ item.title }}\n요약: {{ item.summary }}\n\n핵심 내용, 기술적 의미, 향후 전망을 3문장 이내로 요약하세요."
+            "prompt": "다음 기사를 분석하세요:\n\n항목: {item}\n\n핵심 내용, 기술적 의미, 향후 전망을 3문장 이내로 요약하세요."
           }
         }
       },
-      "input_variables": ["categorized_data"],
-      "output_key": "detailed_article_analysis",
       "metadata": {
         "test_foreach_iteration": true,
         "test_state_preservation": true
