@@ -140,7 +140,8 @@ class SegmentRunnerService:
             initial_state = self.state_manager.download_state_from_s3(state_s3_path)
             
         # 4. Resolve Segment Config
-        workflow_config = event.get('workflow_config')
+        # [Critical Fix] Support both test_workflow_config (E2E tests) and workflow_config
+        workflow_config = event.get('test_workflow_config') or event.get('workflow_config')
         partition_map = event.get('partition_map')
         partition_map_s3_path = event.get('partition_map_s3_path')
         
