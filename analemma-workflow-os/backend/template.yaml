@@ -3517,6 +3517,14 @@ Resources:
             Action:
               - cloudwatch:PutMetricData
             Resource: "*"
+        # [Enhancement] Step Functions execution history access for error handling verification
+        - Statement:
+          - Effect: Allow
+            Action:
+              - states:GetExecutionHistory
+              - states:DescribeExecution
+            Resource: 
+              - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:*"
 
   # 3. Aggregate Report Handler (Metrics & Dashboards)
   SimulatorAggregateReportFunction:

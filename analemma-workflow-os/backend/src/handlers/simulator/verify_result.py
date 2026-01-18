@@ -3,7 +3,7 @@ import json
 import boto3
 import os
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 import logging
 from datetime import datetime
 
@@ -13,6 +13,114 @@ logger.setLevel(logging.INFO)
 # Config
 STATE_BUCKET = os.environ.get('WORKFLOW_STATE_BUCKET')
 METRIC_NAMESPACE = os.environ.get('METRIC_NAMESPACE', 'Analemma/MissionSimulator')
+
+# Step Functions client (lazy init)
+_sfn_client = None
+
+def _get_sfn_client():
+    """Lazy initialization of Step Functions client"""
+    global _sfn_client
+    if _sfn_client is None:
+        _sfn_client = boto3.client('stepfunctions')
+    return _sfn_client
+
+
+def _get_execution_history(execution_arn: str) -> List[Dict[str, Any]]:
+    """
+    Retrieve Step Functions execution history for analysis.
+    Returns list of state events with their details.
+    """
+    if not execution_arn:
+        return []
+    
+    try:
+        sfn = _get_sfn_client()
+        events = []
+        paginator = sfn.get_paginator('get_execution_history')
+        
+        for page in paginator.paginate(executionArn=execution_arn, reverseOrder=False):
+            events.extend(page.get('events', []))
+        
+        logger.info(f"Retrieved {len(events)} execution history events")
+        return events
+    except Exception as e:
+        logger.warning(f"Failed to retrieve execution history: {e}")
+        return []
+
+
+def _analyze_error_handling_flow(execution_arn: str, expected_error_marker: str = "FAIL_TEST") -> Dict[str, Any]:
+    """
+    Analyze Step Functions execution history to verify error handling flow.
+    
+    Checks:
+    1. NotifyExecutionFailure state was entered
+    2. Error info was properly propagated
+    3. EventBridge event was published (putEvents succeeded)
+    4. Workflow ended in WorkflowFailed state
+    
+    Returns:
+        Dict with analysis results
+    """
+    result = {
+        "notify_failure_entered": False,
+        "notify_failure_succeeded": False,
+        "error_info_present": False,
+        "error_message_correct": False,
+        "workflow_failed_state_reached": False,
+        "execution_segment_failed": False,
+        "error_details": None,
+        "states_visited": []
+    }
+    
+    events = _get_execution_history(execution_arn)
+    if not events:
+        result["error_details"] = "Could not retrieve execution history"
+        return result
+    
+    for event in events:
+        event_type = event.get('type', '')
+        
+        # Track state entries
+        if event_type == 'TaskStateEntered':
+            state_name = event.get('stateEnteredEventDetails', {}).get('name', '')
+            result["states_visited"].append(state_name)
+            
+            if state_name == 'NotifyExecutionFailure':
+                result["notify_failure_entered"] = True
+                # Extract input to check error_info
+                try:
+                    input_str = event.get('stateEnteredEventDetails', {}).get('input', '{}')
+                    input_data = json.loads(input_str)
+                    error_info = input_data.get('execution_result', {}).get('error_info', {})
+                    if error_info:
+                        result["error_info_present"] = True
+                        result["error_details"] = error_info
+                        # Check if error message contains expected marker
+                        error_msg = error_info.get('error', '')
+                        if expected_error_marker in error_msg:
+                            result["error_message_correct"] = True
+                except Exception as e:
+                    logger.warning(f"Failed to parse NotifyExecutionFailure input: {e}")
+            
+            elif state_name == 'ExecuteSegment':
+                pass  # Track segment execution
+                
+        # Track state exits
+        elif event_type == 'TaskStateExited':
+            state_name = event.get('stateExitedEventDetails', {}).get('name', '')
+            if state_name == 'NotifyExecutionFailure':
+                result["notify_failure_succeeded"] = True
+        
+        # Track execution failures  
+        elif event_type == 'ExecutionFailed':
+            result["workflow_failed_state_reached"] = True
+        
+        # Track Lambda failures (ExecuteSegment failing)
+        elif event_type == 'LambdaFunctionFailed':
+            result["execution_segment_failed"] = True
+    
+    logger.info(f"Error handling flow analysis: {json.dumps(result, default=str)}")
+    return result
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -84,10 +192,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         output['execution_error'] = error_type
         output['execution_failed'] = True
     
-    logger.info(f"Verifying {scenario} - Status: {status}")
+    # [Enhancement] Extract ExecutionArn for detailed history analysis
+    execution_arn = exec_result.get('ExecutionArn', '')
+    if not execution_arn:
+        # Try extracting from prep_result or other locations
+        execution_arn = event.get('prep_result', {}).get('execution_arn', '')
+    
+    logger.info(f"Verifying {scenario} - Status: {status}, ExecutionArn: {execution_arn[:50]}..." if execution_arn else f"Verifying {scenario} - Status: {status}")
     
     # 1. Perform Verification Logic
-    verification_result = _verify_scenario(scenario, status, output)
+    verification_result = _verify_scenario(scenario, status, output, execution_arn)
     
     # 2. Embellish Result
     verification_result['timestamp'] = datetime.utcnow().isoformat()
@@ -122,7 +236,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         "report_s3_path": report_s3_path
     }
 
-def _verify_scenario(scenario: str, status: str, output: Dict[str, Any]) -> Dict[str, Any]:
+def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], execution_arn: str = "") -> Dict[str, Any]:
     checks = []
     
     # [선처리] LoopLimitExceeded 에러 감지 - 모든 시나리오에서 확인
@@ -199,7 +313,7 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any]) -> Dict
         )
         checks.append(_check("S3 Path Present", has_s3_reference, "Output should contain S3 reference"))
         
-    # D. Error Handling - 의도적 실패 테스트
+    # D. Error Handling - 의도적 실패 테스트 (강화된 검증)
     elif scenario in ['ERROR_HANDLING', 'STANDARD_ERROR_HANDLING']:
         checks.append(_check("Status Failed", status == 'FAILED', expected="FAILED", actual=status))
         
@@ -218,6 +332,61 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any]) -> Dict
             checks.append(_check("Intentional Failure Marker Found", True, details="FAIL_TEST marker detected - test passed"))
         else:
             checks.append(_check("Error Info Present", len(str(error_msg)) > 0))
+        
+        # [Enhanced] Step Functions 실행 히스토리 분석을 통한 에러 핸들링 플로우 검증
+        if execution_arn:
+            flow_analysis = _analyze_error_handling_flow(execution_arn, expected_error_marker="FAIL_TEST")
+            
+            # 1. NotifyExecutionFailure 상태가 진입되었는지 확인
+            checks.append(_check(
+                "NotifyExecutionFailure State Entered",
+                flow_analysis.get("notify_failure_entered", False),
+                details="Error handling state should be reached when workflow fails"
+            ))
+            
+            # 2. NotifyExecutionFailure가 성공적으로 완료되었는지 (EventBridge 이벤트 발행)
+            checks.append(_check(
+                "Error Event Published to EventBridge",
+                flow_analysis.get("notify_failure_succeeded", False),
+                details="EventBridge event should be published with error details"
+            ))
+            
+            # 3. 에러 정보가 올바르게 전파되었는지
+            checks.append(_check(
+                "Error Info Properly Propagated",
+                flow_analysis.get("error_info_present", False),
+                details=f"Error details: {flow_analysis.get('error_details', 'N/A')}"
+            ))
+            
+            # 4. 에러 메시지가 원본과 일치하는지
+            checks.append(_check(
+                "Error Message Contains Expected Marker",
+                flow_analysis.get("error_message_correct", False),
+                details="Error message should contain 'FAIL_TEST' marker from intentional failure"
+            ))
+            
+            # 5. 최종적으로 WorkflowFailed 상태로 종료되었는지
+            checks.append(_check(
+                "Workflow Ended in Failed State",
+                flow_analysis.get("workflow_failed_state_reached", False),
+                details="Execution should end with ExecutionFailed event"
+            ))
+            
+            # 6. 상태 흐름 기록 (디버깅용)
+            states_visited = flow_analysis.get("states_visited", [])
+            if states_visited:
+                checks.append(_check(
+                    "Error Handling Flow Traced",
+                    True,
+                    details=f"States visited: {' -> '.join(states_visited[-5:])}"  # Last 5 states
+                ))
+        else:
+            # ExecutionArn이 없으면 기본 검증만 수행
+            checks.append(_check(
+                "Execution History Analysis",
+                False,
+                details="ExecutionArn not available - detailed flow analysis skipped"
+            ))
 
     # E. Local Runner Scenarios - 자체 검증 결과 활용
     elif scenario in ['API_CONNECTIVITY', 'WEBSOCKET_CONNECT', 'AUTH_FLOW', 'REALTIME_NOTIFICATION',

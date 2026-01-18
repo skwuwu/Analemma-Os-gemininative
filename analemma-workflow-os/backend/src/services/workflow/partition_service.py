@@ -260,6 +260,63 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                     queue.append(target)
         return None
     
+    # --- [Critical Fix] 위상 정렬 헬퍼 ---
+    def _topological_sort_nodes(nodes_map: Dict[str, Any], edges_list: List[Dict]) -> List[Dict[str, Any]]:
+        """
+        세그먼트 내 노드들을 위상 정렬하여 실행 순서대로 반환합니다.
+        
+        DynamicWorkflowBuilder는 nodes[0]을 entry point로 사용하므로,
+        첫 번째 노드가 실제 시작 노드가 되어야 합니다.
+        
+        Args:
+            nodes_map: {node_id: node_config} 매핑
+            edges_list: 세그먼트 내부 엣지 리스트
+            
+        Returns:
+            위상 정렬된 노드 설정 리스트
+        """
+        if len(nodes_map) <= 1:
+            return list(nodes_map.values())
+        
+        # 세그먼트 내 노드 ID 집합
+        node_ids = set(nodes_map.keys())
+        
+        # 인접 리스트 및 진입 차수(in-degree) 계산
+        in_degree = {nid: 0 for nid in node_ids}
+        adj = {nid: [] for nid in node_ids}
+        
+        for edge in edges_list:
+            src = edge.get("source")
+            tgt = edge.get("target")
+            if src in node_ids and tgt in node_ids:
+                adj[src].append(tgt)
+                in_degree[tgt] += 1
+        
+        # Kahn's Algorithm: 진입 차수가 0인 노드부터 시작
+        queue = [nid for nid in node_ids if in_degree[nid] == 0]
+        sorted_ids = []
+        
+        while queue:
+            # 안정적인 순서를 위해 정렬 (알파벳 순)
+            queue.sort()
+            node_id = queue.pop(0)
+            sorted_ids.append(node_id)
+            
+            for neighbor in adj[node_id]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+        
+        # 정렬되지 않은 노드가 있으면 (사이클 또는 연결 안됨) 원래 순서로 추가
+        if len(sorted_ids) < len(node_ids):
+            remaining = [nid for nid in nodes_map.keys() if nid not in sorted_ids]
+            logger.warning(f"Some nodes not topologically sorted, appending in original order: {remaining}")
+            sorted_ids.extend(remaining)
+        
+        result = [nodes_map[nid] for nid in sorted_ids]
+        logger.debug(f"Topological sort result: {[n.get('id') for n in result]}")
+        return result
+    
     # --- Segment 생성 헬퍼 ---
     def create_segment(nodes_map, edges_list, s_type="normal", override_id=None, config=None):
         # 세그먼트 내부 엣지 추가
@@ -271,6 +328,10 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                 if source in nodes_map and target in nodes_map:
                     if edge not in edges_list:  # 중복 방지
                         edges_list.append(edge)
+        
+        # [Critical Fix] 노드 순서를 위상 정렬하여 첫 번째 노드가 실제 시작 노드가 되도록 보장
+        # DynamicWorkflowBuilder는 nodes[0]을 entry point로 사용하므로 순서가 중요함
+        sorted_nodes = _topological_sort_nodes(nodes_map, edges_list)
         
         final_type = s_type
         if s_type == "normal":
@@ -284,10 +345,10 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
             
         return {
             "id": override_id if override_id is not None else seg_id_gen.next(),
-            "nodes": list(nodes_map.values()),
+            "nodes": sorted_nodes,  # [Critical Fix] 위상 정렬된 노드 사용
             "edges": list(edges_list),
             "type": final_type,
-            "node_ids": list(nodes_map.keys())
+            "node_ids": [n["id"] for n in sorted_nodes]  # 정렬된 순서 반영
         }
     
     # --- 재귀적 파티셔닝 로직 ---
