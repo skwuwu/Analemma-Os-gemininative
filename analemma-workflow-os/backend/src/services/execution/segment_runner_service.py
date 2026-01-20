@@ -1542,6 +1542,30 @@ class SegmentRunnerService:
             
             segment_config = self._resolve_segment_config(workflow_config, partition_map, segment_id)
         
+        # 🛡️ [Critical Fix] segment_config이 None이거나 error 타입이면 조기 에러 반환
+        if not segment_config or (isinstance(segment_config, dict) and segment_config.get('type') == 'error'):
+            error_msg = segment_config.get('error', 'segment_config is None') if isinstance(segment_config, dict) else 'segment_config is None'
+            logger.error(f"🚨 [Critical] segment_config resolution failed: {error_msg}")
+            return {
+                "status": "FAILED",
+                "error": error_msg,
+                "error_type": "ConfigurationError",
+                "final_state": initial_state,
+                "final_state_s3_path": None,
+                "next_segment_to_run": None,
+                "new_history_logs": [],
+                "error_info": {
+                    "error": error_msg,
+                    "error_type": "ConfigurationError",
+                    "segment_id": segment_id,
+                    "workflow_config_present": workflow_config is not None,
+                    "partition_map_present": partition_map is not None
+                },
+                "branches": None,
+                "segment_type": "ERROR",
+                "segment_id": segment_id
+            }
+        
         # [Critical Fix] parallel_group 타입 세그먼트는 바로 PARALLEL_GROUP status 반환
         # ASL의 ProcessParallelSegments가 branches를 받아서 Map으로 병렬 실행함
         # 🔀 [Pattern 3] 병렬 스케줄러 적용
@@ -1932,17 +1956,34 @@ class SegmentRunnerService:
         """
         Identical logic to original handler for partitioning.
         """
-        if workflow_config:
-             # Basic full workflow or pre-chunked
-             # If we are strictly running a segment, we might need to simulate partitioning if map is missing
-             # For simplicity, we assume workflow_config IS the segment config if partition_map is missing
-             # OR we call the dynamic partitioner.
-             if not partition_map:
-                 # Fallback to dynamic partitioning logic
-                 parts = _partition_workflow_dynamically(workflow_config) # arbitrary chunks removed
-                 if 0 <= segment_id < len(parts):
-                     return parts[segment_id]
-                 return workflow_config # Fallback
+        # [Critical Fix] workflow_config이 None이면 조기 처리
+        if not workflow_config:
+            logger.error(f"[_resolve_segment_config] ⚠️ workflow_config is None! segment_id={segment_id}")
+            # partition_map에서 직접 찾기 시도
+            if partition_map:
+                if isinstance(partition_map, list) and 0 <= segment_id < len(partition_map):
+                    return partition_map[segment_id]
+                elif isinstance(partition_map, dict) and str(segment_id) in partition_map:
+                    return partition_map[str(segment_id)]
+            # 에러 정보를 포함한 기본 segment_config 반환
+            return {
+                "type": "error",
+                "error": "workflow_config is None",
+                "segment_id": segment_id,
+                "nodes": [],
+                "edges": []
+            }
+        
+        # Basic full workflow or pre-chunked
+        # If we are strictly running a segment, we might need to simulate partitioning if map is missing
+        # For simplicity, we assume workflow_config IS the segment config if partition_map is missing
+        # OR we call the dynamic partitioner.
+        if not partition_map:
+            # Fallback to dynamic partitioning logic
+            parts = _partition_workflow_dynamically(workflow_config) # arbitrary chunks removed
+            if 0 <= segment_id < len(parts):
+                return parts[segment_id]
+            return workflow_config # Fallback
 
         # 🚨 [Critical Fix] partition_map이 list 또는 dict일 수 있음
         if partition_map:
@@ -1955,5 +1996,16 @@ class SegmentRunnerService:
                 if str(segment_id) in partition_map:
                     return partition_map[str(segment_id)]
             
-        # Simplified fallback for readability in pilot
-        return workflow_config
+        # Simplified fallback - workflow_config 또는 에러 상태
+        if workflow_config:
+            return workflow_config
+        
+        # [Critical Fix] 모든 fallback 실패 시 에러 상태 반환 (None 반환 방지)
+        logger.error(f"[_resolve_segment_config] 🚨 All fallbacks failed! segment_id={segment_id}")
+        return {
+            "type": "error",
+            "error": "Failed to resolve segment config - both workflow_config and partition_map are invalid",
+            "segment_id": segment_id,
+            "nodes": [],
+            "edges": []
+        }
