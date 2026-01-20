@@ -131,21 +131,39 @@ LIST_MERGE_KEY_PATTERNS = [
 
 
 class SegmentRunnerService:
-    def __init__(self):
+    def __init__(self, s3_bucket: Optional[str] = None):
         self.state_manager = StateManager()
         self.healer = SelfHealingService()
         self.repo = WorkflowRepository()
         
-        # [Fix] Safe threshold initialization - handle empty string env var
+        # [Perf Optimization] Safe threshold - 180KB for Step Functions with wrapper overhead buffer
+        # 256KB SF limit - ~15KB AWS wrapper overhead = ~175KB safe, using 180KB
+        SF_SAFE_THRESHOLD = 180000
+        
         threshold_str = os.environ.get("STATE_SIZE_THRESHOLD", "")
         if threshold_str and threshold_str.strip():
             try:
                 self.threshold = int(threshold_str.strip())
+                # Warn if threshold is too high
+                if self.threshold > SF_SAFE_THRESHOLD:
+                    logger.warning(f"⚠️ STATE_SIZE_THRESHOLD={self.threshold} exceeds safe limit {SF_SAFE_THRESHOLD}")
             except ValueError:
-                logger.warning(f"⚠️ Invalid STATE_SIZE_THRESHOLD='{threshold_str}', using default 256000")
-                self.threshold = 256000
+                logger.warning(f"⚠️ Invalid STATE_SIZE_THRESHOLD='{threshold_str}', using default {SF_SAFE_THRESHOLD}")
+                self.threshold = SF_SAFE_THRESHOLD
         else:
-            self.threshold = 256000
+            self.threshold = SF_SAFE_THRESHOLD
+        
+        # 🛡️ [v2.5] S3 Bucket - 핸들러에서 주입받거나 환경변수 폴백
+        if s3_bucket and s3_bucket.strip():
+            self.s3_bucket = s3_bucket.strip()
+        else:
+            env_bucket = os.environ.get("S3_BUCKET") or os.environ.get("SKELETON_S3_BUCKET") or ""
+            self.s3_bucket = env_bucket.strip() if env_bucket else ""
+        
+        if not self.s3_bucket:
+            logger.warning("⚠️ [SegmentRunnerService] S3 bucket not configured - large payloads may fail")
+        else:
+            logger.info(f"✅ [SegmentRunnerService] S3 bucket: {self.s3_bucket}, threshold: {self.threshold}")
         
         # 🛡️ [Kernel] S3 Client (Lazy Initialization)
         self._s3_client = None
@@ -1853,7 +1871,15 @@ class SegmentRunnerService:
             }
         
         # 파티션 맵이 있는 경우: 다음 세그먼트 존재 여부 확인
-        total_segments = event.get('total_segments', len(partition_map))
+        # [Fix] total_segments None 체크 - partition_map이 None일 때 len() 에러 방지
+        raw_total_segments = event.get('total_segments')
+        if raw_total_segments is not None:
+            total_segments = int(raw_total_segments)
+        elif partition_map and isinstance(partition_map, list):
+            total_segments = len(partition_map)
+        else:
+            total_segments = 1  # 최소 1개 세그먼트 보장
+        
         next_segment = segment_id + 1
         
         if next_segment >= total_segments:

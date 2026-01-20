@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import boto3
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Set
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,13 @@ PII_REGEX_PATTERNS = {
     'phone_kr': (re.compile(r'0\d{1,2}-\d{3,4}-\d{4}'), '[PHONE_MASKED]'),
     'phone_intl': (re.compile(r'\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}'), '[PHONE_MASKED]'),
     'api_key': (re.compile(r'(?:api[_-]?key|apikey|secret[_-]?key)\s*[:=]\s*["\']?[\w\-]+["\']?', re.IGNORECASE), '[API_KEY_MASKED]'),
+}
+
+# [Perf Optimization] 마스킹 제외 대상 키 (대용량 바이너리/S3 참조 데이터)
+SKIP_MASKING_KEYS: Set[str] = {
+    'large_s3_payload', 's3_path', 's3_url', 'final_state_s3_path',
+    '__s3_reference', 'binary_data', 'file_content', 'image_data',
+    '__kernel_actions',  # 커널 액션은 시스템 데이터로 PII 없음
 }
 
 
@@ -24,16 +31,40 @@ def mask_pii(text: str) -> str:
     return text
 
 
-def mask_pii_in_state(state: Any) -> Any:
-    """상태 객체 내의 모든 문자열에서 PII를 재귀적으로 마스킹"""
+def mask_pii_in_state(state: Any, skip_keys: Set[str] = SKIP_MASKING_KEYS, depth: int = 0, max_depth: int = 50) -> Any:
+    """
+    상태 객체 내의 모든 문자열에서 PII를 재귀적으로 마스킹.
+    
+    [Perf Optimization v2]
+    - skip_keys: 대용량 데이터가 포함된 키는 마스킹 우회
+    - max_depth: 무한 재귀 방지 (기본 50 레벨)
+    - 대용량 문자열(>100KB)은 마스킹 스킵
+    """
+    # 무한 재귀 방지
+    if depth > max_depth:
+        logger.warning("⚠️ PII masking: max depth (%d) reached, returning as-is", max_depth)
+        return state
+    
     if isinstance(state, str):
+        # [Perf] 100KB 이상 문자열은 마스킹 스킵 (성능 최적화)
+        if len(state) > 102400:
+            logger.debug("⚡ Skipping PII masking for large string (%d bytes)", len(state))
+            return state
         return mask_pii(state)
     elif isinstance(state, dict):
-        return {k: mask_pii_in_state(v) for k, v in state.items()}
+        result = {}
+        for k, v in state.items():
+            # [Perf] 대용량 키는 마스킹 우회
+            if k in skip_keys:
+                result[k] = v
+            else:
+                result[k] = mask_pii_in_state(v, skip_keys, depth + 1, max_depth)
+        return result
     elif isinstance(state, list):
-        return [mask_pii_in_state(item) for item in state]
+        return [mask_pii_in_state(item, skip_keys, depth + 1, max_depth) for item in state]
     else:
         return state
+
 
 class StateManager:
     def __init__(self, s3_client=None):
@@ -57,6 +88,7 @@ class StateManager:
     def upload_state_to_s3(self, bucket: str, prefix: str, state: Dict[str, Any], deterministic_filename: Optional[str] = None) -> str:
         """
         Upload state JSON to S3.
+        [Deprecated] Use _upload_raw_bytes_to_s3 for pre-serialized data.
         """
         try:
             import time
@@ -78,6 +110,31 @@ class StateManager:
             logger.error("❌ Failed to upload state to %s: %s", bucket, e)
             raise RuntimeError(f"Failed to upload state to S3: {e}")
 
+    def _upload_raw_bytes_to_s3(self, bucket: str, prefix: str, serialized_bytes: bytes, deterministic_filename: Optional[str] = None) -> str:
+        """
+        [Perf Optimization] Upload pre-serialized bytes directly to S3.
+        Eliminates double serialization overhead.
+        """
+        try:
+            import time
+            import uuid
+            
+            file_name = deterministic_filename if deterministic_filename else f"{int(time.time())}_{uuid.uuid4().hex[:8]}.json"
+            key = f"{prefix}/{file_name}"
+            s3_path = f"s3://{bucket}/{key}"
+            
+            logger.info("⬆️ [Optimized] Uploading pre-serialized bytes to: %s (%d bytes)", s3_path, len(serialized_bytes))
+            self.s3_client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=serialized_bytes,
+                ContentType="application/json"
+            )
+            return s3_path
+        except Exception as e:
+            logger.error("❌ Failed to upload raw bytes to %s: %s", bucket, e)
+            raise RuntimeError(f"Failed to upload raw bytes to S3: {e}")
+
     def handle_state_storage(self, state: Dict[str, Any], auth_user_id: str, workflow_id: str, segment_id: int, bucket: Optional[str], threshold: Optional[int] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
         Decide whether to store state inline or in S3 based on size threshold.
@@ -86,23 +143,30 @@ class StateManager:
         [Critical] Step Functions has a 256KB payload limit. If state exceeds this:
         - With bucket: Upload to S3, return (None, s3_path)
         - Without bucket: Return truncated state with error marker to prevent SF failure
+        
+        [Perf Optimization v2]
+        - Single serialization: 직렬화 결과를 재사용하여 중복 연산 제거
+        - Selective masking: 대용량 키는 마스킹 우회
+        - Safe threshold: 180KB로 하향하여 SF 래퍼 오버헤드 고려
         """
         try:
-            # 🛡️ PII 마스킹 적용 (개인정보 보호)
+            # 🛡️ PII 마스킹 적용 (개인정보 보호) - 대용량 키 우회 적용됨
             masked_state = mask_pii_in_state(state)
             logger.debug("🔒 PII masking applied to state before storage")
             
-            serialized = json.dumps(masked_state, ensure_ascii=False)
-            state_size = len(serialized.encode("utf-8"))
+            # [Perf Optimization] Single Serialization - 직렬화 한 번만 수행
+            serialized_bytes = json.dumps(masked_state, ensure_ascii=False).encode("utf-8")
+            state_size = len(serialized_bytes)
             
-            # Step Functions hard limit: 256KB (262,144 bytes)
-            # Use 250KB as safe threshold to account for wrapper overhead
-            SF_HARD_LIMIT = 250000
+            # [Critical Fix] Step Functions hard limit with safety buffer
+            # 256KB = 262,144 bytes, but AWS wrapper adds ~10-15KB overhead
+            # Using 180KB (180,000 bytes) for safe margin
+            SF_HARD_LIMIT = 180000  # ~175KB safe threshold
             
-            # [Fix] Handle None threshold - default to 256KB (Step Functions limit)
+            # [Fix] Handle None threshold - default to 180KB (safe Step Functions limit)
             if threshold is None:
-                threshold = 256000
-                logger.warning("⚠️ threshold parameter was None, using default 256KB")
+                threshold = 180000
+                logger.warning("⚠️ threshold parameter was None, using default 180KB (safe SF limit)")
             
             if state_size > threshold:
                 if not bucket:
@@ -112,14 +176,14 @@ class StateManager:
                     # [Critical Fix] Instead of returning the full state (which causes SF failure),
                     # return a truncated state with error information
                     if state_size > SF_HARD_LIMIT:
-                        logger.error("🚨 State exceeds Step Functions 256KB limit! Creating safe fallback state.")
+                        logger.error("🚨 State exceeds Step Functions safe limit (180KB)! Creating safe fallback state.")
                         
                         # Create a minimal safe state that won't exceed limits
                         safe_state = {
                             "__state_truncated": True,
                             "__original_size_bytes": state_size,
                             "__original_size_kb": round(state_size / 1024, 2),
-                            "__truncation_reason": "State exceeded 256KB Step Functions limit but no S3 bucket available",
+                            "__truncation_reason": "State exceeded 180KB Step Functions safe limit but no S3 bucket available",
                             "__error": "PAYLOAD_TOO_LARGE_NO_S3_BUCKET",
                             # Preserve essential metadata if present
                             "workflowId": masked_state.get("workflowId") if isinstance(masked_state, dict) else None,
@@ -138,14 +202,15 @@ class StateManager:
                         return safe_state, None
                     else:
                         # State is below SF limit but above our threshold - return with warning
-                        logger.warning("⚠️ State size (%d) exceeds threshold but below SF limit. Returning inline (risky).", state_size)
+                        logger.warning("⚠️ State size (%d) exceeds threshold but below SF safe limit. Returning inline (risky).", state_size)
                         return masked_state, None
 
                 if not auth_user_id:
                     raise PermissionError("Missing authenticated user id for S3 upload")
                 
                 prefix = f"workflow-states/{auth_user_id}/{workflow_id}/segments/{segment_id}"
-                s3_path = self.upload_state_to_s3(bucket, prefix, masked_state, deterministic_filename="output.json")
+                # [Perf Optimization] 이미 직렬화된 바이트를 직접 S3에 업로드 (중복 직렬화 제거)
+                s3_path = self._upload_raw_bytes_to_s3(bucket, prefix, serialized_bytes, deterministic_filename="output.json")
                 logger.info("📦 State uploaded to S3: %s (%d bytes, %.1fKB)", s3_path, state_size, state_size/1024)
                 return None, s3_path
             else:

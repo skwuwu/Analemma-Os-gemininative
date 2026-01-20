@@ -38,8 +38,22 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
         else:
              logger.info("🚀 Segment Runner started. Event: %s", event_str)
         
-        service = SegmentRunnerService()
+        # 🛡️ [v2.5] S3 bucket 강제 동기화 - 핸들러에서 서비스로 전달
+        service = SegmentRunnerService(s3_bucket=_S3_BUCKET)
         result = service.execute_segment(event)
+        
+        # 🛡️ [v2.5] TypeError 방어 코드 - total_segments 보장
+        if result and isinstance(result, dict):
+            total = result.get('total_segments') or event.get('total_segments')
+            if total is None:
+                # 최후의 보루: partition_map 크기 체크 또는 1로 강제
+                p_map = event.get('partition_map', [])
+                result['total_segments'] = len(p_map) if isinstance(p_map, list) and p_map else 1
+                logger.info(f"🛡️ [v2.5] total_segments forced to {result['total_segments']}")
+            
+            # 🛡️ [v2.5] threshold도 result에 포함 (디버깅용)
+            if 'state_size_threshold' not in result:
+                result['state_size_threshold'] = service.threshold
         
         logger.info("✅ Segment Runner finished successfully.")
         return result
