@@ -135,7 +135,17 @@ class SegmentRunnerService:
         self.state_manager = StateManager()
         self.healer = SelfHealingService()
         self.repo = WorkflowRepository()
-        self.threshold = int(os.environ.get("STATE_SIZE_THRESHOLD", 256000))
+        
+        # [Fix] Safe threshold initialization - handle empty string env var
+        threshold_str = os.environ.get("STATE_SIZE_THRESHOLD", "")
+        if threshold_str and threshold_str.strip():
+            try:
+                self.threshold = int(threshold_str.strip())
+            except ValueError:
+                logger.warning(f"⚠️ Invalid STATE_SIZE_THRESHOLD='{threshold_str}', using default 256000")
+                self.threshold = 256000
+        else:
+            self.threshold = 256000
         
         # 🛡️ [Kernel] S3 Client (Lazy Initialization)
         self._s3_client = None

@@ -78,7 +78,7 @@ class StateManager:
             logger.error("❌ Failed to upload state to %s: %s", bucket, e)
             raise RuntimeError(f"Failed to upload state to S3: {e}")
 
-    def handle_state_storage(self, state: Dict[str, Any], auth_user_id: str, workflow_id: str, segment_id: int, bucket: Optional[str], threshold: int) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def handle_state_storage(self, state: Dict[str, Any], auth_user_id: str, workflow_id: str, segment_id: int, bucket: Optional[str], threshold: Optional[int] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
         Decide whether to store state inline or in S3 based on size threshold.
         PII data is masked before storage to ensure privacy compliance.
@@ -98,6 +98,11 @@ class StateManager:
             # Step Functions hard limit: 256KB (262,144 bytes)
             # Use 250KB as safe threshold to account for wrapper overhead
             SF_HARD_LIMIT = 250000
+            
+            # [Fix] Handle None threshold - default to 256KB (Step Functions limit)
+            if threshold is None:
+                threshold = 256000
+                logger.warning("⚠️ threshold parameter was None, using default 256KB")
             
             if state_size > threshold:
                 if not bucket:

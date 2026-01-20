@@ -220,6 +220,7 @@ jobs:
           KINESIS_ARN: ${{ env.KINESIS_STREAM_ARN }}
           LAMBDA_IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/backend-lambda-function:${{ github.sha }}
           IMAGE_REPO_URI: ${{ steps.login-ecr.outputs.registry }}/backend-lambda-function
+          WORKFLOW_STATE_BUCKET: ${{ secrets.WORKFLOW_STATE_BUCKET }}
         run: |
           # AllowedOrigins uses default value from template.yaml (not GitHub Secrets)
           PARAM_OVERRIDES="StageName=${STAGE_NAME} CognitoIssuerUrl=${COGNITO_ISSUER_URL} CognitoAudience=${COGNITO_AUDIENCE} OpenAiApiKey=${OPENAI_API_KEY} AnthropicApiKey=${ANTHROPIC_API_KEY} GoogleApiKey=${GOOGLE_API_KEY}"
@@ -227,6 +228,14 @@ jobs:
           # Inject test user secrets (CI/CD → AWS Secrets Manager)
           if [ -n "${TEST_USER_EMAIL}" ] && [ -n "${TEST_USER_PASSWORD}" ]; then
             PARAM_OVERRIDES="${PARAM_OVERRIDES} TestUserEmail=${TEST_USER_EMAIL} TestUserPassword=${TEST_USER_PASSWORD}"
+          fi
+
+          # [Critical] Specify existing S3 bucket for workflow state to prevent orphan buckets
+          if [ -n "${WORKFLOW_STATE_BUCKET}" ]; then
+            PARAM_OVERRIDES="${PARAM_OVERRIDES} WorkflowStateBucket=${WORKFLOW_STATE_BUCKET}"
+            echo "✅ Using existing S3 bucket for workflow state: ${WORKFLOW_STATE_BUCKET}"
+          else
+            echo "⚠️ WORKFLOW_STATE_BUCKET not set - CloudFormation will auto-create a new bucket"
           fi
 
           if [ -n "${ASYNC_WORKER_ECS_CLUSTER}" ]; then
