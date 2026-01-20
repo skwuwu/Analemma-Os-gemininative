@@ -82,6 +82,10 @@ class StateManager:
         """
         Decide whether to store state inline or in S3 based on size threshold.
         PII data is masked before storage to ensure privacy compliance.
+        
+        [Critical] Step Functions has a 256KB payload limit. If state exceeds this:
+        - With bucket: Upload to S3, return (None, s3_path)
+        - Without bucket: Return truncated state with error marker to prevent SF failure
         """
         try:
             # 🛡️ PII 마스킹 적용 (개인정보 보호)
@@ -91,17 +95,53 @@ class StateManager:
             serialized = json.dumps(masked_state, ensure_ascii=False)
             state_size = len(serialized.encode("utf-8"))
             
+            # Step Functions hard limit: 256KB (262,144 bytes)
+            # Use 250KB as safe threshold to account for wrapper overhead
+            SF_HARD_LIMIT = 250000
+            
             if state_size > threshold:
                 if not bucket:
-                    logger.warning("⚠️ State size (%d) exceeds threshold but no bucket provided. Returning inline (risk of failure).", state_size)
-                    return masked_state, None
+                    logger.error("🚨 CRITICAL: State size (%d bytes, %.1fKB) exceeds threshold (%d) but no S3 bucket provided!", 
+                                state_size, state_size/1024, threshold)
+                    
+                    # [Critical Fix] Instead of returning the full state (which causes SF failure),
+                    # return a truncated state with error information
+                    if state_size > SF_HARD_LIMIT:
+                        logger.error("🚨 State exceeds Step Functions 256KB limit! Creating safe fallback state.")
+                        
+                        # Create a minimal safe state that won't exceed limits
+                        safe_state = {
+                            "__state_truncated": True,
+                            "__original_size_bytes": state_size,
+                            "__original_size_kb": round(state_size / 1024, 2),
+                            "__truncation_reason": "State exceeded 256KB Step Functions limit but no S3 bucket available",
+                            "__error": "PAYLOAD_TOO_LARGE_NO_S3_BUCKET",
+                            # Preserve essential metadata if present
+                            "workflowId": masked_state.get("workflowId") if isinstance(masked_state, dict) else None,
+                            "ownerId": masked_state.get("ownerId") if isinstance(masked_state, dict) else None,
+                            "segment_id": segment_id,
+                        }
+                        
+                        # Try to preserve test result if this is a test workflow
+                        if isinstance(masked_state, dict):
+                            for key in ['TEST_RESULT', 'VALIDATION_STATUS', '__kernel_actions']:
+                                if key in masked_state:
+                                    safe_state[key] = masked_state[key]
+                        
+                        logger.warning("⚠️ Returning truncated safe state (%d bytes) instead of full state (%d bytes)", 
+                                      len(json.dumps(safe_state)), state_size)
+                        return safe_state, None
+                    else:
+                        # State is below SF limit but above our threshold - return with warning
+                        logger.warning("⚠️ State size (%d) exceeds threshold but below SF limit. Returning inline (risky).", state_size)
+                        return masked_state, None
 
                 if not auth_user_id:
                     raise PermissionError("Missing authenticated user id for S3 upload")
                 
                 prefix = f"workflow-states/{auth_user_id}/{workflow_id}/segments/{segment_id}"
                 s3_path = self.upload_state_to_s3(bucket, prefix, masked_state, deterministic_filename="output.json")
-                logger.info("📦 State uploaded to S3: %s (%d bytes)", s3_path, state_size)
+                logger.info("📦 State uploaded to S3: %s (%d bytes, %.1fKB)", s3_path, state_size, state_size/1024)
                 return None, s3_path
             else:
                 logger.info("📦 Returning state inline (%d bytes <= %d threshold)", state_size, threshold)

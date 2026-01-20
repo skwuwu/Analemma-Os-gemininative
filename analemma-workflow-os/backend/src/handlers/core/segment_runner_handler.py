@@ -9,6 +9,17 @@ from src.services.execution.segment_runner_service import SegmentRunnerService
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+# 🚨 [Critical] Validate S3 bucket at module load time (Cold Start)
+_S3_BUCKET = os.environ.get("S3_BUCKET") or os.environ.get("SKELETON_S3_BUCKET") or ""
+_S3_BUCKET = _S3_BUCKET.strip() if _S3_BUCKET else ""
+if not _S3_BUCKET:
+    logger.error("🚨 [CRITICAL CONFIG ERROR] S3_BUCKET or SKELETON_S3_BUCKET environment variable is NOT SET! "
+                f"S3_BUCKET='{os.environ.get('S3_BUCKET')}', "
+                f"SKELETON_S3_BUCKET='{os.environ.get('SKELETON_S3_BUCKET')}'. "
+                "Payloads exceeding 256KB will cause Step Functions failures.")
+else:
+    logger.info(f"✅ S3 bucket configured for state offloading: {_S3_BUCKET}")
+
 def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]:
     """
     Entry point for Segment Executions.

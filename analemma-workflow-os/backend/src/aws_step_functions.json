@@ -1343,9 +1343,9 @@
               "notification_type": "execution_progress",
               "status": "FAILED",
               "message": "Workflow execution failed",
-              "ownerId.$": "$$.Execution.Input.state_data.ownerId",
-              "userId.$": "$$.Execution.Input.state_data.ownerId",
-              "workflowId.$": "$$.Execution.Input.state_data.workflowId",
+              "ownerId.$": "$$.Execution.Input.ownerId",
+              "userId.$": "$$.Execution.Input.ownerId",
+              "workflowId.$": "$$.Execution.Input.workflowId",
               "error.$": "States.JsonToString($)"
             }
           }

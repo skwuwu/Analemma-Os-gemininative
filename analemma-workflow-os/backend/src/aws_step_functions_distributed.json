@@ -289,6 +289,10 @@
     "ExecuteDistributedSegments": {
       "Type": "Map",
       "Comment": "[Critical Fix] Distributed Map - 상태 연속성 및 ASL 규격 준수",
+      "ItemSelector": {
+        "chunk_item.$": "$$.Map.Item.Value",
+        "state_data.$": "$.state_data"
+      },
       "ItemProcessor": {
         "ProcessorConfig": {
           "Mode": "DISTRIBUTED",
@@ -303,10 +307,10 @@
             "Parameters": {
               "FunctionName": "${LoadLatestStateArn}",
               "Payload": {
-                "chunk_data.$": "$",
-                "execution_id.$": "$$.Execution.Input.state_data.idempotency_key",
-                "owner_id.$": "$$.Execution.Input.state_data.ownerId",
-                "workflow_id.$": "$$.Execution.Input.state_data.workflowId",
+                "chunk_data.$": "$.chunk_item",
+                "execution_id.$": "$.state_data.idempotency_key",
+                "owner_id.$": "$.state_data.ownerId",
+                "workflow_id.$": "$.state_data.workflowId",
                 "state_bucket": "${WorkflowStateBucket}"
               }
             },
@@ -325,27 +329,27 @@
             "Parameters": {
               "FunctionName": "${ProcessSegmentChunkArn}",
               "Payload": {
-                "chunk_data.$": "$",
+                "chunk_data.$": "$.chunk_item",
                 "previous_state.$": "$.state_continuity.previous_state",
-                "workflow_config.$": "$$.Execution.Input.state_data.workflow_config",
-                "owner_id.$": "$$.Execution.Input.state_data.ownerId",
-                "workflowId.$": "$$.Execution.Input.state_data.workflowId",
-                "execution_id.$": "$$.Execution.Input.state_data.idempotency_key",
-                "parent_idempotency_key.$": "$$.Execution.Input.state_data.idempotency_key",
+                "workflow_config.$": "$.state_data.workflow_config",
+                "owner_id.$": "$.state_data.ownerId",
+                "workflowId.$": "$.state_data.workflowId",
+                "execution_id.$": "$.state_data.idempotency_key",
+                "parent_idempotency_key.$": "$.state_data.idempotency_key",
                 "state_bucket": "${WorkflowStateBucket}",
-                "max_concurrency.$": "$$.Execution.Input.state_data.max_concurrency",
-                "partition_map_s3_path.$": "$$.Execution.Input.state_data.partition_map_s3_path",
-                "segment_manifest_s3_path.$": "$$.Execution.Input.state_data.segment_manifest_s3_path",
-                "distributed_mode.$": "$$.Execution.Input.state_data.distributed_mode",
-                "loop_counter.$": "$$.Execution.Input.state_data.loop_counter",
-                "max_loop_iterations.$": "$$.Execution.Input.state_data.max_loop_iterations",
-                "max_branch_iterations.$": "$$.Execution.Input.state_data.max_branch_iterations",
-                "llm_segments.$": "$$.Execution.Input.state_data.llm_segments",
-                "hitp_segments.$": "$$.Execution.Input.state_data.hitp_segments",
-                "quota_reservation_id.$": "$$.Execution.Input.state_data.quota_reservation_id",
-                "state_durations.$": "$$.Execution.Input.state_data.state_durations",
-                "last_update_time.$": "$$.Execution.Input.state_data.last_update_time",
-                "start_time.$": "$$.Execution.Input.state_data.start_time"
+                "max_concurrency.$": "$.state_data.max_concurrency",
+                "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
+                "segment_manifest_s3_path.$": "$.state_data.segment_manifest_s3_path",
+                "distributed_mode.$": "$.state_data.distributed_mode",
+                "loop_counter.$": "$.state_data.loop_counter",
+                "max_loop_iterations.$": "$.state_data.max_loop_iterations",
+                "max_branch_iterations.$": "$.state_data.max_branch_iterations",
+                "llm_segments.$": "$.state_data.llm_segments",
+                "hitp_segments.$": "$.state_data.hitp_segments",
+                "quota_reservation_id.$": "$.state_data.quota_reservation_id",
+                "state_durations.$": "$.state_data.state_durations",
+                "last_update_time.$": "$.state_data.last_update_time",
+                "start_time.$": "$.state_data.start_time"
               }
             },
             "ResultSelector": {
@@ -366,9 +370,9 @@
               "Payload": {
                 "chunk_id.$": "$.processing_result.chunk_id",
                 "final_state.$": "$.processing_result.final_state",
-                "execution_id.$": "$$.Execution.Input.state_data.idempotency_key",
-                "owner_id.$": "$$.Execution.Input.state_data.ownerId",
-                "workflow_id.$": "$$.Execution.Input.state_data.workflowId",
+                "execution_id.$": "$.state_data.idempotency_key",
+                "owner_id.$": "$.state_data.ownerId",
+                "workflow_id.$": "$.state_data.workflowId",
                 "state_bucket": "${WorkflowStateBucket}"
               }
             },
@@ -398,7 +402,7 @@
                 "chunk_result.$": "$.processing_result.chunk_result",
                 "distributed_context": {
                   "is_child_execution": true,
-                  "parent_execution_id.$": "$$.Execution.Input.state_data.idempotency_key",
+                  "parent_execution_id.$": "$.state_data.idempotency_key",
                   "chunk_id.$": "$.processing_result.chunk_id",
                   "paused_segment_id.$": "$.processing_result.paused_segment_id"
                 }
@@ -416,25 +420,25 @@
               "Payload": {
                 "chunk_result.$": "$.processing_result.chunk_result",
                 "callback_result.$": "$.callback_result",
-                "chunk_data.$": "$",
+                "chunk_data.$": "$.chunk_item",
                 "paused_segment_id.$": "$.processing_result.paused_segment_id",
-                "execution_id.$": "$$.Execution.Input.state_data.idempotency_key",
-                "owner_id.$": "$$.Execution.Input.state_data.ownerId",
-                "workflow_id.$": "$$.Execution.Input.state_data.workflowId",
-                "workflow_config.$": "$$.Execution.Input.state_data.workflow_config",
+                "execution_id.$": "$.state_data.idempotency_key",
+                "owner_id.$": "$.state_data.ownerId",
+                "workflow_id.$": "$.state_data.workflowId",
+                "workflow_config.$": "$.state_data.workflow_config",
                 "state_bucket": "${WorkflowStateBucket}",
-                "partition_map_s3_path.$": "$$.Execution.Input.state_data.partition_map_s3_path",
-                "segment_manifest_s3_path.$": "$$.Execution.Input.state_data.segment_manifest_s3_path",
-                "distributed_mode.$": "$$.Execution.Input.state_data.distributed_mode",
-                "loop_counter.$": "$$.Execution.Input.state_data.loop_counter",
-                "max_loop_iterations.$": "$$.Execution.Input.state_data.max_loop_iterations",
-                "max_branch_iterations.$": "$$.Execution.Input.state_data.max_branch_iterations",
-                "llm_segments.$": "$$.Execution.Input.state_data.llm_segments",
-                "hitp_segments.$": "$$.Execution.Input.state_data.hitp_segments",
-                "quota_reservation_id.$": "$$.Execution.Input.state_data.quota_reservation_id",
-                "state_durations.$": "$$.Execution.Input.state_data.state_durations",
-                "last_update_time.$": "$$.Execution.Input.state_data.last_update_time",
-                "start_time.$": "$$.Execution.Input.state_data.start_time"
+                "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
+                "segment_manifest_s3_path.$": "$.state_data.segment_manifest_s3_path",
+                "distributed_mode.$": "$.state_data.distributed_mode",
+                "loop_counter.$": "$.state_data.loop_counter",
+                "max_loop_iterations.$": "$.state_data.max_loop_iterations",
+                "max_branch_iterations.$": "$.state_data.max_branch_iterations",
+                "llm_segments.$": "$.state_data.llm_segments",
+                "hitp_segments.$": "$.state_data.hitp_segments",
+                "quota_reservation_id.$": "$.state_data.quota_reservation_id",
+                "state_durations.$": "$.state_data.state_durations",
+                "last_update_time.$": "$.state_data.last_update_time",
+                "start_time.$": "$.state_data.start_time"
               }
             },
             "ResultSelector": {
@@ -455,9 +459,9 @@
               "Payload": {
                 "chunk_id.$": "$.resume_result.chunk_id",
                 "final_state.$": "$.resume_result.final_state",
-                "execution_id.$": "$$.Execution.Input.state_data.idempotency_key",
-                "owner_id.$": "$$.Execution.Input.state_data.ownerId",
-                "workflow_id.$": "$$.Execution.Input.state_data.workflowId",
+                "execution_id.$": "$.state_data.idempotency_key",
+                "owner_id.$": "$.state_data.ownerId",
+                "workflow_id.$": "$.state_data.workflowId",
                 "state_bucket": "${WorkflowStateBucket}",
                 "is_resumed": true
               }
@@ -670,6 +674,10 @@
     "ProcessParallelSegmentsDistributed": {
       "Type": "Map",
       "Comment": "병렬 세그먼트도 Distributed Map으로 처리",
+      "ItemSelector": {
+        "branch_item.$": "$$.Map.Item.Value",
+        "state_data.$": "$.state_data"
+      },
       "ItemProcessor": {
         "ProcessorConfig": {
           "Mode": "DISTRIBUTED",
@@ -683,26 +691,26 @@
             "Parameters": {
               "FunctionName": "${ExecuteBranchArn}",
               "Payload": {
-                "branch_config.$": "$",
-                "workflow_config.$": "$$.Execution.Input.state_data.workflow_config",
-                "owner_id.$": "$$.Execution.Input.state_data.ownerId",
-                "workflowId.$": "$$.Execution.Input.state_data.workflowId",
-                "idempotency_key.$": "$$.Execution.Input.state_data.idempotency_key",
-                "quota_reservation_id.$": "$$.Execution.Input.state_data.quota_reservation_id",
-                "partition_map.$": "$$.Execution.Input.state_data.partition_map",
-                "partition_map_s3_path.$": "$$.Execution.Input.state_data.partition_map_s3_path",
-                "segment_manifest.$": "$$.Execution.Input.state_data.segment_manifest",
-                "segment_manifest_s3_path.$": "$$.Execution.Input.state_data.segment_manifest_s3_path",
-                "max_concurrency.$": "$$.Execution.Input.state_data.max_concurrency",
-                "distributed_mode.$": "$$.Execution.Input.state_data.distributed_mode",
-                "loop_counter.$": "$$.Execution.Input.state_data.loop_counter",
-                "max_loop_iterations.$": "$$.Execution.Input.state_data.max_loop_iterations",
-                "max_branch_iterations.$": "$$.Execution.Input.state_data.max_branch_iterations",
-                "llm_segments.$": "$$.Execution.Input.state_data.llm_segments",
-                "hitp_segments.$": "$$.Execution.Input.state_data.hitp_segments",
-                "state_durations.$": "$$.Execution.Input.state_data.state_durations",
-                "last_update_time.$": "$$.Execution.Input.state_data.last_update_time",
-                "start_time.$": "$$.Execution.Input.state_data.start_time"
+                "branch_config.$": "$.branch_item",
+                "workflow_config.$": "$.state_data.workflow_config",
+                "owner_id.$": "$.state_data.ownerId",
+                "workflowId.$": "$.state_data.workflowId",
+                "idempotency_key.$": "$.state_data.idempotency_key",
+                "quota_reservation_id.$": "$.state_data.quota_reservation_id",
+                "partition_map.$": "$.state_data.partition_map",
+                "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
+                "segment_manifest.$": "$.state_data.segment_manifest",
+                "segment_manifest_s3_path.$": "$.state_data.segment_manifest_s3_path",
+                "max_concurrency.$": "$.state_data.max_concurrency",
+                "distributed_mode.$": "$.state_data.distributed_mode",
+                "loop_counter.$": "$.state_data.loop_counter",
+                "max_loop_iterations.$": "$.state_data.max_loop_iterations",
+                "max_branch_iterations.$": "$.state_data.max_branch_iterations",
+                "llm_segments.$": "$.state_data.llm_segments",
+                "hitp_segments.$": "$.state_data.hitp_segments",
+                "state_durations.$": "$.state_data.state_durations",
+                "last_update_time.$": "$.state_data.last_update_time",
+                "start_time.$": "$.state_data.start_time"
               }
             },
             "End": true
@@ -998,8 +1006,8 @@
             "DetailType": "WorkflowLifecycleEvent",
             "Detail": {
               "execution_id.$": "$$.Execution.Id",
-              "ownerId.$": "$$.Execution.Input.state_data.ownerId",
-              "workflowId.$": "$$.Execution.Input.state_data.workflowId",
+              "ownerId.$": "$$.Execution.Input.ownerId",
+              "workflowId.$": "$$.Execution.Input.workflowId",
               "status": "FAILED",
               "notification_type": "execution_progress",
               "message": "Workflow execution failed",

@@ -1031,7 +1031,11 @@ class SegmentRunnerService:
             aggregated_state['__branch_errors'] = branch_errors
         
         # 3. 상태 저장 (S3 오프로딩 포함)
-        s3_bucket = os.environ.get("S3_BUCKET") or os.environ.get("SKELETON_S3_BUCKET")
+        s3_bucket_raw = os.environ.get("S3_BUCKET") or os.environ.get("SKELETON_S3_BUCKET") or ""
+        s3_bucket = s3_bucket_raw.strip() if s3_bucket_raw else None
+        
+        if not s3_bucket:
+            logger.error("🚨 [CRITICAL] S3_BUCKET/SKELETON_S3_BUCKET not set for aggregation!")
         
         final_state, output_s3_path = self.state_manager.handle_state_storage(
             state=aggregated_state,
@@ -1436,7 +1440,18 @@ class SegmentRunnerService:
         workflow_id = event.get('workflowId') or event.get('workflow_id')
         # 🚀 [Hybrid Mode] Support both segment_id (hybrid) and segment_to_run (legacy)
         segment_id = event.get('segment_id') or event.get('segment_to_run', 0)
-        s3_bucket = os.environ.get("S3_BUCKET") or os.environ.get("SKELETON_S3_BUCKET")
+        
+        # [Critical Fix] S3 bucket for large payload offloading - ensure non-empty string
+        s3_bucket_raw = os.environ.get("S3_BUCKET") or os.environ.get("SKELETON_S3_BUCKET") or ""
+        s3_bucket = s3_bucket_raw.strip() if s3_bucket_raw else None
+        
+        if not s3_bucket:
+            logger.error("🚨 [CRITICAL] S3_BUCKET/SKELETON_S3_BUCKET environment variable is NOT SET or EMPTY! "
+                        f"S3_BUCKET='{os.environ.get('S3_BUCKET')}', "
+                        f"SKELETON_S3_BUCKET='{os.environ.get('SKELETON_S3_BUCKET')}'. "
+                        "Large payloads (>256KB) will FAIL.")
+        else:
+            logger.debug(f"S3 bucket for state offloading: {s3_bucket}")
         
         # 3. Load State (Inline or S3)
         # [Critical Fix] Step Functions passes state as 'current_state', not 'state'
@@ -1773,6 +1788,16 @@ class SegmentRunnerService:
                 )
         
         # 8. Handle Output State Storage
+        # [Critical] Pre-check result_state size before S3 offload decision
+        import json
+        result_state_size = len(json.dumps(result_state, ensure_ascii=False).encode('utf-8')) if result_state else 0
+        logger.info(f"[Large Payload Check] result_state size: {result_state_size} bytes ({result_state_size/1024:.1f}KB), "
+                   f"s3_bucket: {'SET' if s3_bucket else 'NOT SET'}, threshold: {self.threshold}")
+        
+        if result_state_size > 250000:  # 250KB - Step Functions limit is 256KB
+            logger.warning(f"🚨 [Large Payload Warning] result_state exceeds 250KB! "
+                          f"Size: {result_state_size/1024:.1f}KB. S3 offload REQUIRED.")
+        
         final_state, output_s3_path = self.state_manager.handle_state_storage(
             state=result_state,
             auth_user_id=auth_user_id,
@@ -1781,6 +1806,11 @@ class SegmentRunnerService:
             bucket=s3_bucket,
             threshold=self.threshold
         )
+        
+        # [Critical] Log the actual return payload size
+        return_payload_size = len(json.dumps(final_state, ensure_ascii=False).encode('utf-8')) if final_state else 0
+        logger.info(f"[Large Payload Check] After S3 offload - final_state size: {return_payload_size} bytes ({return_payload_size/1024:.1f}KB), "
+                   f"s3_path: {output_s3_path or 'None'}")
         
         # Extract history logs from result_state if available
         new_history_logs = result_state.get('__new_history_logs', []) if isinstance(result_state, dict) else []
