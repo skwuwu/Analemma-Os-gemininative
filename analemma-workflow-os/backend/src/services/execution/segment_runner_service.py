@@ -1078,7 +1078,14 @@ class SegmentRunnerService:
         # aggregator 다음은 일반적으로 워크플로우 완료이지만,
         # partition_map에서 next_segment를 확인
         partition_map = event.get('partition_map', [])
-        total_segments = event.get('total_segments', len(partition_map) if partition_map else 1)
+        # [Fix] total_segments None 체크 - partition_map이 None일 때 len() 에러 방지
+        raw_total_segments = event.get('total_segments')
+        if raw_total_segments is not None:
+            total_segments = int(raw_total_segments)
+        elif partition_map and isinstance(partition_map, list):
+            total_segments = len(partition_map)
+        else:
+            total_segments = 1  # 최소 1개 세그먼트 보장
         next_segment = segment_to_run + 1
         
         # 완료 여부 판단
@@ -1775,7 +1782,13 @@ class SegmentRunnerService:
                 threshold=self.threshold
             )
             
-            total_segments = event.get('total_segments', 1)
+            # [Fix] total_segments None 체크 - 부분 실패 경로에서도 안전하게 처리
+            raw_total = event.get('total_segments')
+            if raw_total is not None:
+                total_segments = int(raw_total)
+            else:
+                partition_map = event.get('partition_map', [])
+                total_segments = len(partition_map) if partition_map and isinstance(partition_map, list) else 1
             next_segment = segment_id + 1
             
             return {

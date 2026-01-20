@@ -752,6 +752,7 @@ Resources:
               - dynamodb:UpdateItem
               - dynamodb:Query
               - dynamodb:Scan
+              - dynamodb:DescribeTable
             Resource:
               - !GetAtt WorkflowsTableV3.Arn
               - !GetAtt TaskTokensTableV3.Arn
@@ -3724,6 +3725,11 @@ Resources:
         # S3 권한 (테스트 데이터 읽기/쓰기/삭제)
         - S3CrudPolicy:
             BucketName: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+        # [Fix] DynamoDB DescribeTable 권한 추가 (Guardrail 검증용)
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExecutionsTableV3
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkflowsTableV3
   # 4b. Cleanup Service (Explicit Data Debt Removal)
   CleanupServiceFunction:
     Type: AWS::Serverless::Function

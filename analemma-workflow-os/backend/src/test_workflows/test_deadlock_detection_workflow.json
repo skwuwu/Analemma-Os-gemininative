@@ -7,7 +7,7 @@
   "nodes": [
     {
       "id": "setup_deadlock_scenario",
-      "type": "code",
+      "type": "operator",
       "label": "교착 상태 시나리오 설정",
       "config": {
         "language": "python",
@@ -40,7 +40,7 @@
           "nodes": [
             {
               "id": "alpha_acquire_A",
-              "type": "code",
+              "type": "operator",
               "config": {
                 "language": "python",
                 "code": "import time\n\nprint('[Agent Alpha] Acquiring Resource A...')\n\nresources = state.get('resources', {})\nres_a = resources.get('resource_A', {})\n\n# Alpha가 Resource A를 점유\nif res_a.get('owner') is None:\n    res_a['owner'] = 'alpha'\n    state['alpha_holds_A'] = True\n    state['alpha_acquired_A_at'] = time.time()\n    print('[Agent Alpha] ✓ Acquired Resource A')\nelse:\n    res_a['waiters'].append('alpha')\n    state['alpha_holds_A'] = False\n    print(f'[Agent Alpha] Resource A occupied by {res_a[\"owner\"]}, waiting...')\n\nstate['resources'] = resources"
@@ -48,7 +48,7 @@
             },
             {
               "id": "alpha_request_B",
-              "type": "code",
+              "type": "operator",
               "config": {
                 "language": "python",
                 "code": "import time\n\nprint('[Agent Alpha] Requesting Resource B (while holding A)...')\n\nresources = state.get('resources', {})\nres_b = resources.get('resource_B', {})\n\n# Alpha가 A를 들고 B를 요청 → Deadlock 조건 1\nif res_b.get('owner') is None:\n    res_b['owner'] = 'alpha'\n    state['alpha_holds_B'] = True\n    print('[Agent Alpha] ✓ Acquired Resource B')\nelif res_b.get('owner') == 'beta':\n    # Beta가 B를 들고 있음 → 순환 대기 감지\n    res_b['waiters'].append('alpha')\n    state['alpha_waiting_for_B'] = True\n    state['circular_wait_detected'] = True\n    state['deadlock_condition'] = {\n        'alpha': {'holds': 'A', 'waits_for': 'B'},\n        'beta': {'holds': 'B', 'waits_for': 'A'},\n        'cycle': 'Alpha→B→Beta→A→Alpha'\n    }\n    print('[Agent Alpha] ⚠ CIRCULAR WAIT: Beta holds B, Alpha waits')\nelse:\n    res_b['waiters'].append('alpha')\n    state['alpha_waiting_for_B'] = True\n\nstate['resources'] = resources"
@@ -65,7 +65,7 @@
           "nodes": [
             {
               "id": "beta_acquire_B",
-              "type": "code",
+              "type": "operator",
               "config": {
                 "language": "python",
                 "code": "import time\n\nprint('[Agent Beta] Acquiring Resource B...')\n\nresources = state.get('resources', {})\nres_b = resources.get('resource_B', {})\n\n# Beta가 Resource B를 점유\nif res_b.get('owner') is None:\n    res_b['owner'] = 'beta'\n    state['beta_holds_B'] = True\n    state['beta_acquired_B_at'] = time.time()\n    print('[Agent Beta] ✓ Acquired Resource B')\nelse:\n    res_b['waiters'].append('beta')\n    state['beta_holds_B'] = False\n    print(f'[Agent Beta] Resource B occupied by {res_b[\"owner\"]}, waiting...')\n\nstate['resources'] = resources"
@@ -73,7 +73,7 @@
             },
             {
               "id": "beta_request_A",
-              "type": "code",
+              "type": "operator",
               "config": {
                 "language": "python",
                 "code": "import time\n\nprint('[Agent Beta] Requesting Resource A (while holding B)...')\n\nresources = state.get('resources', {})\nres_a = resources.get('resource_A', {})\n\n# Beta가 B를 들고 A를 요청 → Deadlock 조건 2\nif res_a.get('owner') is None:\n    res_a['owner'] = 'beta'\n    state['beta_holds_A'] = True\n    print('[Agent Beta] ✓ Acquired Resource A')\nelif res_a.get('owner') == 'alpha':\n    # Alpha가 A를 들고 있음 → 순환 대기 감지\n    res_a['waiters'].append('beta')\n    state['beta_waiting_for_A'] = True\n    state['circular_wait_detected'] = True\n    state['deadlock_condition'] = {\n        'alpha': {'holds': 'A', 'waits_for': 'B'},\n        'beta': {'holds': 'B', 'waits_for': 'A'},\n        'cycle': 'Alpha→B→Beta→A→Alpha'\n    }\n    print('[Agent Beta] ⚠ CIRCULAR WAIT: Alpha holds A, Beta waits')\nelse:\n    res_a['waiters'].append('beta')\n    state['beta_waiting_for_A'] = True\n\nstate['resources'] = resources"
@@ -88,7 +88,7 @@
     },
     {
       "id": "deadlock_resolver",
-      "type": "code",
+      "type": "operator",
       "label": "[Kernel] 교착 상태 해제기",
       "config": {
         "language": "python",
@@ -97,7 +97,7 @@
     },
     {
       "id": "recursive_memory_cascade_test",
-      "type": "code",
+      "type": "operator",
       "label": "[Critical] 재귀 + 메모리 폭증 테스트",
       "config": {
         "language": "python",
@@ -117,7 +117,7 @@
     },
     {
       "id": "deadlock_validator",
-      "type": "code",
+      "type": "operator",
       "label": "교착 상태 종합 검증",
       "config": {
         "language": "python",

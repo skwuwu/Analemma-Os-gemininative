@@ -7,7 +7,7 @@
   "nodes": [
     {
       "id": "setup",
-      "type": "code",
+      "type": "operator",
       "label": "테스트 설정",
       "config": {
         "language": "python",
@@ -76,7 +76,7 @@
           "nodes": [
             {
               "id": "calc_code",
-              "type": "code",
+              "type": "operator",
               "config": {
                 "language": "python",
                 "code": "state['calc_result'] = sum(range(1000))"
@@ -89,7 +89,7 @@
     },
     {
       "id": "verify",
-      "type": "code",
+      "type": "operator",
       "label": "[Critical] 배치 분할 검증",
       "config": {
         "language": "python",

@@ -7,7 +7,7 @@
   "nodes": [
     {
       "id": "setup_memory_test",
-      "type": "code",
+      "type": "operator",
       "label": "메모리 테스트 초기화",
       "config": {
         "language": "python",
@@ -26,7 +26,7 @@
           "nodes": [
             {
               "id": "add_conversation",
-              "type": "code",
+              "type": "operator",
               "config": {
                 "language": "python",
                 "code": "import json\n\n# 대화 이력 누적 (메모리 누수 시뮬레이션)\nhistory = state.get('conversation_history', [])\niteration = len(history)\n\n# 점점 커지는 메시지 추가\nnew_message = {\n    'iteration': iteration,\n    'user': f'User message {iteration} ' * (iteration + 1),\n    'assistant': f'Assistant response {iteration} with detailed explanation ' * (iteration + 1),\n    'metadata': {'timestamp': iteration, 'tokens': iteration * 100}\n}\n\nhistory.append(new_message)\nstate['conversation_history'] = history\nstate['current_history_size'] = len(json.dumps(history))"
@@ -39,7 +39,7 @@
     },
     {
       "id": "check_state_size",
-      "type": "code",
+      "type": "operator",
       "label": "상태 크기 검사 및 정리",
       "config": {
         "language": "python",
@@ -48,7 +48,7 @@
     },
     {
       "id": "simulate_s3_temp_files",
-      "type": "code",
+      "type": "operator",
       "label": "임시 S3 파일 생성 시뮬레이션",
       "config": {
         "language": "python",
@@ -57,7 +57,7 @@
     },
     {
       "id": "gc_simulation",
-      "type": "code",
+      "type": "operator",
       "label": "가비지 컬렉터 시뮬레이션",
       "config": {
         "language": "python",
@@ -66,7 +66,7 @@
     },
     {
       "id": "memory_leak_validator",
-      "type": "code",
+      "type": "operator",
       "label": "메모리 누수 검증",
       "config": {
         "language": "python",

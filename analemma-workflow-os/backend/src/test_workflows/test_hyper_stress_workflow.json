@@ -6,7 +6,7 @@
     "nodes": [
         {
             "id": "stress_init",
-            "type": "code",
+            "type": "operator",
             "label": "극한 스트레스 테스트 초기화",
             "config": {
                 "language": "python",
@@ -46,7 +46,7 @@
                                     "nodes": [
                                         {
                                             "id": "alpha_pre_process",
-                                            "type": "code",
+                                            "type": "operator",
                                             "config": {
                                                 "language": "python",
                                                 "code": "import time\n\nouter_idx = state.get('_for_each_index', 0)\nbranch_token = state.get('branch_isolation_tokens', {}).get('branch_alpha', 'UNKNOWN')\n\n# 루프 포인터 체크포인트 저장 (복구 테스트용)\ncheckpoint = {\n    'branch': 'alpha',\n    'outer_idx': outer_idx,\n    'timestamp': time.time(),\n    'branch_token': branch_token\n}\ncheckpoints = state.get('loop_state_checkpoints', [])\ncheckpoints.append(checkpoint)\nstate['loop_state_checkpoints'] = checkpoints\nstate['alpha_current_loop_pointer'] = outer_idx\n\nprint(f'[Alpha] Processing outer item {outer_idx}, token={branch_token}')"
@@ -73,7 +73,7 @@
                                         },
                                         {
                                             "id": "alpha_post_process",
-                                            "type": "code",
+                                            "type": "operator",
                                             "config": {
                                                 "language": "python",
                                                 "code": "outer_idx = state.get('_for_each_index', 0)\nexpected_pointer = state.get('alpha_current_loop_pointer', -1)\n\n# HITL 후 루프 포인터가 정확히 복구되었는지 검증\nif outer_idx == expected_pointer:\n    state['loop_pointer_recoveries'] = state.get('loop_pointer_recoveries', 0) + 1\n    print(f'[Alpha] ✓ Loop pointer correctly recovered: {outer_idx}')\nelse:\n    state['stress_metrics']['isolation_violations'].append({\n        'type': 'LOOP_POINTER_MISMATCH',\n        'branch': 'alpha',\n        'expected': expected_pointer,\n        'actual': outer_idx\n    })\n    print(f'[Alpha] ✗ Loop pointer mismatch: expected {expected_pointer}, got {outer_idx}')\n\nstate['alpha_processed_count'] = state.get('alpha_processed_count', 0) + 1"
@@ -111,7 +111,7 @@
                                     "nodes": [
                                         {
                                             "id": "beta_pre_process",
-                                            "type": "code",
+                                            "type": "operator",
                                             "config": {
                                                 "language": "python",
                                                 "code": "import time\n\nouter_idx = state.get('_for_each_index', 0)\nbranch_token = state.get('branch_isolation_tokens', {}).get('branch_beta', 'UNKNOWN')\n\n# 루프 포인터 체크포인트 저장\ncheckpoint = {\n    'branch': 'beta',\n    'outer_idx': outer_idx,\n    'timestamp': time.time(),\n    'branch_token': branch_token\n}\ncheckpoints = state.get('loop_state_checkpoints', [])\ncheckpoints.append(checkpoint)\nstate['loop_state_checkpoints'] = checkpoints\nstate['beta_current_loop_pointer'] = outer_idx\n\n# Alpha의 토큰이 Beta에 섞여 들어왔는지 검사 (데이터 레이스 감지)\nalpha_token = state.get('branch_isolation_tokens', {}).get('branch_alpha', '')\nif 'ALPHA' in str(state.get('beta_loop_results', [])):\n    state['stress_metrics']['parallel_race_detected'] = True\n    state['stress_metrics']['isolation_violations'].append({\n        'type': 'CROSS_BRANCH_CONTAMINATION',\n        'from': 'alpha',\n        'to': 'beta',\n        'evidence': 'Alpha token found in Beta results'\n    })\n\nprint(f'[Beta] Processing outer item {outer_idx} (REVERSE), token={branch_token}')"
@@ -138,7 +138,7 @@
                                         },
                                         {
                                             "id": "beta_post_process",
-                                            "type": "code",
+                                            "type": "operator",
                                             "config": {
                                                 "language": "python",
                                                 "code": "outer_idx = state.get('_for_each_index', 0)\nexpected_pointer = state.get('beta_current_loop_pointer', -1)\n\n# HITL 후 루프 포인터 복구 검증\nif outer_idx == expected_pointer:\n    state['loop_pointer_recoveries'] = state.get('loop_pointer_recoveries', 0) + 1\n    print(f'[Beta] ✓ Loop pointer correctly recovered: {outer_idx}')\nelse:\n    state['stress_metrics']['isolation_violations'].append({\n        'type': 'LOOP_POINTER_MISMATCH',\n        'branch': 'beta',\n        'expected': expected_pointer,\n        'actual': outer_idx\n    })\n    print(f'[Beta] ✗ Loop pointer mismatch: expected {expected_pointer}, got {outer_idx}')\n\nstate['beta_processed_count'] = state.get('beta_processed_count', 0) + 1"
@@ -158,7 +158,7 @@
         },
         {
             "id": "isolation_validator",
-            "type": "code",
+            "type": "operator",
             "label": "[Kernel] 메모리 격리 및 데이터 레이스 검증",
             "config": {
                 "language": "python",
@@ -167,7 +167,7 @@
         },
         {
             "id": "stress_validator",
-            "type": "code",
+            "type": "operator",
             "label": "극한 스트레스 테스트 종합 검증",
             "config": {
                 "language": "python",

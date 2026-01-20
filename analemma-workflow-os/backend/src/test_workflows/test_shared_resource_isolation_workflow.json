@@ -6,7 +6,7 @@
   "nodes": [
     {
       "id": "init_shared_resource",
-      "type": "code",
+      "type": "operator",
       "label": "공유 자원 초기화",
       "config": {
         "language": "python",
@@ -30,7 +30,7 @@
           "nodes": [
             {
               "id": "db_op_1",
-              "type": "code",
+              "type": "operator",
               "label": "DB 작업 1",
               "config": {
                 "language": "python",
@@ -47,7 +47,7 @@
           "nodes": [
             {
               "id": "db_op_2",
-              "type": "code",
+              "type": "operator",
               "label": "DB 작업 2",
               "config": {
                 "language": "python",
@@ -64,7 +64,7 @@
           "nodes": [
             {
               "id": "s3_op",
-              "type": "code",
+              "type": "operator",
               "label": "S3 작업",
               "config": {
                 "language": "python",
@@ -81,7 +81,7 @@
           "nodes": [
             {
               "id": "read_op_1",
-              "type": "code",
+              "type": "operator",
               "label": "읽기 작업 1",
               "config": {
                 "language": "python",
@@ -97,7 +97,7 @@
           "nodes": [
             {
               "id": "read_op_2",
-              "type": "code",
+              "type": "operator",
               "label": "읽기 작업 2",
               "config": {
                 "language": "python",
@@ -123,7 +123,7 @@
             },
             {
               "id": "llm_counter",
-              "type": "code",
+              "type": "operator",
               "label": "LLM 카운터",
               "config": {
                 "language": "python",
@@ -139,7 +139,7 @@
     },
     {
       "id": "verify_isolation",
-      "type": "code",
+      "type": "operator",
       "label": "격리 검증 (강화된 Assert)",
       "config": {
         "language": "python",

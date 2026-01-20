@@ -7,7 +7,7 @@
   "nodes": [
     {
       "id": "setup_shared_state",
-      "type": "code",
+      "type": "operator",
       "label": "공유 상태 초기화",
       "config": {
         "language": "python",
@@ -31,7 +31,7 @@
             "nodes": [
               {
                 "id": "write_1",
-                "type": "code",
+                "type": "operator",
                 "config": {
                   "language": "python",
                   "code": "import time\ntime.sleep(0.1)\ncurrent = state.get('shared_counter', 0)\nstate['shared_counter'] = current + 1\nstate['branch_1_wrote'] = True\nstate['branch_1_timestamp'] = time.time()"
@@ -45,7 +45,7 @@
             "nodes": [
               {
                 "id": "write_2",
-                "type": "code",
+                "type": "operator",
                 "config": {
                   "language": "python",
                   "code": "import time\ntime.sleep(0.05)\ncurrent = state.get('shared_counter', 0)\nstate['shared_counter'] = current + 1\nstate['branch_2_wrote'] = True\nstate['branch_2_timestamp'] = time.time()"
@@ -59,7 +59,7 @@
             "nodes": [
               {
                 "id": "write_3",
-                "type": "code",
+                "type": "operator",
                 "config": {
                   "language": "python",
                   "code": "import time\ntime.sleep(0.15)\ncurrent = state.get('shared_counter', 0)\nstate['shared_counter'] = current + 1\nstate['branch_3_wrote'] = True\nstate['branch_3_timestamp'] = time.time()"
@@ -73,7 +73,7 @@
             "nodes": [
               {
                 "id": "write_4",
-                "type": "code",
+                "type": "operator",
                 "config": {
                   "language": "python",
                   "code": "import time\ntime.sleep(0.08)\ncurrent = state.get('shared_counter', 0)\nstate['shared_counter'] = current + 1\nstate['branch_4_wrote'] = True\nstate['branch_4_timestamp'] = time.time()"
@@ -87,7 +87,7 @@
             "nodes": [
               {
                 "id": "write_5",
-                "type": "code",
+                "type": "operator",
                 "config": {
                   "language": "python",
                   "code": "import time\ntime.sleep(0.12)\ncurrent = state.get('shared_counter', 0)\nstate['shared_counter'] = current + 1\nstate['branch_5_wrote'] = True\nstate['branch_5_timestamp'] = time.time()"
@@ -100,7 +100,7 @@
     },
     {
       "id": "race_condition_validator",
-      "type": "code",
+      "type": "operator",
       "label": "경합 조건 검증",
       "config": {
         "language": "python",

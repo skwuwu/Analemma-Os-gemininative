@@ -12,7 +12,7 @@
   "nodes": [
     {
       "id": "input_generator",
-      "type": "code",
+      "type": "operator",
       "label": "테스트 입력 생성",
       "config": {
         "language": "python",
@@ -109,7 +109,7 @@
             },
             {
               "id": "report_s3_save",
-              "type": "code",
+              "type": "operator",
               "label": "S3 저장 (공유 자원)",
               "config": {
                 "language": "python",
@@ -128,7 +128,7 @@
           "nodes": [
             {
               "id": "light_code_1",
-              "type": "code",
+              "type": "operator",
               "label": "경량 처리 1",
               "config": {
                 "language": "python",
@@ -144,7 +144,7 @@
           "nodes": [
             {
               "id": "light_code_2",
-              "type": "code",
+              "type": "operator",
               "label": "경량 처리 2",
               "config": {
                 "language": "python",
@@ -158,7 +158,7 @@
     },
     {
       "id": "aggregator",
-      "type": "code",
+      "type": "operator",
       "label": "결과 집계",
       "config": {
         "language": "python",

@@ -7,7 +7,7 @@
     "nodes": [
         {
             "id": "loop_limit_prep",
-            "type": "code",
+            "type": "operator",
             "label": "동적 루프 제한 계산",
             "config": {
                 "language": "python",
@@ -16,7 +16,7 @@
         },
         {
             "id": "loop_simulation_step1",
-            "type": "code",
+            "type": "operator",
             "label": "루프 시뮬레이션 1단계",
             "config": {
                 "language": "python",
@@ -25,7 +25,7 @@
         },
         {
             "id": "loop_simulation_step2",
-            "type": "code",
+            "type": "operator",
             "label": "루프 시뮬레이션 2단계",
             "config": {
                 "language": "python",
@@ -34,7 +34,7 @@
         },
         {
             "id": "loop_simulation_step3",
-            "type": "code",
+            "type": "operator",
             "label": "루프 시뮬레이션 3단계",
             "config": {
                 "language": "python",
@@ -43,7 +43,7 @@
         },
         {
             "id": "forced_termination_test",
-            "type": "code",
+            "type": "operator",
             "label": "[Critical] 강제 종료 인터셉트 테스트",
             "config": {
                 "language": "python",
@@ -63,7 +63,7 @@
                     "nodes": [
                         {
                             "id": "b1_loop_step1",
-                            "type": "code",
+                            "type": "operator",
                             "config": {
                                 "language": "python",
                                 "code": "# Branch 1 내부 루프\nstate['branch1_loop_count'] = 1\nstate['branch1_max_loop'] = state.get('expected_max_branch_loop', 25)\nstate['branch1_within_limit'] = state['branch1_loop_count'] <= state['branch1_max_loop']\nprint(f'Branch1 Loop: {state[\"branch1_loop_count\"]}/{state[\"branch1_max_loop\"]}')"
@@ -71,7 +71,7 @@
                         },
                         {
                             "id": "b1_loop_step2",
-                            "type": "code",
+                            "type": "operator",
                             "config": {
                                 "language": "python",
                                 "code": "state['branch1_loop_count'] = 2\nstate['branch1_within_limit'] = state['branch1_loop_count'] <= state['branch1_max_loop']\nprint(f'Branch1 Loop: {state[\"branch1_loop_count\"]}/{state[\"branch1_max_loop\"]}')"
@@ -87,7 +87,7 @@
                     "nodes": [
                         {
                             "id": "b2_loop_step1",
-                            "type": "code",
+                            "type": "operator",
                             "config": {
                                 "language": "python",
                                 "code": "# Branch 2 내부 루프 (독립적으로 관리되어야 함)\nstate['branch2_loop_count'] = 1\nstate['branch2_max_loop'] = state.get('expected_max_branch_loop', 25)\nstate['branch2_within_limit'] = state['branch2_loop_count'] <= state['branch2_max_loop']\nprint(f'Branch2 Loop: {state[\"branch2_loop_count\"]}/{state[\"branch2_max_loop\"]}')"
@@ -95,7 +95,7 @@
                         },
                         {
                             "id": "b2_loop_step2",
-                            "type": "code",
+                            "type": "operator",
                             "config": {
                                 "language": "python",
                                 "code": "state['branch2_loop_count'] = 2\nstate['branch2_within_limit'] = state['branch2_loop_count'] <= state['branch2_max_loop']\nprint(f'Branch2 Loop: {state[\"branch2_loop_count\"]}/{state[\"branch2_max_loop\"]}')"
@@ -111,7 +111,7 @@
                     "nodes": [
                         {
                             "id": "b3_exceed_test",
-                            "type": "code",
+                            "type": "operator",
                             "config": {
                                 "language": "python",
                                 "code": "# Branch 3: 고의로 임계값 초과\nstate['branch3_loop_count'] = 26  # expected_max_branch_loop (25) + 1\nstate['branch3_max_loop'] = state.get('expected_max_branch_loop', 25)\nstate['branch3_exceeded'] = state['branch3_loop_count'] > state['branch3_max_loop']\n\nif state['branch3_exceeded']:\n    state['branch3_sigkill'] = {\n        'signal': 'SIGKILL',\n        'reason': 'BRANCH_LOOP_EXCEEDED',\n        'count': state['branch3_loop_count'],\n        'limit': state['branch3_max_loop']\n    }\n    print(f'[Branch3 SIGKILL] Loop exceeded: {state[\"branch3_loop_count\"]} > {state[\"branch3_max_loop\"]}')\nelse:\n    state['branch3_sigkill'] = None"
@@ -124,7 +124,7 @@
         },
         {
             "id": "loop_limit_validator",
-            "type": "code",
+            "type": "operator",
             "label": "통합 검증 with 인터럽트 체크",
             "config": {
                 "language": "python",

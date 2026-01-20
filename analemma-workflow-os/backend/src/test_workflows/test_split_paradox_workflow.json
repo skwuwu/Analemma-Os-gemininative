@@ -7,7 +7,7 @@
   "nodes": [
     {
       "id": "setup_split_test",
-      "type": "code",
+      "type": "operator",
       "label": "분할 테스트 초기화",
       "config": {
         "language": "python",
@@ -16,7 +16,7 @@
     },
     {
       "id": "simulate_large_data",
-      "type": "code",
+      "type": "operator",
       "label": "대용량 데이터 시뮬레이션",
       "config": {
         "language": "python",
@@ -25,7 +25,7 @@
     },
     {
       "id": "recursive_split_simulation",
-      "type": "code",
+      "type": "operator",
       "label": "재귀 분할 시뮬레이션",
       "config": {
         "language": "python",
@@ -34,7 +34,7 @@
     },
     {
       "id": "cost_explosion_check",
-      "type": "code",
+      "type": "operator",
       "label": "비용 폭증 검사",
       "config": {
         "language": "python",
@@ -43,7 +43,7 @@
     },
     {
       "id": "partition_integrity_check",
-      "type": "code",
+      "type": "operator",
       "label": "[Critical] 파티션 무결성 검사",
       "config": {
         "language": "python",
@@ -52,7 +52,7 @@
     },
     {
       "id": "graceful_failure_validator",
-      "type": "code",
+      "type": "operator",
       "label": "[Critical] Graceful Failure 경로 검증",
       "config": {
         "language": "python",
@@ -61,7 +61,7 @@
     },
     {
       "id": "split_paradox_validator",
-      "type": "code",
+      "type": "operator",
       "label": "분할 역설 검증 (Enhanced)",
       "config": {
         "language": "python",
