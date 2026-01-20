@@ -15,7 +15,7 @@ from collections import ChainMap
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, conlist, constr, ValidationError
+from pydantic import BaseModel, Field, conlist, constr, ValidationError, field_validator
 
 import boto3
 from botocore.config import Config
@@ -110,6 +110,21 @@ class NodeModel(BaseModel):
     hitp: Optional[bool] = None
     config: Optional[Dict[str, Any]] = None
     next: Optional[str] = None
+    # [Fix] parallel_group support - branches와 resource_policy 필드 추가
+    # extra="ignore"로 인해 이 필드들이 누락되어 NoneType 에러 발생했음
+    branches: Optional[List[Dict[str, Any]]] = None
+    resource_policy: Optional[Dict[str, Any]] = None
+    # [Fix] subgraph support
+    subgraph_ref: Optional[str] = None
+    subgraph_inline: Optional[Dict[str, Any]] = None
+    
+    @field_validator('type', mode='before')
+    @classmethod
+    def alias_node_type(cls, v):
+        """Alias 'code' type to 'operator' to prevent ValueError in NODE_REGISTRY."""
+        if v == 'code':
+            return 'operator'
+        return v
     
     class Config:
         extra = "ignore"
@@ -1611,6 +1626,7 @@ register_node("skill_executor", skill_executor_runner)  # Skills integration
 register_node("nested_for_each", nested_for_each_runner)  # V3 Hyper-Stress: Nested Map-in-Map support
 register_node("vision", vision_runner)  # Gemini Vision multimodal analysis
 register_node("image_analysis", vision_runner)  # Alias for vision
+register_node("code", operator_runner)  # [Fix] 'code' 노드 타입은 operator와 동일하게 처리
 
 # SubGraph/Group 노드 러너 - DynamicWorkflowBuilder에서 재귀적으로 처리
 def subgraph_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:

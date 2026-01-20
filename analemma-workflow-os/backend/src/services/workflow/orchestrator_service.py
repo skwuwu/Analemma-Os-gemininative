@@ -16,7 +16,7 @@ import uuid
 import logging
 from typing import Dict, Any, List, Optional, Union
 
-from pydantic import BaseModel, Field, conlist, constr, ValidationError
+from pydantic import BaseModel, Field, conlist, constr, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,20 @@ class NodeModel(BaseModel):
     action: Optional[constr(min_length=0, max_length=256)] = None
     hitp: Optional[bool] = None
     config: Optional[Dict[str, Any]] = None
+    # [Fix] parallel_group support - branches와 resource_policy 필드 추가
+    branches: Optional[List[Dict[str, Any]]] = None
+    resource_policy: Optional[Dict[str, Any]] = None
+    # [Fix] subgraph support
+    subgraph_ref: Optional[str] = None
+    subgraph_inline: Optional[Dict[str, Any]] = None
+    
+    @field_validator('type', mode='before')
+    @classmethod
+    def alias_node_type(cls, v):
+        """Alias 'code' type to 'operator' to prevent ValueError in NODE_REGISTRY."""
+        if v == 'code':
+            return 'operator'
+        return v
 
 
 class WorkflowConfigModel(BaseModel):
@@ -208,6 +222,10 @@ class WorkflowOrchestratorService:
             result = app.invoke(initial_state, config=final_config)
             
             if isinstance(result, dict):
+                # 🛡️ total_segments 주입 - NoneType 에러 원천 차단
+                if "total_segments" not in result:
+                    result["total_segments"] = initial_state.get("total_segments") or 1
+                
                 result["__new_history_logs"] = history_callback.logs
                 prev_logs = result.get("execution_logs", [])
                 result["execution_logs"] = prev_logs + history_callback.logs

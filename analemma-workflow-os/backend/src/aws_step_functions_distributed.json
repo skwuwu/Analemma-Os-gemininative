@@ -293,7 +293,7 @@
         "chunk_item.$": "$$.Map.Item.Value",
         "state_data.$": "$.state_data",
         "total_segments.$": "$.state_data.total_segments",
-        "partition_map.$": "$.state_data.partition_map"
+        "partition_map_s3_path.$": "$.state_data.partition_map_s3_path"
       },
       "ItemProcessor": {
         "ProcessorConfig": {
@@ -682,7 +682,7 @@
         "branch_item.$": "$$.Map.Item.Value",
         "state_data.$": "$.state_data",
         "total_segments.$": "$.state_data.total_segments",
-        "partition_map.$": "$.state_data.partition_map"
+        "partition_map_s3_path.$": "$.state_data.partition_map_s3_path"
       },
       "ItemProcessor": {
         "ProcessorConfig": {

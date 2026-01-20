@@ -130,6 +130,43 @@ LIST_MERGE_KEY_PATTERNS = [
 ]
 
 
+def _safe_get_total_segments(event: Dict[str, Any]) -> int:
+    """
+    🛡️ [Fix] total_segments를 안전하게 추출
+    
+    문제점: event.get('total_segments')가 None, "", 0 등 다양한 값일 수 있음
+    - None: Step Functions에서 null로 전달
+    - "": 빈 문자열
+    - 0: 유효하지만 int(0)은 falsy
+    
+    Returns:
+        int: total_segments (최소 1 보장)
+    """
+    raw_value = event.get('total_segments')
+    
+    # None이면 partition_map에서 계산
+    if raw_value is None:
+        partition_map = event.get('partition_map')
+        if partition_map and isinstance(partition_map, list):
+            return max(1, len(partition_map))
+        return 1
+    
+    # 숫자 타입이면 직접 사용
+    if isinstance(raw_value, (int, float)):
+        return max(1, int(raw_value))
+    
+    # 문자열이면 파싱 시도
+    if isinstance(raw_value, str):
+        raw_value = raw_value.strip()
+        if raw_value and raw_value.isdigit():
+            return max(1, int(raw_value))
+        # 빈 문자열이나 파싱 불가능하면 기본값
+        return 1
+    
+    # 그 외 타입은 기본값
+    return 1
+
+
 class SegmentRunnerService:
     def __init__(self, s3_bucket: Optional[str] = None):
         self.state_manager = StateManager()
@@ -762,10 +799,11 @@ class SegmentRunnerService:
         Returns:
             [[batch1_branches], [batch2_branches], ...]
         """
-        max_memory = resource_policy.get('max_concurrent_memory_mb', DEFAULT_MAX_CONCURRENT_MEMORY_MB)
-        max_tokens = resource_policy.get('max_concurrent_tokens', DEFAULT_MAX_CONCURRENT_TOKENS)
-        max_branches = resource_policy.get('max_concurrent_branches', DEFAULT_MAX_CONCURRENT_BRANCHES)
-        strategy = resource_policy.get('strategy', STRATEGY_RESOURCE_OPTIMIZED)
+        # [Fix] Use 'or' to handle None values - .get() returns None if key exists with None value
+        max_memory = resource_policy.get('max_concurrent_memory_mb') or DEFAULT_MAX_CONCURRENT_MEMORY_MB
+        max_tokens = resource_policy.get('max_concurrent_tokens') or DEFAULT_MAX_CONCURRENT_TOKENS
+        max_branches = resource_policy.get('max_concurrent_branches') or DEFAULT_MAX_CONCURRENT_BRANCHES
+        strategy = resource_policy.get('strategy') or STRATEGY_RESOURCE_OPTIMIZED
         
         # 브랜치와 자원 추정치 결합 후 크기순 정렬 (내림차순)
         indexed_branches = list(zip(branches, resource_estimates, range(len(branches))))
@@ -931,9 +969,9 @@ class SegmentRunnerService:
         logger.info(f"[Scheduler] Resource estimates: {total_memory}MB memory, {total_tokens} tokens, "
                    f"{len(branches)} branches")
         
-        # 제한 확인
-        max_memory = resource_policy.get('max_concurrent_memory_mb', DEFAULT_MAX_CONCURRENT_MEMORY_MB)
-        max_tokens = resource_policy.get('max_concurrent_tokens', DEFAULT_MAX_CONCURRENT_TOKENS)
+        # 제한 확인 - [Fix] Use 'or' to handle None values
+        max_memory = resource_policy.get('max_concurrent_memory_mb') or DEFAULT_MAX_CONCURRENT_MEMORY_MB
+        max_tokens = resource_policy.get('max_concurrent_tokens') or DEFAULT_MAX_CONCURRENT_TOKENS
         
         # 제한 내라면 단일 배치
         if total_memory <= max_memory and total_tokens <= max_tokens:
@@ -1078,14 +1116,7 @@ class SegmentRunnerService:
         # aggregator 다음은 일반적으로 워크플로우 완료이지만,
         # partition_map에서 next_segment를 확인
         partition_map = event.get('partition_map', [])
-        # [Fix] total_segments None 체크 - partition_map이 None일 때 len() 에러 방지
-        raw_total_segments = event.get('total_segments')
-        if raw_total_segments is not None:
-            total_segments = int(raw_total_segments)
-        elif partition_map and isinstance(partition_map, list):
-            total_segments = len(partition_map)
-        else:
-            total_segments = 1  # 최소 1개 세그먼트 보장
+        total_segments = _safe_get_total_segments(event)
         next_segment = segment_to_run + 1
         
         # 완료 여부 판단
@@ -1806,13 +1837,7 @@ class SegmentRunnerService:
                 threshold=self.threshold
             )
             
-            # [Fix] total_segments None 체크 - 부분 실패 경로에서도 안전하게 처리
-            raw_total = event.get('total_segments')
-            if raw_total is not None:
-                total_segments = int(raw_total)
-            else:
-                partition_map = event.get('partition_map', [])
-                total_segments = len(partition_map) if partition_map and isinstance(partition_map, list) else 1
+            total_segments = _safe_get_total_segments(event)
             next_segment = segment_id + 1
             
             return {
@@ -1908,14 +1933,7 @@ class SegmentRunnerService:
             }
         
         # 파티션 맵이 있는 경우: 다음 세그먼트 존재 여부 확인
-        # [Fix] total_segments None 체크 - partition_map이 None일 때 len() 에러 방지
-        raw_total_segments = event.get('total_segments')
-        if raw_total_segments is not None:
-            total_segments = int(raw_total_segments)
-        elif partition_map and isinstance(partition_map, list):
-            total_segments = len(partition_map)
-        else:
-            total_segments = 1  # 최소 1개 세그먼트 보장
+        total_segments = _safe_get_total_segments(event)
         
         next_segment = segment_id + 1
         

@@ -1110,10 +1110,43 @@
         {
           "Variable": "$.async_error.Error",
           "StringEquals": "AsyncLLMRequiredException",
-          "Next": "HandleAsyncLLM"
+          "Next": "NotifyAsyncLLMProcessing"
         }
       ],
       "Default": "NotifyExecutionFailure"
+    },
+    "NotifyAsyncLLMProcessing": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Comment": "🛡️ [UX] 비동기 LLM 처리 중 알림 - 사용자에게 중단된 것처럼 보이지 않도록",
+      "Parameters": {
+        "Entries": [
+          {
+            "EventBusName": "${WorkflowEventBusArn}",
+            "Source": "backend-workflow.lifecycle",
+            "DetailType": "WorkflowLifecycleEvent",
+            "Detail": {
+              "execution_id.$": "$$.Execution.Id",
+              "ownerId.$": "$.state_data.ownerId",
+              "workflowId.$": "$.state_data.workflowId",
+              "segment_to_run.$": "$.state_data.segment_to_run",
+              "notification_type": "execution_progress",
+              "status": "ASYNC_LLM_PROCESSING",
+              "message": "Large language model is processing asynchronously. This may take several minutes."
+            }
+          }
+        ]
+      },
+      "ResultPath": "$.async_notification_result",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Comment": "Notification failure should not block async processing",
+          "ResultPath": "$.async_notification_error",
+          "Next": "HandleAsyncLLM"
+        }
+      ],
+      "Next": "HandleAsyncLLM"
     },
     "HandleAsyncLLM": {
       "Type": "Task",

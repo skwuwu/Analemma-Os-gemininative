@@ -531,6 +531,10 @@ def lambda_handler(event, context):
     
     logger.info(f"[FIXED_ROBUST] Returning state data. partition_map_s3_path: '{partition_map_s3_path}'")
 
+    # 🛡️ [Critical Fix] Ensure total_segments is always int (never None)
+    safe_total_segments = int(total_segments) if total_segments is not None else 1
+    safe_total_segments = max(1, safe_total_segments)  # Minimum 1 segment
+
     return {
         "workflow_config": workflow_config,
         "current_state": current_state,
@@ -544,7 +548,7 @@ def lambda_handler(event, context):
         "quota_reservation_id": quota_reservation_id,
         
         # 🚨 [Critical Fix] Conditional partition_map return in distributed mode
-        "total_segments": total_segments,
+        "total_segments": safe_total_segments,  # 🛡️ Always int, never None
         "partition_map": partition_map_for_return,
         "partition_map_s3_path": partition_map_s3_path,  # Always exists (minimum "")
         
