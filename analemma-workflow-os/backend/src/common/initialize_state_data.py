@@ -297,13 +297,20 @@ def lambda_handler(event, context):
     """
     logger.info("Initializing state data")
     
-    # [FIX] 1. Move initialization to top (prevent NameError in S3 Metadata)
-    current_time = int(time.time())
-    
-    # 1. Extract input data
+    # ====================================================================
+    # 🛡️ [v2.6 P0 Fix] 최우선 초기화 - 에러 발생 시에도 필수 필드 보존
+    # Step Functions ASL이 $.total_segments를 참조할 때 null 방지
+    # ====================================================================
     raw_input = event.get('input', event)
     if not isinstance(raw_input, dict):
         raw_input = {}
+    
+    # 🛡️ [P0] total_segments 안전 초기화 - try 블록 외부에서 먼저 계산
+    _early_partition_map = raw_input.get('partition_map', [])
+    _safe_total_segments = len(_early_partition_map) if isinstance(_early_partition_map, list) and _early_partition_map else 1
+    
+    # [FIX] 1. Move initialization to top (prevent NameError in S3 Metadata)
+    current_time = int(time.time())
         
     # [FIX] Explicit variable initialization (prevent UnboundLocalError and Missing Field)
     # Keys must always exist to prevent errors when SFN references $.field_name
@@ -355,11 +362,24 @@ def lambda_handler(event, context):
              logger.info("MOCK_MODE detected: Forcing runtime partition calculation")
              try:
                  partition_result = partition_workflow_advanced(workflow_config)
+                 
+                 # 🛡️ [v2.6 P0 Fix] 유령 'code' 타입 박멸 로직
+                 # 상위 데이터 오염을 런타임에서 교정
+                 for seg in partition_result.get('partition_map', []):
+                     for node in seg.get('nodes', []):
+                         if isinstance(node, dict) and node.get('type') == 'code':
+                             logger.warning(f"🛡️ [Self-Healing] Aliasing 'code' to 'operator' for node {node.get('id')}")
+                             node['type'] = 'operator'
+                 
                  # Override raw inputs/event cache with fresh calculation
                  raw_input['partition_map'] = partition_result.get('partition_map', [])
                  raw_input['total_segments'] = partition_result.get('total_segments', 0)
                  raw_input['llm_segments'] = partition_result.get('llm_segments', 0)
                  raw_input['hitp_segments'] = partition_result.get('hitp_segments', 0)
+                 
+                 # 🛡️ [P0] 조기 계산된 _safe_total_segments 업데이트
+                 _safe_total_segments = max(1, partition_result.get('total_segments', 1))
+                 
              except Exception as e:
                  logger.error(f"MOCK_MODE partitioning failed: {e}")
 
@@ -406,6 +426,14 @@ def lambda_handler(event, context):
             total_segments = partition_result.get('total_segments', 0)
             llm_segments = partition_result.get('llm_segments', 0)
             hitp_segments = partition_result.get('hitp_segments', 0)
+            
+            # 🛡️ [v2.6 P0 Fix] 유령 'code' 타입 박멸 로직
+            for seg in partition_map:
+                for node in seg.get('nodes', []):
+                    if isinstance(node, dict) and node.get('type') == 'code':
+                        logger.warning(f"🛡️ [Self-Healing] Aliasing 'code' to 'operator' for node {node.get('id')}")
+                        node['type'] = 'operator'
+            
         except Exception as e:
             logger.error(f"Partitioning failed: {e}")
             raise RuntimeError(f"Failed to partition workflow: {str(e)}")
@@ -532,8 +560,8 @@ def lambda_handler(event, context):
     logger.info(f"[FIXED_ROBUST] Returning state data. partition_map_s3_path: '{partition_map_s3_path}'")
 
     # 🛡️ [Critical Fix] Ensure total_segments is always int (never None)
-    safe_total_segments = int(total_segments) if total_segments is not None else 1
-    safe_total_segments = max(1, safe_total_segments)  # Minimum 1 segment
+    # 조기 초기화된 _safe_total_segments와 계산된 total_segments 중 큰 값 사용
+    safe_total_segments = max(1, int(total_segments or _safe_total_segments))
 
     return {
         "workflow_config": workflow_config,

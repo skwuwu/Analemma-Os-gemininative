@@ -349,6 +349,15 @@ class SegmentRunnerService:
         
         for node in nodes:
             node_type = node.get('type', '')
+            
+            # 🔍 [KERNEL DEBUG] 노드 타입 변질 추적 - code 타입이 발견b되면 로그
+            if node_type == 'code':
+                logger.warning(
+                    f"🚨 [KERNEL DEBUG] Detected 'code' type node! "
+                    f"Node ID: {node.get('id')}, Config keys: {list(node.get('config', {}).keys())}. "
+                    f"This should have been aliased to 'operator' by Pydantic validator."
+                )
+            
             if node_type in ('llm_chat', 'aiModel'):
                 llm_memory += 50  # LLM nodes get additional 50MB
             elif node_type == 'for_each':
@@ -1126,6 +1135,7 @@ class SegmentRunnerService:
                    f"{successful_branches}/{len(parallel_results)} branches succeeded, "
                    f"next_segment={next_segment if not is_complete else 'COMPLETE'}")
         
+        # 🛡️ [P0 Fix] total_segments 반드시 포함 - ASL Choice 상태의 null 참조 방지
         return {
             "status": "COMPLETE" if is_complete else "SUCCEEDED",
             "final_state": final_state,
@@ -1136,6 +1146,7 @@ class SegmentRunnerService:
             "branches": None,
             "segment_type": "aggregator",
             "segment_id": segment_to_run,
+            "total_segments": total_segments,  # 🛡️ [P0] 필수 메타데이터
             "aggregator_metadata": {
                 'total_branches': len(parallel_results),
                 'successful_branches': successful_branches,
@@ -1437,13 +1448,30 @@ class SegmentRunnerService:
         execution_start_time = time.time()
         
         # ====================================================================
+        # 🛡️ [v2.6 P0 Fix] 모든 return 경로에서 사용할 메타데이터 사전 계산
+        # Step Functions Choice 상태에서 null 참조를 방지하기 위해 반드시 포함되어야 함
+        # ====================================================================
+        _total_segments = _safe_get_total_segments(event)
+        _segment_id = event.get('segment_id') or event.get('segment_to_run', 0)
+        
+        def _finalize_response(res: Dict[str, Any]) -> Dict[str, Any]:
+            """
+            🛡️ [P0] 모든 return 경로에 필수 메타데이터 강제 주입
+            Step Functions ASL에서 $.total_segments, $.segment_id를 참조하므로
+            어떤 경로에서 return 되더라도 이 필드들이 반드시 포함되어야 함
+            """
+            res.setdefault('total_segments', _total_segments)
+            res.setdefault('segment_id', _segment_id)
+            return res
+        
+        # ====================================================================
         # 🛡️ [2단계] Pre-Execution Check: 동시성 및 예산 체크
         # ====================================================================
         if CONCURRENCY_CONTROLLER_AVAILABLE and self.concurrency_controller:
             pre_check = self.concurrency_controller.pre_execution_check()
             if not pre_check.get('can_proceed', True):
                 logger.error(f"[Kernel] ❌ Pre-execution check failed: {pre_check.get('reason')}")
-                return {
+                return _finalize_response({
                     "status": "HALTED",
                     "final_state": {},
                     "final_state_s3_path": None,
@@ -1456,9 +1484,8 @@ class SegmentRunnerService:
                     },
                     "branches": None,
                     "segment_type": "halted",
-                    "segment_id": event.get('segment_id', 0),
                     "kernel_stats": self.concurrency_controller.get_comprehensive_stats()
-                }
+                })
             
             # 로드 레벨 로깅
             snapshot = pre_check.get('snapshot')
@@ -1573,11 +1600,22 @@ class SegmentRunnerService:
             
             segment_config = self._resolve_segment_config(workflow_config, partition_map, segment_id)
         
+        # 🛡️ [v2.6 P0 Fix] 'code' 타입 오염 방지 Self-Healing
+        # 상위 람다(PartitionService 등)에서 잘못된 타입이 주입될 수 있으므로 런타임 교정
+        if segment_config and isinstance(segment_config, dict):
+            for node in segment_config.get('nodes', []):
+                if isinstance(node, dict) and node.get('type') == 'code':
+                    logger.warning(
+                        f"🛡️ [Self-Healing] Aliasing 'code' to 'operator' for node {node.get('id')}. "
+                        f"This indicates upstream data mutation - investigate PartitionService."
+                    )
+                    node['type'] = 'operator'
+        
         # 🛡️ [Critical Fix] segment_config이 None이거나 error 타입이면 조기 에러 반환
         if not segment_config or (isinstance(segment_config, dict) and segment_config.get('type') == 'error'):
             error_msg = segment_config.get('error', 'segment_config is None') if isinstance(segment_config, dict) else 'segment_config is None'
             logger.error(f"🚨 [Critical] segment_config resolution failed: {error_msg}")
-            return {
+            return _finalize_response({
                 "status": "FAILED",
                 "error": error_msg,
                 "error_type": "ConfigurationError",
@@ -1588,14 +1626,12 @@ class SegmentRunnerService:
                 "error_info": {
                     "error": error_msg,
                     "error_type": "ConfigurationError",
-                    "segment_id": segment_id,
                     "workflow_config_present": workflow_config is not None,
                     "partition_map_present": partition_map is not None
                 },
                 "branches": None,
-                "segment_type": "ERROR",
-                "segment_id": segment_id
-            }
+                "segment_type": "ERROR"
+            })
         
         # [Critical Fix] parallel_group 타입 세그먼트는 바로 PARALLEL_GROUP status 반환
         # ASL의 ProcessParallelSegments가 branches를 받아서 Map으로 병렬 실행함
@@ -1621,7 +1657,7 @@ class SegmentRunnerService:
                     if first_inner_segment:
                         # 🔧 내부 partition_map을 새로운 실행 컨텍스트로 변환
                         # 상태를 유지하면서 내부 세그먼트 체인 순차 실행
-                        return {
+                        return _finalize_response({
                             "status": "SEQUENTIAL_BRANCH",
                             "final_state": mask_pii_in_state(initial_state),
                             "final_state_s3_path": None,
@@ -1630,7 +1666,6 @@ class SegmentRunnerService:
                             "error_info": None,
                             "branches": None,  # 병렬 실행 안함
                             "segment_type": "sequential_branch",
-                            "segment_id": segment_id,
                             # 🛡️ 내부 partition_map 정보 전달 (ASL이 순차 처리하도록)
                             "inner_partition_map": branch_partition_map,
                             "inner_segment_count": len(branch_partition_map),
@@ -1640,7 +1675,7 @@ class SegmentRunnerService:
                                 'total_inner_segments': len(branch_partition_map),
                                 'reason': 'Single branch optimization - parallel execution skipped'
                             }
-                        }
+                        })
             
             # 🔧 빈 브랜치 또는 노드가 없는 브랜치 필터링
             valid_branches = []
@@ -1657,7 +1692,7 @@ class SegmentRunnerService:
             # 🛡️ 유효한 브랜치가 없으면 SUCCEEDED로 진행
             if not valid_branches:
                 logger.info(f"[Kernel] ⏭️ No valid branches to execute, skipping parallel group")
-                return {
+                return _finalize_response({
                     "status": "SUCCEEDED",
                     "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
@@ -1665,9 +1700,8 @@ class SegmentRunnerService:
                     "new_history_logs": [],
                     "error_info": None,
                     "branches": None,
-                    "segment_type": "empty_parallel_group",
-                    "segment_id": segment_id
-                }
+                    "segment_type": "empty_parallel_group"
+                })
             
             # 병렬 스케줄러 호출
             schedule_result = self._schedule_parallel_group(
@@ -1684,7 +1718,7 @@ class SegmentRunnerService:
                 logger.info(f"[Scheduler] 🔧 Scheduled {metadata['total_branches']} branches into "
                            f"{metadata['batch_count']} batches (strategy: {metadata['strategy']})")
                 
-                return {
+                return _finalize_response({
                     "status": "SCHEDULED_PARALLEL",
                     "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
@@ -1694,12 +1728,11 @@ class SegmentRunnerService:
                     "branches": valid_branches,  # 유효한 브랜치만
                     "execution_batches": execution_batches,
                     "segment_type": "scheduled_parallel",
-                    "scheduling_metadata": metadata,
-                    "segment_id": segment_id
-                }
+                    "scheduling_metadata": metadata
+                })
             
             # PARALLEL_GROUP: 기본 병렬 실행
-            return {
+            return _finalize_response({
                 "status": "PARALLEL_GROUP",
                 "final_state": mask_pii_in_state(initial_state),
                 "final_state_s3_path": None,
@@ -1709,9 +1742,8 @@ class SegmentRunnerService:
                 "branches": valid_branches,  # 유효한 브랜치만
                 "execution_batches": schedule_result.get('execution_batches', [valid_branches]),
                 "segment_type": "parallel_group",
-                "scheduling_metadata": schedule_result.get('scheduling_metadata'),
-                "segment_id": segment_id
-            }
+                "scheduling_metadata": schedule_result.get('scheduling_metadata')
+            })
         
         # 🛡️ [Pattern 2] 커널 검증: 이 세그먼트가 SKIPPED 상태인가?
         segment_status = self._check_segment_status(segment_config)
@@ -1728,7 +1760,7 @@ class SegmentRunnerService:
                 'timestamp': time.time()
             }
             
-            return {
+            return _finalize_response({
                 "status": "SKIPPED",
                 "final_state": mask_pii_in_state(initial_state),
                 "final_state_s3_path": None,
@@ -1737,9 +1769,8 @@ class SegmentRunnerService:
                 "error_info": None,
                 "branches": None,
                 "segment_type": "skipped",
-                "kernel_action": kernel_log,
-                "segment_id": segment_id
-            }
+                "kernel_action": kernel_log
+            })
         
         # 5. Apply Self-Healing (Prompt Injection / Refinement)
         self.healer.apply_healing(segment_config, event.get("_self_healing_metadata"))
@@ -1759,7 +1790,7 @@ class SegmentRunnerService:
             critical_violations = [v for v in security_violations if v.get('should_sigkill')]
             if critical_violations:
                 logger.error(f"[Kernel] 🛡️ SIGKILL triggered by Ring Protection: {len(critical_violations)} critical violations")
-                return {
+                return _finalize_response({
                     "status": "SIGKILL",
                     "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
@@ -1778,9 +1809,8 @@ class SegmentRunnerService:
                         'reason': 'Critical security violation',
                         'violations': critical_violations,
                         'timestamp': time.time()
-                    },
-                    "segment_id": segment_id
-                }
+                    }
+                })
         
         # 6. Check User Quota / Secret Resolution (Repo access)
         # Note: In a full refactor, this should move to a UserService or AuthMiddleware
@@ -1840,7 +1870,7 @@ class SegmentRunnerService:
             total_segments = _safe_get_total_segments(event)
             next_segment = segment_id + 1
             
-            return {
+            return _finalize_response({
                 "status": "SUCCEEDED",  # 🛡️ Partial Success: FAILED 대신 SUCCEEDED
                 "final_state": final_state,
                 "final_state_s3_path": output_s3_path,
@@ -1850,10 +1880,10 @@ class SegmentRunnerService:
                 "branches": None,
                 "segment_type": "partial_failure",
                 "kernel_action": kernel_log,
-                "segment_id": segment_id,
                 "execution_time": execution_time,
-                "_partial_success": True  # 클라이언트가 부분 실패 감지용
-            }
+                "_partial_success": True,  # 클라이언트가 부분 실패 감지용
+                "total_segments": total_segments
+            })
         
         execution_time = time.time() - start_time
         
@@ -1917,7 +1947,7 @@ class SegmentRunnerService:
         
         if is_e2e_test or not has_partition_map:
             # E2E 테스트 또는 파티션 없는 단일 실행: 워크플로우 완료
-            return {
+            return _finalize_response({
                 "status": "COMPLETE",  # ASL이 기대하는 상태값
                 "final_state": final_state,
                 "final_state_s3_path": output_s3_path,
@@ -1927,10 +1957,10 @@ class SegmentRunnerService:
                 "branches": None,
                 "segment_type": "final",
                 "state_s3_path": output_s3_path,
-                "segment_id": segment_id,
                 "execution_time": execution_time,
-                "kernel_actions": kernel_actions if kernel_actions else None
-            }
+                "kernel_actions": kernel_actions if kernel_actions else None,
+                "total_segments": _total_segments
+            })
         
         # 파티션 맵이 있는 경우: 다음 세그먼트 존재 여부 확인
         total_segments = _safe_get_total_segments(event)
@@ -1939,7 +1969,7 @@ class SegmentRunnerService:
         
         if next_segment >= total_segments:
             # 마지막 세그먼트 완료
-            return {
+            return _finalize_response({
                 "status": "COMPLETE",
                 "final_state": final_state,
                 "final_state_s3_path": output_s3_path,
@@ -1949,13 +1979,13 @@ class SegmentRunnerService:
                 "branches": None,
                 "segment_type": "final",
                 "state_s3_path": output_s3_path,
-                "segment_id": segment_id,
                 "execution_time": execution_time,
-                "kernel_actions": kernel_actions if kernel_actions else None
-            }
+                "kernel_actions": kernel_actions if kernel_actions else None,
+                "total_segments": total_segments
+            })
         
         # 아직 실행할 세그먼트가 남아있음
-        return {
+        return _finalize_response({
             "status": "SUCCEEDED",
             "final_state": final_state,
             "final_state_s3_path": output_s3_path,
@@ -1965,10 +1995,10 @@ class SegmentRunnerService:
             "branches": None,
             "segment_type": "normal",
             "state_s3_path": output_s3_path,
-            "segment_id": segment_id,
             "execution_time": execution_time,
-            "kernel_actions": kernel_actions if kernel_actions else None
-        }
+            "kernel_actions": kernel_actions if kernel_actions else None,
+            "total_segments": total_segments
+        })
 
     def _resolve_segment_config(self, workflow_config, partition_map, segment_id):
         """

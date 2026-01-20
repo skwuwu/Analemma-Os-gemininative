@@ -288,12 +288,28 @@
     },
     "ExecuteDistributedSegments": {
       "Type": "Map",
-      "Comment": "[Critical Fix] Distributed Map - 상태 연속성 및 ASL 규격 준수",
+      "Comment": "[Critical Fix] Distributed Map - 최적화된 Context Passing (오염 방지 및 성능 향상)",
       "ItemSelector": {
         "chunk_item.$": "$$.Map.Item.Value",
-        "state_data.$": "$.state_data",
+        "execution_id.$": "$.state_data.idempotency_key",
+        "owner_id.$": "$.state_data.ownerId",
+        "workflow_id.$": "$.state_data.workflowId",
         "total_segments.$": "$.state_data.total_segments",
-        "partition_map_s3_path.$": "$.state_data.partition_map_s3_path"
+        "workflow_config.$": "$.state_data.workflow_config",
+        "partition_map.$": "$.state_data.partition_map",
+        "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
+        "max_concurrency.$": "$.state_data.max_concurrency",
+        "segment_manifest_s3_path.$": "$.state_data.segment_manifest_s3_path",
+        "distributed_mode.$": "$.state_data.distributed_mode",
+        "loop_counter.$": "$.state_data.loop_counter",
+        "max_loop_iterations.$": "$.state_data.max_loop_iterations",
+        "max_branch_iterations.$": "$.state_data.max_branch_iterations",
+        "llm_segments.$": "$.state_data.llm_segments",
+        "hitp_segments.$": "$.state_data.hitp_segments",
+        "quota_reservation_id.$": "$.state_data.quota_reservation_id",
+        "state_durations.$": "$.state_data.state_durations",
+        "last_update_time.$": "$.state_data.last_update_time",
+        "start_time.$": "$.state_data.start_time"
       },
       "ItemProcessor": {
         "ProcessorConfig": {
@@ -310,16 +326,18 @@
               "FunctionName": "${LoadLatestStateArn}",
               "Payload": {
                 "chunk_data.$": "$.chunk_item",
-                "execution_id.$": "$.state_data.idempotency_key",
-                "owner_id.$": "$.state_data.ownerId",
-                "workflow_id.$": "$.state_data.workflowId",
-                "state_bucket": "${WorkflowStateBucket}"
+                "execution_id.$": "$.execution_id",
+                "owner_id.$": "$.owner_id",
+                "workflow_id.$": "$.workflow_id",
+                "state_bucket": "${WorkflowStateBucket}",
+                "total_segments.$": "$.total_segments"
               }
             },
             "ResultSelector": {
               "previous_state.$": "$.Payload.previous_state",
               "latest_segment_id.$": "$.Payload.latest_segment_id",
-              "state_loaded.$": "$.Payload.state_loaded"
+              "state_loaded.$": "$.Payload.state_loaded",
+              "total_segments.$": "$.Payload.total_segments"
             },
             "ResultPath": "$.state_continuity",
             "Next": "ProcessSegmentChunk"
@@ -333,27 +351,27 @@
               "Payload": {
                 "chunk_data.$": "$.chunk_item",
                 "previous_state.$": "$.state_continuity.previous_state",
-                "workflow_config.$": "$.state_data.workflow_config",
-                "owner_id.$": "$.state_data.ownerId",
-                "workflowId.$": "$.state_data.workflowId",
-                "execution_id.$": "$.state_data.idempotency_key",
-                "parent_idempotency_key.$": "$.state_data.idempotency_key",
+                "workflow_config.$": "$.workflow_config",
+                "owner_id.$": "$.owner_id",
+                "workflowId.$": "$.workflow_id",
+                "execution_id.$": "$.execution_id",
+                "parent_idempotency_key.$": "$.execution_id",
                 "state_bucket": "${WorkflowStateBucket}",
-                "total_segments.$": "$.state_data.total_segments",
-                "partition_map.$": "$.state_data.partition_map",
-                "max_concurrency.$": "$.state_data.max_concurrency",
-                "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
-                "segment_manifest_s3_path.$": "$.state_data.segment_manifest_s3_path",
-                "distributed_mode.$": "$.state_data.distributed_mode",
-                "loop_counter.$": "$.state_data.loop_counter",
-                "max_loop_iterations.$": "$.state_data.max_loop_iterations",
-                "max_branch_iterations.$": "$.state_data.max_branch_iterations",
-                "llm_segments.$": "$.state_data.llm_segments",
-                "hitp_segments.$": "$.state_data.hitp_segments",
-                "quota_reservation_id.$": "$.state_data.quota_reservation_id",
-                "state_durations.$": "$.state_data.state_durations",
-                "last_update_time.$": "$.state_data.last_update_time",
-                "start_time.$": "$.state_data.start_time"
+                "total_segments.$": "$.total_segments",
+                "partition_map.$": "$.partition_map",
+                "max_concurrency.$": "$.max_concurrency",
+                "partition_map_s3_path.$": "$.partition_map_s3_path",
+                "segment_manifest_s3_path.$": "$.segment_manifest_s3_path",
+                "distributed_mode.$": "$.distributed_mode",
+                "loop_counter.$": "$.loop_counter",
+                "max_loop_iterations.$": "$.max_loop_iterations",
+                "max_branch_iterations.$": "$.max_branch_iterations",
+                "llm_segments.$": "$.llm_segments",
+                "hitp_segments.$": "$.hitp_segments",
+                "quota_reservation_id.$": "$.quota_reservation_id",
+                "state_durations.$": "$.state_durations",
+                "last_update_time.$": "$.last_update_time",
+                "start_time.$": "$.start_time"
               }
             },
             "ResultSelector": {
@@ -374,10 +392,11 @@
               "Payload": {
                 "chunk_id.$": "$.processing_result.chunk_id",
                 "final_state.$": "$.processing_result.final_state",
-                "execution_id.$": "$.state_data.idempotency_key",
-                "owner_id.$": "$.state_data.ownerId",
-                "workflow_id.$": "$.state_data.workflowId",
-                "state_bucket": "${WorkflowStateBucket}"
+                "execution_id.$": "$.execution_id",
+                "owner_id.$": "$.owner_id",
+                "workflow_id.$": "$.workflow_id",
+                "state_bucket": "${WorkflowStateBucket}",
+                "total_segments.$": "$.total_segments"
               }
             },
             "ResultPath": "$.state_save_result",
@@ -406,7 +425,7 @@
                 "chunk_result.$": "$.processing_result.chunk_result",
                 "distributed_context": {
                   "is_child_execution": true,
-                  "parent_execution_id.$": "$.state_data.idempotency_key",
+                  "parent_execution_id.$": "$.execution_id",
                   "chunk_id.$": "$.processing_result.chunk_id",
                   "paused_segment_id.$": "$.processing_result.paused_segment_id"
                 }
@@ -426,23 +445,23 @@
                 "callback_result.$": "$.callback_result",
                 "chunk_data.$": "$.chunk_item",
                 "paused_segment_id.$": "$.processing_result.paused_segment_id",
-                "execution_id.$": "$.state_data.idempotency_key",
-                "owner_id.$": "$.state_data.ownerId",
-                "workflow_id.$": "$.state_data.workflowId",
-                "workflow_config.$": "$.state_data.workflow_config",
+                "execution_id.$": "$.execution_id",
+                "owner_id.$": "$.owner_id",
+                "workflow_id.$": "$.workflow_id",
+                "workflow_config.$": "$.workflow_config",
                 "state_bucket": "${WorkflowStateBucket}",
-                "partition_map_s3_path.$": "$.state_data.partition_map_s3_path",
-                "segment_manifest_s3_path.$": "$.state_data.segment_manifest_s3_path",
-                "distributed_mode.$": "$.state_data.distributed_mode",
-                "loop_counter.$": "$.state_data.loop_counter",
-                "max_loop_iterations.$": "$.state_data.max_loop_iterations",
-                "max_branch_iterations.$": "$.state_data.max_branch_iterations",
-                "llm_segments.$": "$.state_data.llm_segments",
-                "hitp_segments.$": "$.state_data.hitp_segments",
-                "quota_reservation_id.$": "$.state_data.quota_reservation_id",
-                "state_durations.$": "$.state_data.state_durations",
-                "last_update_time.$": "$.state_data.last_update_time",
-                "start_time.$": "$.state_data.start_time"
+                "partition_map_s3_path.$": "$.partition_map_s3_path",
+                "segment_manifest_s3_path.$": "$.segment_manifest_s3_path",
+                "distributed_mode.$": "$.distributed_mode",
+                "loop_counter.$": "$.loop_counter",
+                "max_loop_iterations.$": "$.max_loop_iterations",
+                "max_branch_iterations.$": "$.max_branch_iterations",
+                "llm_segments.$": "$.llm_segments",
+                "hitp_segments.$": "$.hitp_segments",
+                "quota_reservation_id.$": "$.quota_reservation_id",
+                "state_durations.$": "$.state_durations",
+                "last_update_time.$": "$.last_update_time",
+                "start_time.$": "$.start_time"
               }
             },
             "ResultSelector": {
@@ -463,10 +482,11 @@
               "Payload": {
                 "chunk_id.$": "$.resume_result.chunk_id",
                 "final_state.$": "$.resume_result.final_state",
-                "execution_id.$": "$.state_data.idempotency_key",
-                "owner_id.$": "$.state_data.ownerId",
-                "workflow_id.$": "$.state_data.workflowId",
+                "execution_id.$": "$.execution_id",
+                "owner_id.$": "$.owner_id",
+                "workflow_id.$": "$.workflow_id",
                 "state_bucket": "${WorkflowStateBucket}",
+                "total_segments.$": "$.total_segments",
                 "is_resumed": true
               }
             },

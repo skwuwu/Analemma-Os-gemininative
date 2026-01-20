@@ -460,7 +460,14 @@ class StatePersistenceService:
 
         # Offload to S3
         logger.warning(f"Large state ({size} bytes), offloading to S3")
-        large_key = f"large-states/{s3_key.split('/')[1]}/{int(time.time())}.json"
+        # 🛡️ [P1] S3 파티셔닝 강화: owner_id를 경로 최상단으로 올려서 분산 저장
+        # 기존: large-states/{execution_id}/{timestamp}.json
+        # 개선: large-states/{owner_id}/{workflow_id}/{execution_id}/{timestamp}.json
+        path_parts = s3_key.split('/')
+        owner_id = path_parts[1] if len(path_parts) > 1 else 'unknown'
+        workflow_id = path_parts[2] if len(path_parts) > 2 else 'unknown'
+        execution_id = path_parts[3] if len(path_parts) > 3 else 'unknown'
+        large_key = f"large-states/{owner_id}/{workflow_id}/{execution_id}/{int(time.time())}.json"
         
         self.s3_client.put_object(
             Bucket=self._state_bucket,
@@ -486,13 +493,15 @@ class StatePersistenceService:
         source: Optional[str] = None,
         error: Optional[str] = None,
         payload_type: str = "inline",
-        payload_size: int = 0
+        payload_size: int = 0,
+        total_segments: Optional[int] = None  # 🛡️ [P0] ASL null 참조 방지
     ) -> Dict[str, Any]:
         """Build standardized load response."""
         response = {
             "previous_state": state_data or {},
             "latest_segment_id": latest_segment_id,
-            "state_loaded": state_loaded
+            "state_loaded": state_loaded,
+            "total_segments": total_segments if total_segments is not None else 1  # 🛡️ [P0] 기본값 보장
         }
         if reason:
             response["reason"] = reason

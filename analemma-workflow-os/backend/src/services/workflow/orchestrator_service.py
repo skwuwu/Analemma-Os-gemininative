@@ -24,6 +24,19 @@ logger = logging.getLogger(__name__)
 # Schema Definitions
 # -----------------------------------------------------------------------------
 
+# 🛡️ [P2] 허용된 노드 타입 목록 - 잘못된 시나리오는 애초에 검증 단계에서 차단
+ALLOWED_NODE_TYPES = {
+    "operator", "llm", "prompt", "retriever", "tool",
+    "branch", "router", "parallel_group", "aggregator", "join",
+    "input", "output", "start", "end", "hitp", "pause",
+    "subgraph", "subgraph_ref",
+}
+
+# 🔄 별칭(Alias) 매핑 - field_validator에서 정규 타입으로 변환됨
+NODE_TYPE_ALIASES = {
+    "code": "operator",
+}
+
 class EdgeModel(BaseModel):
     source: constr(min_length=1, max_length=128)
     target: constr(min_length=1, max_length=128)
@@ -46,10 +59,26 @@ class NodeModel(BaseModel):
     
     @field_validator('type', mode='before')
     @classmethod
-    def alias_node_type(cls, v):
-        """Alias 'code' type to 'operator' to prevent ValueError in NODE_REGISTRY."""
-        if v == 'code':
-            return 'operator'
+    def alias_and_validate_node_type(cls, v):
+        """
+        🛡️ [P2] Validate and alias node types.
+        """
+        if not isinstance(v, str):
+            raise ValueError(f"Node type must be string, got {type(v).__name__}")
+        
+        v = v.strip().lower()
+        
+        # Apply alias mapping first
+        if v in NODE_TYPE_ALIASES:
+            return NODE_TYPE_ALIASES[v]
+        
+        if v not in ALLOWED_NODE_TYPES:
+            raise ValueError(
+                f"Unknown node type: '{v}'. "
+                f"Allowed types: {sorted(ALLOWED_NODE_TYPES)}. "
+                f"Aliases: {NODE_TYPE_ALIASES}"
+            )
+        
         return v
 
 
@@ -233,7 +262,18 @@ class WorkflowOrchestratorService:
             return result
             
         except AsyncLLMRequiredException:
-            return {"status": "PAUSED_FOR_ASYNC_LLM"}
+            # 🛡️ [P1 Fix] Step Functions가 필요로 하는 모든 필드 포함
+            return {
+                "status": "PAUSED_FOR_ASYNC_LLM",
+                "total_segments": initial_state.get("total_segments") or 1,
+                "final_state": initial_state,
+                "final_state_s3_path": None,
+                "next_segment_to_run": None,
+                "new_history_logs": [],
+                "error_info": None,
+                "branches": None,
+                "segment_type": "async_pause"
+            }
         except Exception as e:
             logger.exception("Workflow execution failed")
             raise

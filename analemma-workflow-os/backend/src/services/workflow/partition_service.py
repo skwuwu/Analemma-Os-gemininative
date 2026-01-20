@@ -319,6 +319,16 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
     
     # --- Segment 생성 헬퍼 ---
     def create_segment(nodes_map, edges_list, s_type="normal", override_id=None, config=None):
+        # 🛡️ [v2.6 P0 Fix] 'code' 타입 강제 정정 - ValueError 방지
+        # 상위 레이어(프론트엔드, DB 등)에서 잘못된 타입이 들어올 수 있으므로 여기서 교정
+        for node_id, node in nodes_map.items():
+            if isinstance(node, dict) and node.get("type") == "code":
+                logger.warning(
+                    f"🛡️ [Kernel Defense] Fixing 'code' type to 'operator' for node {node_id} "
+                    f"in partition_service.create_segment"
+                )
+                node["type"] = "operator"
+        
         # 세그먼트 내부 엣지 추가
         if config:
             all_edges = config.get("edges", [])
@@ -664,6 +674,11 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
     
     total_segments = count_segments_recursive(segments)
     
+    # 🛡️ [P2 Fix] total_segments가 0이면 최소 1로 보장 (빈 워크플로우 방어)
+    if total_segments < 1:
+        logger.warning(f"total_segments calculated as {total_segments}, forcing to 1")
+        total_segments = 1
+    
     # [Performance Optimization] Pre-indexed 메타데이터 반환
     return {
         "partition_map": segments,
@@ -723,9 +738,12 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
             partition_result.get("total_branches", 0)
         )
         
+        # 🛡️ [Critical Fix] 반환 구조 평탄화 - Step Functions ASL이 $.Payload.total_segments를 직접 참조할 수 있도록
+        # 기존: {"status": "success", "partition_result": {...}} → ASL에서 $.Payload.partition_result.total_segments로 접근 필요
+        # 수정: {"status": "success", "total_segments": N, ...} → ASL에서 $.Payload.total_segments로 직접 접근 가능
         return {
             "status": "success",
-            "partition_result": partition_result
+            **partition_result  # 🛡️ 결과를 평탄화하여 ASL 매핑 오류 해결
         }
     
     except CycleDetectedError as e:
@@ -734,7 +752,9 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
             "status": "error",
             "error_type": "CycleDetectedError",
             "error_message": str(e),
-            "cycle_path": e.cycle_path
+            "cycle_path": e.cycle_path,
+            "total_segments": 1,  # 🛡️ [P0] ASL null 참조 방지
+            "partition_map": []
         }
     
     except PartitionDepthExceededError as e:
@@ -744,7 +764,9 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
             "error_type": "PartitionDepthExceededError",
             "error_message": str(e),
             "depth": e.depth,
-            "max_depth": e.max_depth
+            "max_depth": e.max_depth,
+            "total_segments": 1,  # 🛡️ [P0] ASL null 참조 방지
+            "partition_map": []
         }
     
     except ValueError as e:
@@ -752,7 +774,9 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
         return {
             "status": "error",
             "error_type": "ValidationError",
-            "error_message": str(e)
+            "error_message": str(e),
+            "total_segments": 1,  # 🛡️ [P0] ASL null 참조 방지
+            "partition_map": []
         }
         
     except Exception as e:
@@ -760,5 +784,7 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
         return {
             "status": "error",
             "error_type": type(e).__name__,
-            "error_message": str(e)
+            "error_message": str(e),
+            "total_segments": 1,  # 🛡️ [P0] ASL null 참조 방지
+            "partition_map": []
         }

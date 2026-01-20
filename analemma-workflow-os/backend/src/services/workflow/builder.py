@@ -550,6 +550,24 @@ class DynamicWorkflowBuilder:
             except ImportError:
                 pass
         
+        elif node_type == "code":
+            # [Fix] 'code' is alias for operator - handle explicitly as fallback
+            try:
+                from src.handlers.core.main import operator_runner
+                def _code_node(state: Dict[str, Any], config=None) -> Dict[str, Any]:
+                    node_id = node_def.get('id', 'unknown_code')
+                    logger.info(f"🔧 Executing code node (as operator): {node_id}")
+                    result = operator_runner(state, node_def)
+                    return result
+                return _code_node
+            except ImportError as e:
+                # 🛡️ [P2 Fix] ImportError 시 명확한 에러 발생 (silent fail 방지)
+                logger.error(f"Failed to import operator_runner for 'code' node: {e}")
+                raise ValueError(
+                    f"Cannot handle 'code' node type: operator_runner import failed. "
+                    f"Ensure src.handlers.core.main is accessible. Error: {e}"
+                )
+        
         elif node_type == "subgraph":
             # Handle subgraph nodes - delegate to subgraph handler creation
             # This is handled specially in _add_nodes, so shouldn't reach here
@@ -569,6 +587,16 @@ class DynamicWorkflowBuilder:
 
             if not node_id or not node_type:
                 raise ValueError(f"Node missing required fields 'id' or 'type': {node_def}")
+            
+            # 🛡️ [v2.6 P0 Fix] 'code' 타입 런타임 Self-Healing
+            # Pydantic validator를 거치지 않고 직접 dict로 들어온 경우 대비
+            if node_type == "code":
+                logger.warning(
+                    f"🛡️ [Self-Healing] builder.py aliasing 'code' to 'operator' for node {node_id}. "
+                    f"This indicates upstream data mutation - investigate PartitionService or workflow JSON."
+                )
+                node_type = "operator"
+                node_def["type"] = "operator"  # 원본 dict도 교정
             
             # Special handling for subgraph nodes
             if node_type == "subgraph":

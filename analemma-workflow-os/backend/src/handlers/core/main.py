@@ -7,7 +7,7 @@ import operator
 import concurrent.futures
 import logging
 import random
-from typing import TypedDict, Dict, Any, List, Optional, Annotated, Union, Callable, Tuple
+from typing import TypedDict, Dict, Any, List, Optional, Annotated, Union, Callable, Tuple, Literal
 from functools import partial
 import socket
 import ipaddress
@@ -93,6 +93,24 @@ class WorkflowState(TypedDict, total=False):
 # -----------------------------------------------------------------------------
 
 # --- Pydantic Schemas for workflow config validation ---
+
+# 🛡️ [P2] 허용된 노드 타입 목록 - 잘못된 시나리오는 애초에 검증 단계에서 차단
+ALLOWED_NODE_TYPES = {
+    # Core types
+    "operator", "llm", "prompt", "retriever", "tool",
+    # Flow control
+    "branch", "router", "parallel_group", "aggregator", "join",
+    # Special
+    "input", "output", "start", "end", "hitp", "pause",
+    # Subgraph
+    "subgraph", "subgraph_ref",
+}
+
+# 🔄 별칭(Alias) 매핑 - field_validator에서 정규 타입으로 변환됨
+NODE_TYPE_ALIASES = {
+    "code": "operator",  # 'code'는 'operator'의 별칭
+}
+
 class EdgeModel(BaseModel):
     source: constr(min_length=1, max_length=128)
     target: constr(min_length=1, max_length=128)
@@ -120,10 +138,29 @@ class NodeModel(BaseModel):
     
     @field_validator('type', mode='before')
     @classmethod
-    def alias_node_type(cls, v):
-        """Alias 'code' type to 'operator' to prevent ValueError in NODE_REGISTRY."""
-        if v == 'code':
-            return 'operator'
+    def alias_and_validate_node_type(cls, v):
+        """
+        🛡️ [P2] Validate and alias node types.
+        - Aliases are converted to canonical types (e.g., 'code' -> 'operator')
+        - Unknown types are rejected with clear error message
+        """
+        if not isinstance(v, str):
+            raise ValueError(f"Node type must be string, got {type(v).__name__}")
+        
+        v = v.strip().lower()
+        
+        # Apply alias mapping first
+        if v in NODE_TYPE_ALIASES:
+            return NODE_TYPE_ALIASES[v]
+        
+        # Validate against allowed types
+        if v not in ALLOWED_NODE_TYPES:
+            raise ValueError(
+                f"Unknown node type: '{v}'. "
+                f"Allowed types: {sorted(ALLOWED_NODE_TYPES)}. "
+                f"Aliases: {NODE_TYPE_ALIASES}"
+            )
+        
         return v
     
     class Config:
@@ -1626,7 +1663,9 @@ register_node("skill_executor", skill_executor_runner)  # Skills integration
 register_node("nested_for_each", nested_for_each_runner)  # V3 Hyper-Stress: Nested Map-in-Map support
 register_node("vision", vision_runner)  # Gemini Vision multimodal analysis
 register_node("image_analysis", vision_runner)  # Alias for vision
-register_node("code", operator_runner)  # [Fix] 'code' 노드 타입은 operator와 동일하게 처리
+# Note: 'code' 타입은 NODE_REGISTRY에 추가하지 않음
+# Pydantic field_validator에서 'code' -> 'operator'로 변환되므로 여기 도달 불가
+# 만약 'code' 타입이 여기 도달하면 검증 단계를 우회한 것이므로 에러가 맞음
 
 # SubGraph/Group 노드 러너 - DynamicWorkflowBuilder에서 재귀적으로 처리
 def subgraph_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:

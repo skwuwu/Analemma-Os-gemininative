@@ -102,6 +102,9 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
         chunk_index = chunk_data.get('chunk_index', 0)
         chunk_id = chunk_data.get('chunk_id', 'unknown')
         
+        # [P0] 상위 컨텍스트 보존을 위해 total_segments를 미리 확보
+        total_segments = event.get('total_segments')
+        
         logger.info(f"LoadLatestState: chunk={chunk_id}, index={chunk_index}")
         
         # [v2.3] Global Scope의 싱글톤 서비스 사용 (Cold Start 최적화)
@@ -118,6 +121,22 @@ def lambda_handler(event: Dict[str, Any], context: Any = None) -> Dict[str, Any]
             chunk_index=chunk_index,
             chunk_data=chunk_data
         )
+
+        # 🛡️ [P0] 데이터 정화 (유령 'code' 타입 박멸)
+        # 로드된 상태 내부의 모든 노드 타입을 검사하여 operator로 강제 환원
+        prev_state = result.get("previous_state", {})
+        if isinstance(prev_state, dict):
+            # 상태 내부에 partition_map이 포함된 경우 전수 조사
+            for seg in prev_state.get('partition_map', []):
+                if isinstance(seg, dict):
+                    for node in seg.get('nodes', []):
+                        if isinstance(node, dict) and node.get('type') == 'code':
+                            logger.warning(f"🛡️ Kernel Defense: Sanitized 'code' to 'operator' in node {node.get('id')}")
+                            node['type'] = 'operator'
+
+        # 🛡️ [P0] 컨텍스트 보존 (TypeError 원천 차단)
+        # 반환값에 total_segments를 명시적으로 주입하여 Step Functions 흐름 보장
+        result["total_segments"] = int(total_segments) if total_segments is not None else 1
         
         # [v2.3] Step Functions 분기 전략용 플래그 추가
         result = _enrich_result_with_branch_flags(result)

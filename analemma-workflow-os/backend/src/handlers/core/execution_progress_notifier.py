@@ -257,7 +257,11 @@ def should_update_database(payload: dict, state_data: dict) -> bool:
     current_status = payload.get('status', '').upper()
     action = payload.get('notification_type', payload.get('action', ''))
     current_segment = payload.get('segment_to_run', state_data.get('segment_to_run', 0))
-    total_segments = payload.get('total_segments', state_data.get('total_segments', 1))
+    # 🛡️ [P0 Fix] None 값 방어 - payload나 state_data에 키가 있지만 값이 None인 경우 처리
+    raw_total = payload.get('total_segments')
+    if raw_total is None:
+        raw_total = state_data.get('total_segments')
+    total_segments = max(1, int(raw_total)) if raw_total is not None and isinstance(raw_total, (int, float)) else 1
     
     # 전략별 업데이트 결정
     if DB_UPDATE_STRATEGY == 'ALL':
