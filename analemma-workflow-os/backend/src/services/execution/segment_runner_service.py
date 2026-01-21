@@ -1137,7 +1137,8 @@ class SegmentRunnerService:
         
         # 🛡️ [P0 Fix] total_segments 반드시 포함 - ASL Choice 상태의 null 참조 방지
         return {
-            "status": "COMPLETE" if is_complete else "SUCCEEDED",
+            # 🛡️ [Fix] Use CONTINUE instead of SUCCEEDED for ASL routing
+            "status": "COMPLETE" if is_complete else "CONTINUE",
             "final_state": final_state,
             "final_state_s3_path": output_s3_path,
             "next_segment_to_run": None if is_complete else next_segment,
@@ -1703,7 +1704,7 @@ class SegmentRunnerService:
             if not valid_branches:
                 logger.info(f"[Kernel] ⏭️ No valid branches to execute, skipping parallel group")
                 return _finalize_response({
-                    "status": "SUCCEEDED",
+                    "status": "CONTINUE",  # 🛡️ [Fix] Use CONTINUE for ASL routing
                     "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
                     "next_segment_to_run": segment_id + 1,
@@ -1879,12 +1880,14 @@ class SegmentRunnerService:
             
             total_segments = _safe_get_total_segments(event)
             next_segment = segment_id + 1
+            has_more_segments = next_segment < total_segments
             
             return _finalize_response({
-                "status": "SUCCEEDED",  # 🛡️ Partial Success: FAILED 대신 SUCCEEDED
+                # 🛡️ [Fix] Use CONTINUE/COMPLETE instead of SUCCEEDED for ASL routing
+                "status": "CONTINUE" if has_more_segments else "COMPLETE",
                 "final_state": final_state,
                 "final_state_s3_path": output_s3_path,
-                "next_segment_to_run": next_segment if next_segment < total_segments else None,
+                "next_segment_to_run": next_segment if has_more_segments else None,
                 "new_history_logs": [],
                 "error_info": execution_error,  # 에러 정보는 메타데이터로 전달
                 "branches": None,
