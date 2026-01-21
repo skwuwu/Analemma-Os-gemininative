@@ -1,0 +1,78 @@
+analemma-workflow-os/backend/src\common\graph_dsl.py:1013: if len(node_ids) <= 1:
+analemma-workflow-os/backend/src\common\initialize_state_data.py:81: if total_segments <= 10:
+analemma-workflow-os/backend/src\common\initialize_state_data.py:168: elif max_parallel_branches <= 5:
+analemma-workflow-os/backend/src\common\initialize_state_data.py:172: elif max_parallel_branches <= 10:
+analemma-workflow-os/backend/src\common\initialize_state_data.py:175: elif max_parallel_branches <= 20:
+analemma-workflow-os/backend/src\common\model_router.py:274: if ratio <= 1.2:
+analemma-workflow-os/backend/src\common\model_router.py:276: elif ratio <= 2.0:
+analemma-workflow-os/backend/src\common\model_router.py:428: │  - thinking_budget <= max_tokens * (1 - min_output_ratio)               │
+analemma-workflow-os/backend/src\common\model_router.py:429: │  - 예: max_tokens=2048 → thinking_budget <= 1228                        │
+analemma-workflow-os/backend/src\common\model_router.py:432: if max_tokens <= 0:
+analemma-workflow-os/backend/src\common\model_router.py:486: if tier_order.get(recommended_model.tier, 0) <= tier_order.get(budget_constraint, 2):
+analemma-workflow-os/backend/src\common\model_router.py:1257: if effective_ttft < best_ttft and effective_ttft <= max_ttft_ms * 1.5:
+analemma-workflow-os/backend/src\handlers\core\aggregate_distributed_results.py:1621: if len(states) <= MERGE_BATCH_SIZE:
+analemma-workflow-os/backend/src\handlers\core\aggregate_distributed_results.py:1657: if len(states) <= MERGE_BATCH_SIZE:
+analemma-workflow-os/backend/src\handlers\core\async_llm_handler.py:545: if len(value) <= limit:
+analemma-workflow-os/backend/src\handlers\core\instruction_distiller.py:635: if len(instructions) <= target_count:
+analemma-workflow-os/backend/src\handlers\core\main.py:560: while attempt <= max_retries:
+analemma-workflow-os/backend/src\handlers\core\notify_result.py:104: if 400 <= e.code < 500:
+analemma-workflow-os/backend/src\handlers\core\prepare_distributed_execution.py:615: if branch_count <= 5:
+analemma-workflow-os/backend/src\handlers\core\prepare_distributed_execution.py:617: elif branch_count <= 20:
+analemma-workflow-os/backend/src\handlers\core\resume_chunk_processing.py:484: if state_size_bytes <= SIZE_LIMIT_BYTES:
+analemma-workflow-os/backend/src\handlers\core\store_distributed_task_token.py:219: if state_size_bytes <= SIZE_LIMIT_BYTES:
+analemma-workflow-os/backend/src\handlers\simulator\local_runner.py:462: if 200 <= code < 300:
+analemma-workflow-os/backend/src\handlers\simulator\mission_simulator.py:1051: invocation_check = task_count <= MAX_LAMBDA_INVOCATIONS
+analemma-workflow-os/backend/src\handlers\simulator\mission_simulator.py:1128: passed = 200 <= status_code < 300
+analemma-workflow-os/backend/src\handlers\simulator\mission_simulator.py:2419: parallel = time_range <= 5.0
+analemma-workflow-os/backend/src\handlers\simulator\mission_simulator.py:3346: 'passed': depth_enforced or actual_depth <= max_depth,
+analemma-workflow-os/backend/src\handlers\simulator\verify_result.py:601: checks.append(_check("Branch1 Within Limit", branch1_count <= 25,
+analemma-workflow-os/backend/src\handlers\simulator\verify_result.py:603: checks.append(_check("Branch2 Within Limit", branch2_count <= 25,
+analemma-workflow-os/backend/src\handlers\simulator\verify_result.py:863: expected=f"<= {max_depth}",
+analemma-workflow-os/backend/src\handlers\simulator\verify_result.py:908: details=f"Actual depth ({actual_depth}) should be <= max_depth + 1"))
+analemma-workflow-os/backend/src\handlers\utils\async_alias_generator.py:186: if 3 <= len(alias) <= 30:
+analemma-workflow-os/backend/src\handlers\utils\collector_lambda.py:168: if payload_size <= CONTENT_TRUNCATE_THRESHOLD:
+analemma-workflow-os/backend/src\handlers\utils\correction_quality_processor.py:390: if AMBIGUOUS_SCORE_MIN <= base_score <= AMBIGUOUS_SCORE_MAX:
+analemma-workflow-os/backend/src\handlers\utils\save_workflow.py:165: if not (0.0 <= tval <= 1.0):
+analemma-workflow-os/backend/src\handlers\utils\save_workflow.py:174: if mval <= 0:
+analemma-workflow-os/backend/src\handlers\utils\save_workflow.py:183: if iv <= 0:
+analemma-workflow-os/backend/src\handlers\utils\skills_api.py:750: if 0 <= idx < len(skills):
+analemma-workflow-os/backend/src\handlers\utils\state_data_manager.py:97: if not state_history or len(state_history) <= max_entries:
+analemma-workflow-os/backend/src\handlers\utils\task_metrics_api.py:614: if cost_usd <= 0:
+analemma-workflow-os/backend/src\services\instruction_conflict_service.py:369: if 0 <= i < len(existing_instructions)
+analemma-workflow-os/backend/src\services\instruction_conflict_service.py:1442: if 0 <= index < len(candidate_instructions):
+analemma-workflow-os/backend/src\services\task_service.py:467: if ts <= 0:
+analemma-workflow-os/backend/src\services\task_service.py:640: "full_content": value if len(str_value) <= 10000 else None,
+analemma-workflow-os/backend/src\services\vector_sync_service.py:438: if test_tokens <= self.effective_token_limit:
+analemma-workflow-os/backend/src\services\vector_sync_service.py:470: if self._count_tokens(text) <= max_tokens:
+analemma-workflow-os/backend/src\services\vector_sync_service.py:477: while left <= right:
+analemma-workflow-os/backend/src\services\vector_sync_service.py:481: if self._count_tokens(candidate) <= max_tokens:
+analemma-workflow-os/backend/src\services\design\codesign_assistant.py:1111: "will_attempt_correction": len(pending_corrections) <= max_self_correction_attempts
+analemma-workflow-os/backend/src\services\design\codesign_assistant.py:1151: if pending_corrections and len(pending_corrections) <= max_self_correction_attempts:
+analemma-workflow-os/backend/src\services\design\codesign_assistant.py:1568: if len(nodes) <= max_nodes:
+analemma-workflow-os/backend/src\services\design\designer_service.py:599: 필터링된 노드 ID 집합 (크기 <= max_nodes)
+analemma-workflow-os/backend/src\services\design\designer_service.py:601: if len(focus_node_ids) <= max_nodes:
+analemma-workflow-os/backend/src\services\design\designer_service.py:684: if len(nodes) <= max_nodes:
+analemma-workflow-os/backend/src\services\execution\segment_runner_service.py:853: if (new_memory <= max_memory and
+analemma-workflow-os/backend/src\services\execution\segment_runner_service.py:854: new_tokens <= max_tokens and
+analemma-workflow-os/backend/src\services\execution\segment_runner_service.py:855: new_count <= max_branches):
+analemma-workflow-os/backend/src\services\execution\segment_runner_service.py:986: if total_memory <= max_memory and total_tokens <= max_tokens:
+analemma-workflow-os/backend/src\services\execution\segment_runner_service.py:2012: if isinstance(partition_map, list) and 0 <= segment_id < len(partition_map):
+analemma-workflow-os/backend/src\services\execution\segment_runner_service.py:2032: if 0 <= segment_id < len(parts):
+analemma-workflow-os/backend/src\services\execution\segment_runner_service.py:2040: if 0 <= segment_id < len(partition_map):
+analemma-workflow-os/backend/src\services\infrastructure\partition_cache_service.py:73: if 0 <= required_segment_index < len(full_map):
+analemma-workflow-os/backend/src\services\infrastructure\partition_cache_service.py:92: if 0 <= required_segment_index < len(cached_data):
+analemma-workflow-os/backend/src\services\quality_kernel\cost_guardrails.py:351: if self.max_budget_usd <= 0:
+analemma-workflow-os/backend/src\services\quality_kernel\cost_guardrails.py:626: if degraded_threshold <= 0.2:
+analemma-workflow-os/backend/src\services\quality_kernel\cost_guardrails.py:726: if GREY_ZONE_LOW <= similarity < GREY_ZONE_HIGH and quality_improvement < 0.05:
+analemma-workflow-os/backend/src\services\quality_kernel\cost_guardrails.py:867: if attempt <= 1:
+analemma-workflow-os/backend/src\services\quality_kernel\entropy_analyzer.py:403: repetition_ratio <= self.thresholds.max_repetition_ratio
+analemma-workflow-os/backend/src\services\quality_kernel\kernel_middleware.py:460: if self.enable_stage2 and 0.35 <= combined_score <= 0.65:
+analemma-workflow-os/backend/src\services\quality_kernel\quality_gate.py:200: elif criticality <= 0.7:
+analemma-workflow-os/backend/src\services\quality_kernel\slop_detector.py:495: requires_llm = 0.3 <= slop_score <= 0.7
+analemma-workflow-os/backend/src\services\recovery\prompt_security_guard.py:424: if ring_level.value <= RingLevel.RING_1_DRIVER.value:
+Error reading analemma-workflow-os/backend/src\services\state\state_manager.py: 'cp949' codec can't encode character '\U0001f4e6' in position 83: illegal multibyte sequence
+analemma-workflow-os/backend/src\services\state\state_persistence_service.py:453: if size <= self.SIZE_LIMIT_BYTES:
+analemma-workflow-os/backend/src\services\workflow\orchestrator_selector.py:195: if total_segments <= 50:
+analemma-workflow-os/backend/src\services\workflow\orchestrator_selector.py:197: elif total_segments <= 300:
+analemma-workflow-os/backend/src\services\workflow\orchestrator_selector.py:348: if 100 <= complexity.total_segments < 300:
+analemma-workflow-os/backend/src\services\workflow\partition_service.py:278: if len(nodes_map) <= 1:
