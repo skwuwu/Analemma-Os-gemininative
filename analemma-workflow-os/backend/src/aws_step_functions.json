@@ -337,7 +337,9 @@
             },
             "Retry": [
               {
-                "ErrorEquals": ["Lambda.TooManyRequestsException"],
+                "ErrorEquals": [
+                  "Lambda.TooManyRequestsException"
+                ],
                 "IntervalSeconds": 5,
                 "MaxAttempts": 10,
                 "BackoffRate": 2.0,
@@ -408,7 +410,9 @@
             },
             "Retry": [
               {
-                "ErrorEquals": ["Lambda.TooManyRequestsException"],
+                "ErrorEquals": [
+                  "Lambda.TooManyRequestsException"
+                ],
                 "IntervalSeconds": 3,
                 "MaxAttempts": 5,
                 "BackoffRate": 2.0,
@@ -537,6 +541,11 @@
         },
         {
           "Variable": "$.execution_result.status",
+          "StringEquals": "COMPLETE",
+          "Next": "PublishSucceededEvent"
+        },
+        {
+          "Variable": "$.execution_result.status",
           "StringEquals": "PARALLEL_GROUP",
           "Next": "ProcessParallelSegments"
         },
@@ -657,7 +666,11 @@
             "ResultPath": "$.execution_result",
             "Retry": [
               {
-                "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException", "Lambda.Unknown"],
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.TooManyRequestsException",
+                  "Lambda.Unknown"
+                ],
                 "IntervalSeconds": 2,
                 "MaxAttempts": 3,
                 "BackoffRate": 2
@@ -665,7 +678,9 @@
             ],
             "Catch": [
               {
-                "ErrorEquals": ["States.ALL"],
+                "ErrorEquals": [
+                  "States.ALL"
+                ],
                 "ResultPath": "$.branch_error",
                 "Next": "HandleBranchError"
               }
@@ -694,6 +709,11 @@
           "CheckBranchNext": {
             "Type": "Choice",
             "Choices": [
+              {
+                "Variable": "$.execution_result.status",
+                "StringEquals": "COMPLETE",
+                "Next": "BranchComplete"
+              },
               {
                 "Variable": "$.execution_result.next_segment_to_run",
                 "IsPresent": true,
@@ -766,7 +786,9 @@
       },
       "Catch": [
         {
-          "ErrorEquals": ["States.ALL"],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Comment": "🛡️ [Kernel Defense] Map 에러 시 부분 결과로 Aggregator 진행",
           "ResultPath": "$.map_error",
           "Next": "HandleMapError"
@@ -1140,7 +1162,9 @@
       "ResultPath": "$.async_notification_result",
       "Catch": [
         {
-          "ErrorEquals": ["States.ALL"],
+          "ErrorEquals": [
+            "States.ALL"
+          ],
           "Comment": "Notification failure should not block async processing",
           "ResultPath": "$.async_notification_error",
           "Next": "HandleAsyncLLM"
