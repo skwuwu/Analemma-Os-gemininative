@@ -603,8 +603,8 @@ def lambda_handler(event, context):
         # [Fix] Pass MOCK_MODE - for simulator E2E testing (HITP auto resume, etc.)
         "MOCK_MODE": mock_mode,
         
-        # 🚨 [Critical Fix] Loop Control Parameters
-        "max_loop_iterations": workflow_config.get("max_loop_iterations", 100),
-        "max_branch_iterations": workflow_config.get("max_branch_iterations", 100)
+        # 🚨 [Critical Fix] Loop Control Parameters - Force int to prevent SFN comparison failure
+        "max_loop_iterations": int(workflow_config.get("max_loop_iterations", 100)),
+        "max_branch_iterations": int(workflow_config.get("max_branch_iterations", 100))
     }
 

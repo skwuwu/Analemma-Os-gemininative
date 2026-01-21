@@ -203,9 +203,9 @@ def update_and_compress_state_data(event: Dict[str, Any]) -> Dict[str, Any]:
         'state_durations': state_data.get('state_durations'),
         'last_update_time': state_data.get('last_update_time'),
         'start_time': state_data.get('start_time'),
-        'max_loop_iterations': state_data.get('max_loop_iterations', 100),
-        'max_branch_iterations': state_data.get('max_branch_iterations', 100),
-        'loop_counter': state_data.get('loop_counter', 0)
+        'max_loop_iterations': int(state_data.get('max_loop_iterations', 100)),
+        'max_branch_iterations': int(state_data.get('max_branch_iterations', 100)),
+        'loop_counter': int(state_data.get('loop_counter', 0))
     }
 
     
