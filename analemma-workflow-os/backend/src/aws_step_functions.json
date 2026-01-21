@@ -525,6 +525,8 @@
           "ErrorEquals": [
             "States.ALL"
           ],
+          "ResultPath": "$.error_info",
+          "Comment": "Catch all errors and preserve error details for NotifyExecutionFailure",
           "Next": "NotifyExecutionFailure"
         }
       ],
