@@ -99,11 +99,17 @@ ALLOWED_NODE_TYPES = {
     # Core types
     "operator", "llm_chat", "prompt", "retriever", "tool",
     # Flow control
-    "branch", "router", "parallel_group", "aggregator", "join", "for_each",
+    "branch", "router", "parallel_group", "aggregator", "join", "for_each", "nested_for_each",
     # Special
     "input", "output", "start", "end", "hitp", "pause",
     # Subgraph
     "subgraph", "subgraph_ref",
+    # Infrastructure & Data
+    "api_call", "db_query",
+    # Multimodal & Skills
+    "vision", "video_chunker", "skill_executor",
+    # Specialized Operators
+    "operator_custom", "operator_official"
 }
 
 # 🔄 별칭(Alias) 매핑 - field_validator에서 정규 타입으로 변환됨
@@ -123,7 +129,11 @@ NODE_TYPE_ALIASES = {
     "parallel": "parallel_group",
     "map": "for_each",
     "foreach": "for_each",
-    "loop": "for_each"
+    "loop": "for_each",
+    "image_analysis": "vision",
+    "chunker": "video_chunker",
+    "group": "subgraph",
+    "map_in_map": "nested_for_each",
 }
 
 class EdgeModel(BaseModel):

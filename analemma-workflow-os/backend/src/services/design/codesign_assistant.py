@@ -160,6 +160,26 @@ NODE_TYPE_SPECS = """
 
 7. "group": 서브그래프 노드
    - config.subgraph_id: 서브그래프 ID (문자열)
+
+8. "vision": 이미지/비디오 분석 노드 (Gemini Vision)
+   - config.image_inputs: 분석할 이미지 소스 리스트 (배열, 문자열은 S3 URI/URL)
+   - config.video_inputs: 분석할 비디오 소스 리스트 (배열, S3 URI/URL)
+   - config.prompt_content: 분석 프롬프트 (문자열)
+   - config.output_key: 결과 저장 키 (문자열)
+
+9. "video_chunker": 비디오 분할 노드 (긴 비디오 처리용)
+   - config.video_uri: 원본 비디오 S3 URI (문자열)
+   - config.segment_length_min: 분할 길이(분) (숫자)
+   - config.output_key: 청크 리스트 저장 키 (문자열)
+
+10. "nested_for_each": 중첩 루프 처리 노드 (Map-in-Map)
+    - config.input_list_key: 외부 리스트 키 (문자열)
+    - config.nested_config: 내부 루프 설정 (객체) - {input_list_key, sub_node_config}
+
+11. "skill_executor": 스킬 실행 노드
+    - config.skill_ref: 스킬 ID (문자열)
+    - config.tool_call: 실행할 툴 이름 (문자열)
+    - config.input_mapping: 입력 매핑 (객체)
 """
 
 CODESIGN_SYSTEM_PROMPT = """

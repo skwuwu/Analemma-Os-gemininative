@@ -1625,6 +1625,113 @@ Refer to all past conversations and changes to generate consistent responses.
         except Exception as e:
             yield f'{{"type": "error", "data": "{str(e)}"}}\n'
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Helper Methods (Data Handling & Parsing)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _download_from_s3(self, s3_uri: str) -> bytes:
+        """Download data from S3"""
+        try:
+            import boto3
+            # s3://bucket/key -> bucket, key
+            parts = s3_uri.replace("s3://", "").split("/", 1)
+            if len(parts) != 2:
+                raise ValueError(f"Invalid S3 URI: {s3_uri}")
+                
+            bucket, key = parts
+            s3 = boto3.client("s3")
+            response = s3.get_object(Bucket=bucket, Key=key)
+            return response["Body"].read()
+        except ImportError:
+            logger.error("boto3 not installed")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to download from S3 {s3_uri}: {e}")
+            raise
+
+    def _download_from_url(self, url: str) -> bytes:
+        """Download data from HTTP/HTTPS URL"""
+        try:
+            import requests
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            return response.content
+        except ImportError:
+            logger.error("requests not installed")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to download from URL {url}: {e}")
+            raise
+
+    def _detect_mime_type(self, data: bytes) -> str:
+        """Detect MIME type from bytes signature"""
+        # Simple signature check
+        if data.startswith(b'\xff\xd8\xff'): return "image/jpeg"
+        if data.startswith(b'\x89PNG\r\n\x1a\n'): return "image/png"
+        if data.startswith(b'GIF87a') or data.startswith(b'GIF89a'): return "image/gif"
+        if data.startswith(b'RIFF') and data[8:12] == b'WEBP': return "image/webp"
+        
+        # Fallback to python-magic if available (optional)
+        try:
+            import magic
+            return magic.from_buffer(data, mime=True)
+        except ImportError:
+            pass
+            
+        # Default fallback
+        return "application/octet-stream"
+
+    def _detect_mime_type_from_extension(self, uri: str) -> Optional[str]:
+        """Detect MIME type from file extension"""
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(uri)
+        return mime_type
+
+    def _parse_response(self, response: Any) -> Dict[str, Any]:
+        """Parse Gemini response into unified format"""
+        result = {}
+        
+        # 1. Text content
+        try:
+            text = response.text
+        except ValueError:
+            # Blocked by safety filter or empty
+            text = ""
+            if hasattr(response, 'candidates') and response.candidates:
+                finish_reason = response.candidates[0].finish_reason
+                result["finish_reason"] = str(finish_reason)
+                if str(finish_reason) == "SAFETY":
+                    text = "[BLOCKED BY SAFETY FILTER]"
+        
+        result["text"] = text
+        
+        # 2. Extract Parts (Function Calls, etc.)
+        content_structure = []
+        if hasattr(response, 'candidates') and response.candidates:
+            parts = response.candidates[0].content.parts
+            for part in parts:
+                part_dict = {}
+                if part.text:
+                    part_dict["text"] = part.text
+                if part.function_call:
+                    part_dict["function_call"] = {
+                        "name": part.function_call.name,
+                        "args": dict(part.function_call.args)
+                    }
+                content_structure.append(part_dict)
+        
+        result["content"] = content_structure
+        
+        # 3. Usage Metadata
+        if hasattr(response, 'usage_metadata'):
+            result["usage_metadata"] = {
+                "prompt_token_count": response.usage_metadata.prompt_token_count,
+                "candidates_token_count": response.usage_metadata.candidates_token_count,
+                "total_token_count": response.usage_metadata.total_token_count,
+            }
+            
+        return result
+
 
 # Convenience functions
 def get_gemini_pro_service() -> GeminiService:
