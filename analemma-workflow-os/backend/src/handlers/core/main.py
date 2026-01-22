@@ -796,6 +796,38 @@ def operator_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             # Security: Restrict builtins to prevent dangerous operations
             # [WARNING] This sandbox is not perfect. Python exec() is vulnerable to introspection attacks (e.g. __subclasses__).
             # For production environments, use AWS Lambda isolation or external gVisor-based runtimes.
+            # [FIX v3.2] Pre-import safe standard library modules
+            # This avoids exposing __import__ directly while allowing workflow code to use imports
+            import time as _time
+            import json as _json
+            import re as _re
+            import uuid as _uuid
+            import math as _math
+            import random as _random
+            import sys as _sys
+            import collections as _collections
+            from datetime import datetime as _datetime, timezone as _timezone, timedelta as _timedelta
+            from collections import Counter as _Counter
+            
+            # [FIX v3.2] Whitelisted __import__ wrapper for workflow code import statements
+            SAFE_MODULES = {
+                'time': _time,
+                'json': _json,
+                're': _re,
+                'uuid': _uuid,
+                'math': _math,
+                'random': _random,
+                'datetime': __import__('datetime'),  # Full module for 'from datetime import ...'
+                'collections': _collections,
+                'sys': _sys,
+            }
+            
+            def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+                """Whitelisted import function that only allows safe standard library modules."""
+                if name not in SAFE_MODULES:
+                    raise ImportError(f"Module '{name}' is not allowed in workflow code. Allowed: {list(SAFE_MODULES.keys())}")
+                return SAFE_MODULES[name]
+            
             safe_builtins = {
                 "print": print,
                 "len": len,
@@ -825,6 +857,13 @@ def operator_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                 "tuple": tuple,
                 "set": set,
                 "frozenset": frozenset,
+                "getattr": getattr,
+                "setattr": setattr,
+                "hasattr": hasattr,
+                "open": None,  # Explicitly blocked
+                "eval": None,  # Explicitly blocked
+                "exec": None,  # Explicitly blocked
+                "compile": None,  # Explicitly blocked
                 # Exception classes
                 "Exception": Exception,
                 "ValueError": ValueError,
@@ -834,9 +873,25 @@ def operator_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                 "IndexError": IndexError,
                 "AttributeError": AttributeError,
                 "StopIteration": StopIteration,
+                "ImportError": ImportError,
                 "True": True,
                 "False": False,
                 "None": None,
+                # [FIX v3.2] Safe standard library modules (pre-imported)
+                # Workflows can use: time.time(), json.dumps(), re.match(), etc.
+                "time": _time,
+                "json": _json,
+                "re": _re,
+                "uuid": _uuid,
+                "math": _math,
+                "random": _random,
+                "datetime": _datetime,
+                "timezone": _timezone,
+                "timedelta": _timedelta,
+                "Counter": _Counter,
+                "collections": _collections,
+                # [FIX v3.2] Whitelisted __import__ for import statements in workflow code
+                "__import__": _safe_import,
             }
             
             # Create a copy of state for execution
