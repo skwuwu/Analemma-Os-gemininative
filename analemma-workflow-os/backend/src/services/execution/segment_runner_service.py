@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import logging
 import os
 import time
@@ -12,7 +13,7 @@ try:
 except ImportError:
     RETRY_UTILS_AVAILABLE = False
 
-# 🛡️ [v2.2] Ring Protection: Prompt Security Guard
+# [Guard] [v2.2] Ring Protection: Prompt Security Guard
 try:
     from src.services.recovery.prompt_security_guard import (
         PromptSecurityGuard,
@@ -26,7 +27,7 @@ except ImportError:
     get_security_guard = None
     RingLevel = None
 
-# 🛡️ [v2.3] 4단계 아키텍처: Concurrency Controller
+# [Guard] [v2.3] 4단계 아키텍처: Concurrency Controller
 try:
     from src.services.quality_kernel.concurrency_controller import (
         ConcurrencyControllerV2,
@@ -52,7 +53,7 @@ from src.common.statebag import normalize_inplace
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# 🛡️ [Kernel] Dynamic Scheduling Constants
+# [Guard] [Kernel] Dynamic Scheduling Constants
 # ============================================================================
 # Memory Safety Margin (Trigger split at 80% usage)
 MEMORY_SAFETY_THRESHOLD = 0.8
@@ -68,7 +69,7 @@ SEGMENT_STATUS_SKIPPED = "SKIPPED"
 SEGMENT_STATUS_FAILED = "FAILED"
 
 # ============================================================================
-# 🛡️ [Kernel] Aggressive Retry & Partial Success Constants
+# [Guard] [Kernel] Aggressive Retry & Partial Success Constants
 # ============================================================================
 # Kernel Internal Retry Count (Attempt before Step Functions level retry)
 KERNEL_MAX_RETRIES = 3
@@ -92,7 +93,7 @@ RETRYABLE_ERROR_PATTERNS = [
 ENABLE_PARTIAL_SUCCESS = True
 
 # ============================================================================
-# 🔀 [Kernel] Parallel Scheduler Constants
+# [Parallel] [Kernel] Parallel Scheduler Constants
 # ============================================================================
 # Default Concurrency Limit (Lambda account level)
 DEFAULT_MAX_CONCURRENT_MEMORY_MB = 3072  # 3GB (Assuming 3 Lambda concurrent executions)
@@ -132,7 +133,7 @@ LIST_MERGE_KEY_PATTERNS = [
 
 def _safe_get_total_segments(event: Dict[str, Any]) -> int:
     """
-    🛡️ [Fix] total_segments를 안전하게 추출
+    [Guard] [Fix] total_segments를 안전하게 추출
     
     문제점: event.get('total_segments')가 None, "", 0 등 다양한 값일 수 있음
     - None: Step Functions에서 null로 전달
@@ -183,14 +184,14 @@ class SegmentRunnerService:
                 self.threshold = int(threshold_str.strip())
                 # Warn if threshold is too high
                 if self.threshold > SF_SAFE_THRESHOLD:
-                    logger.warning(f"⚠️ STATE_SIZE_THRESHOLD={self.threshold} exceeds safe limit {SF_SAFE_THRESHOLD}")
+                    logger.warning(f"[Warning] STATE_SIZE_THRESHOLD={self.threshold} exceeds safe limit {SF_SAFE_THRESHOLD}")
             except ValueError:
-                logger.warning(f"⚠️ Invalid STATE_SIZE_THRESHOLD='{threshold_str}', using default {SF_SAFE_THRESHOLD}")
+                logger.warning(f"[Warning] Invalid STATE_SIZE_THRESHOLD='{threshold_str}', using default {SF_SAFE_THRESHOLD}")
                 self.threshold = SF_SAFE_THRESHOLD
         else:
             self.threshold = SF_SAFE_THRESHOLD
         
-        # 🛡️ [v2.5] S3 Bucket - 핸들러에서 주입받거나 환경변수 폴백
+        # [Guard] [v2.5] S3 Bucket - 핸들러에서 주입받거나 환경변수 폴백
         if s3_bucket and s3_bucket.strip():
             self.s3_bucket = s3_bucket.strip()
         else:
@@ -198,17 +199,17 @@ class SegmentRunnerService:
             self.s3_bucket = env_bucket.strip() if env_bucket else ""
         
         if not self.s3_bucket:
-            logger.warning("⚠️ [SegmentRunnerService] S3 bucket not configured - large payloads may fail")
+            logger.warning("[Warning] [SegmentRunnerService] S3 bucket not configured - large payloads may fail")
         else:
-            logger.info(f"✅ [SegmentRunnerService] S3 bucket: {self.s3_bucket}, threshold: {self.threshold}")
+            logger.info(f"[Success] [SegmentRunnerService] S3 bucket: {self.s3_bucket}, threshold: {self.threshold}")
         
-        # 🛡️ [Kernel] S3 Client (Lazy Initialization)
+        # [Guard] [Kernel] S3 Client (Lazy Initialization)
         self._s3_client = None
         
-        # 🛡️ [v2.2] Ring Protection Security Guard
+        # [Guard] [v2.2] Ring Protection Security Guard
         self._security_guard = None
         
-        # 🛡️ [v2.3] 4단계 아키텍처: Concurrency Controller
+        # [Guard] [v2.3] 4단계 아키텍처: Concurrency Controller
         self._concurrency_controller = None
     
     @property
@@ -261,7 +262,7 @@ class SegmentRunnerService:
         merge_policy: str = MERGE_POLICY_APPEND_LIST
     ) -> Dict[str, Any]:
         """
-        🔧 Integrity-guaranteed state merging
+        [System] Integrity-guaranteed state merging
         
         Policy:
         - OVERWRITE: Simple overwrite (existing behavior)
@@ -273,11 +274,16 @@ class SegmentRunnerService:
         - __new_history_logs, __kernel_actions, etc. always merge as lists
         - Keys starting with _ are treated specially
         """
+        # 🛡️ [v3.6] Immortal Kernel: 병합 시작 전 이중 안전장치 (Dual StateBag)
+        from src.common.statebag import ensure_state_bag
+        base_state = ensure_state_bag(base_state)
+        new_state = ensure_state_bag(new_state) # None이면 빈 StateBag({})이 됨, iteration 안전 보장
+        
         if merge_policy == MERGE_POLICY_OVERWRITE:
             result = base_state.copy()
-            result.update(new_state)
+            result.update(new_state) # Safe now
             return result
-        
+
         result = base_state.copy()
         conflicts = []
         
@@ -320,22 +326,10 @@ class SegmentRunnerService:
         return result
 
     # ========================================================================
-    # �🛡️ [Pattern 1] Segment-Level Self-Healing: 세그먼트 내부 동적 분할
+    # [Pattern 1] Segment-Level Self-Healing: Segment Auto-Splitting
     # ========================================================================
     def _estimate_segment_memory(self, segment_config: Dict[str, Any], state: Dict[str, Any]) -> int:
-        """
-        Estimate memory required for segment execution (in MB)
-        
-        [Optimization] Use metadata-based heuristics instead of json.dumps
-        - json.dumps itself is a memory burden for large data
-        - Lightweight estimation using list length, string key presence, etc.
-        
-        Estimation criteria:
-        - Node count × base memory (10MB)
-        - LLM node: additional 50MB
-        - for_each node: item count × 5MB
-        - State size: metadata-based estimation
-        """
+        """Memory estimation."""
         base_memory = 50  # base overhead
         
         nodes = segment_config.get('nodes', [])
@@ -350,10 +344,10 @@ class SegmentRunnerService:
         for node in nodes:
             node_type = node.get('type', '')
             
-            # 🔍 [KERNEL DEBUG] 노드 타입 변질 추적 - code 타입이 발견b되면 로그
+            # [Debug] [KERNEL DEBUG] 노드 타입 변질 추적 - code 타입이 발견b되면 로그
             if node_type == 'code':
                 logger.warning(
-                    f"🚨 [KERNEL DEBUG] Detected 'code' type node! "
+                    f"[KERNEL DEBUG] Detected 'code' type node! "
                     f"Node ID: {node.get('id')}, Config keys: {list(node.get('config', {}).keys())}. "
                     f"This should have been aliased to 'operator' by Pydantic validator."
                 )
@@ -384,7 +378,7 @@ class SegmentRunnerService:
         
         Strategy:
         1. Sample only top N keys to calculate average size
-        2. Estimate lists as length × average item size
+        2. Estimate lists as length * average item size
         3. Use len() for strings
         4. Estimate nested dicts by key count
         
@@ -507,7 +501,7 @@ class SegmentRunnerService:
             '_parent_segment_id': original_id
         }
         
-        logger.info(f"[Kernel] 🔧 Segment '{original_id}' split into 2 sub-segments: "
+        logger.info(f"[Kernel] [System] Segment '{original_id}' split into 2 sub-segments: "
                    f"{len(first_nodes)} + {len(second_nodes)} nodes")
         
         return [sub_segment_1, sub_segment_2]
@@ -519,11 +513,7 @@ class SegmentRunnerService:
         auth_user_id: str,
         split_depth: int = 0
     ) -> Dict[str, Any]:
-        """
-        🛡️ [Pattern 1] 메모리 기반 자동 분할 실행
-        
-        메모리 부족이 예상되면 세그먼트를 분할하여 순차 실행
-        """
+        """Pattern 1: Memory-based auto-split execution."""
         # 사용 가능한 Lambda 메모리
         available_memory = int(os.environ.get('AWS_LAMBDA_FUNCTION_MEMORY_SIZE', 512))
         
@@ -532,14 +522,14 @@ class SegmentRunnerService:
         
         # 안전 임계값 체크
         if estimated_memory > available_memory * MEMORY_SAFETY_THRESHOLD:
-            logger.info(f"[Kernel] ⚠️ Memory pressure detected: {estimated_memory}MB estimated, "
+            logger.info(f"[Kernel] [Warning] Memory pressure detected: {estimated_memory}MB estimated, "
                        f"{available_memory}MB available (threshold: {MEMORY_SAFETY_THRESHOLD*100}%)")
             
             # 분할 시도
             sub_segments = self._split_segment(segment_config, split_depth)
             
             if len(sub_segments) > 1:
-                logger.info(f"[Kernel] 🔧 Executing {len(sub_segments)} sub-segments sequentially")
+                logger.info(f"[Kernel] [System] Executing {len(sub_segments)} sub-segments sequentially")
                 
                 # 서브 세그먼트 순차 실행
                 current_state = initial_state.copy()
@@ -554,7 +544,7 @@ class SegmentRunnerService:
                         sub_seg, current_state, auth_user_id, split_depth + 1
                     )
                     
-                    # 🔧 무결성 보장 상태 병합 (리스트 키는 합침)
+                    # [System] 무결성 보장 상태 병합 (리스트 키는 합침)
                     if isinstance(sub_result, dict):
                         current_state = self._merge_states(
                             current_state, 
@@ -586,7 +576,7 @@ class SegmentRunnerService:
         )
 
     # ========================================================================
-    # 🛡️ [Pattern 2] Manifest Mutation: S3 Manifest 동적 수정
+    # [Guard] [Pattern 2] Manifest Mutation: S3 Manifest 동적 수정
     # ========================================================================
     def _load_manifest_from_s3(self, manifest_s3_path: str) -> Optional[List[Dict[str, Any]]]:
         """S3에서 segment_manifest 로드"""
@@ -647,7 +637,7 @@ class SegmentRunnerService:
         reason: str
     ) -> bool:
         """
-        🛡️ [Pattern 2] 특정 세그먼트를 SKIP으로 마킹
+        [Guard] [Pattern 2] 특정 세그먼트를 SKIP으로 마킹
         
         사용 시나리오:
         - 조건 분기에서 특정 경로 불필요
@@ -680,7 +670,7 @@ class SegmentRunnerService:
         reason: str
     ) -> bool:
         """
-        🛡️ [Pattern 2] 복구 세그먼트 삽입
+        [Guard] [Pattern 2] 복구 세그먼트 삽입
         
         사용 시나리오:
         - API 실패 후 백업 경로 삽입
@@ -718,12 +708,12 @@ class SegmentRunnerService:
         for i, segment in enumerate(new_manifest):
             segment['execution_order'] = i
         
-        logger.info(f"[Kernel] 🔧 Injected {len(recovery_segments)} recovery segments after segment {after_segment_id}")
+        logger.info(f"[Kernel] [System] Injected {len(recovery_segments)} recovery segments after segment {after_segment_id}")
         
         return self._save_manifest_to_s3(new_manifest, manifest_s3_path)
 
     # ========================================================================
-    # 🔀 [Pattern 3] Parallel Scheduler: 인프라 인지형 병렬 스케줄링
+    # [Parallel] [Pattern 3] Parallel Scheduler: 인프라 인지형 병렬 스케줄링
     # ========================================================================
     def _estimate_branch_resources(self, branch: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, int]:
         """
@@ -892,7 +882,7 @@ class SegmentRunnerService:
         segment_id: int
     ) -> Dict[str, Any]:
         """
-        🔀 병렬 그룹 스케줄링: resource_policy에 따라 실행 배치 결정
+        [Parallel] 병렬 그룹 스케줄링: resource_policy에 따라 실행 배치 결정
         
         Returns:
             {
@@ -923,9 +913,9 @@ class SegmentRunnerService:
         
         # SPEED_OPTIMIZED: 가드레일 체크 후 최대 병렬 실행
         if strategy == STRATEGY_SPEED_OPTIMIZED:
-            # 🛡️ 계정 수준 하드 리밋 체크 (시스템 패닉 방지)
+            # [Guard] 계정 수준 하드 리밋 체크 (시스템 패닉 방지)
             if len(branches) > ACCOUNT_LAMBDA_CONCURRENCY_LIMIT:
-                logger.warning(f"[Scheduler] ⚠️ SPEED_OPTIMIZED but branch count ({len(branches)}) "
+                logger.warning(f"[Scheduler] [Warning] SPEED_OPTIMIZED but branch count ({len(branches)}) "
                               f"exceeds account concurrency limit ({ACCOUNT_LAMBDA_CONCURRENCY_LIMIT})")
                 # 하드 리밋 적용하여 배치 분할
                 forced_policy = {
@@ -937,7 +927,7 @@ class SegmentRunnerService:
                 resource_estimates = [self._estimate_branch_resources(b, state) for b in branches]
                 execution_batches = self._bin_pack_branches(branches, resource_estimates, forced_policy)
                 
-                logger.info(f"[Scheduler] 🛡️ Guardrail applied: {len(execution_batches)} batches")
+                logger.info(f"[Scheduler] [Guard] Guardrail applied: {len(execution_batches)} batches")
                 return {
                     'status': 'SCHEDULED_PARALLEL',
                     'branches': branches,
@@ -995,7 +985,7 @@ class SegmentRunnerService:
                     'batch_count': 1,
                     'total_memory_mb': total_memory,
                     'total_tokens': total_tokens,
-                    # 🛡️ [v3.4] Deep Evidence Metrics
+                    # [Guard] [v3.4] Deep Evidence Metrics
                     'total_tokens_calculated': total_tokens,
                     'actual_concurrency_limit': max_tokens
                 }
@@ -1004,7 +994,7 @@ class SegmentRunnerService:
         # Bin Packing으로 배치 생성
         execution_batches = self._bin_pack_branches(branches, resource_estimates, resource_policy)
         
-        logger.info(f"[Scheduler] 🔧 Created {len(execution_batches)} execution batches from {len(branches)} branches")
+        logger.info(f"[Scheduler] [System] Created {len(execution_batches)} execution batches from {len(branches)} branches")
         for i, batch in enumerate(execution_batches):
             batch_memory = sum(self._estimate_branch_resources(b, state)['memory_mb'] for b in batch)
             logger.info(f"[Scheduler]   Batch {i+1}: {len(batch)} branches, ~{batch_memory}MB")
@@ -1019,7 +1009,7 @@ class SegmentRunnerService:
                 'batch_count': len(execution_batches),
                 'total_memory_mb': total_memory,
                 'total_tokens': total_tokens,
-                # 🛡️ [v3.4] Deep Evidence Metrics
+                # [Guard] [v3.4] Deep Evidence Metrics
                 'total_tokens_calculated': total_tokens,
                 'actual_concurrency_limit': max_tokens,
                 'resource_policy': resource_policy
@@ -1027,7 +1017,7 @@ class SegmentRunnerService:
         }
 
     # ========================================================================
-    # 🔀 [Aggregator] 병렬 브랜치 결과 집계
+    # [Parallel] [Aggregator] 병렬 브랜치 결과 집계
     # ========================================================================
     def _handle_aggregator(self, event: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1041,14 +1031,21 @@ class SegmentRunnerService:
         Returns:
             병합된 최종 상태 + 다음 세그먼트 정보
         """
+        # 🛡️ [v3.6] 집계 시작 시 base_state 무결성 확보 (Entrance to Aggregator)
+        from src.common.statebag import ensure_state_bag
+        # current_state가 null이어도 StateBag({})으로 승격
+        current_state = ensure_state_bag(event.get('current_state', {}))
+        # 이벤트 원본도 갱신하여 하위 참조(merge 등)에서 안전 보장
+        event['current_state'] = current_state
+        
         parallel_results = event.get('parallel_results', [])
         base_state = event.get('current_state', {})
         segment_to_run = event.get('segment_to_run', 0)
         workflow_id = event.get('workflowId') or event.get('workflow_id')
         auth_user_id = event.get('ownerId') or event.get('owner_id')
-        map_error = event.get('map_error')  # 🛡️ Map 전체 에러 정보
+        map_error = event.get('map_error')  # [Guard] Map 전체 에러 정보
         
-        logger.info(f"[Aggregator] 🔀 Aggregating {len(parallel_results)} branch results"
+        logger.info(f"[Aggregator] [Parallel] Aggregating {len(parallel_results)} branch results"
                    + (f" (map_error present)" if map_error else ""))
         
         # 1. 모든 브랜치 결과 병합
@@ -1057,15 +1054,24 @@ class SegmentRunnerService:
         branch_errors = []
         successful_branches = 0
         
-        # 🛡️ Map 에러가 있으면 기록
+        # [Guard] Map 에러가 있으면 기록
         if map_error:
             branch_errors.append({
                 'branch_id': '__MAP_ERROR__',
                 'error': map_error
             })
-            logger.warning(f"[Aggregator] ⚠️ Map execution failed: {map_error}")
+            logger.warning(f"[Aggregator] [Warning] Map execution failed: {map_error}")
         
         for i, branch_result in enumerate(parallel_results):
+            # [Guard] [v3.5] Aggregator Null Safety: Filter null results
+            if branch_result is None:
+                logger.error(f"[Aggregator] [Alert] Branch {i} returned None! Marking as failed.")
+                branch_errors.append({
+                    'branch_id': f'branch_{i}',
+                    'error': 'Branch Execution Yielded None'
+                })
+                continue
+
             if not isinstance(branch_result, dict):
                 logger.warning(f"[Aggregator] Branch {i} result is not a dict: {type(branch_result)}")
                 continue
@@ -1116,7 +1122,7 @@ class SegmentRunnerService:
         s3_bucket = s3_bucket_raw.strip() if s3_bucket_raw else None
         
         if not s3_bucket:
-            logger.error("🚨 [CRITICAL] S3_BUCKET/SKELETON_S3_BUCKET not set for aggregation!")
+            logger.error("[Alert] [CRITICAL] S3_BUCKET/SKELETON_S3_BUCKET not set for aggregation!")
         
         final_state, output_s3_path = self.state_manager.handle_state_storage(
             state=aggregated_state,
@@ -1137,13 +1143,13 @@ class SegmentRunnerService:
         # 완료 여부 판단
         is_complete = next_segment >= total_segments
         
-        logger.info(f"[Aggregator] ✅ Aggregation complete: "
+        logger.info(f"[Aggregator] [Success] Aggregation complete: "
                    f"{successful_branches}/{len(parallel_results)} branches succeeded, "
                    f"next_segment={next_segment if not is_complete else 'COMPLETE'}")
         
-        # 🛡️ [P0 Fix] total_segments 반드시 포함 - ASL Choice 상태의 null 참조 방지
+        # [Guard] [P0 Fix] total_segments 반드시 포함 - ASL Choice 상태의 null 참조 방지
         return {
-            # 🛡️ [Fix] Use CONTINUE instead of SUCCEEDED for ASL routing
+            # [Guard] [Fix] Use CONTINUE instead of SUCCEEDED for ASL routing
             "status": "COMPLETE" if is_complete else "CONTINUE",
             "final_state": final_state,
             "final_state_s3_path": output_s3_path,
@@ -1153,7 +1159,7 @@ class SegmentRunnerService:
             "branches": None,
             "segment_type": "aggregator",
             "segment_id": segment_to_run,
-            "total_segments": total_segments,  # 🛡️ [P0] 필수 메타데이터
+            "total_segments": total_segments,  # [Guard] [P0] 필수 메타데이터
             "aggregator_metadata": {
                 'total_branches': len(parallel_results),
                 'successful_branches': successful_branches,
@@ -1228,7 +1234,7 @@ class SegmentRunnerService:
             return None
 
     # ========================================================================
-    # 🛡️ [v2.2] Ring Protection: 프롬프트 보안 검증
+    # [Guard] [v2.2] Ring Protection: 프롬프트 보안 검증
     # ========================================================================
     def _apply_ring_protection(
         self,
@@ -1238,7 +1244,7 @@ class SegmentRunnerService:
         workflow_id: str
     ) -> List[Dict[str, Any]]:
         """
-        🛡️ Ring Protection: 세그먼트 내 프롬프트 보안 검증
+        [Guard] Ring Protection: 세그먼트 내 프롬프트 보안 검증
         
         모든 LLM 노드의 프롬프트를 검증하고:
         1. Prompt Injection 패턴 탐지
@@ -1304,7 +1310,7 @@ class SegmentRunnerService:
                                     config['prompt'] = result.sanitized_content
                                 else:
                                     config['system_prompt'] = result.sanitized_content
-                                logger.info(f"[Ring Protection] 🛡️ Sanitized {prompt_type} in node {node_id}")
+                                logger.info(f"[Ring Protection] [Guard] Sanitized {prompt_type} in node {node_id}")
             
             # 위험 도구 접근 검증
             if node_type in ('tool', 'api_call', 'operator'):
@@ -1325,12 +1331,12 @@ class SegmentRunnerService:
                     })
         
         if violations:
-            logger.warning(f"[Ring Protection] ⚠️ {len(violations)} security violations detected in segment {segment_id}")
+            logger.warning(f"[Ring Protection] [Warning] {len(violations)} security violations detected in segment {segment_id}")
         
         return violations
 
     # ========================================================================
-    # 🛡️ [Kernel Defense] Aggressive Retry Helper
+    # [Guard] [Kernel Defense] Aggressive Retry Helper
     # ========================================================================
     def _is_retryable_error(self, error: Exception) -> bool:
         """
@@ -1360,7 +1366,7 @@ class SegmentRunnerService:
         event: Dict[str, Any]
     ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """
-        🛡️ 커널 레벨 공격적 재시도
+        [Guard] 커널 레벨 공격적 재시도
         
         Step Functions 레벨 재시도 전에 Lambda 내부에서 먼저 해결 시도.
         - 네트워크 에러, 일시적 서비스 장애 시 재시도
@@ -1378,7 +1384,7 @@ class SegmentRunnerService:
                 enable_kernel_split = os.environ.get('ENABLE_KERNEL_SPLIT', 'true').lower() == 'true'
                 
                 if enable_kernel_split and isinstance(segment_config, dict):
-                    # 🛡️ [Pattern 1] 자동 분할 실행
+                    # [Guard] [Pattern 1] 자동 분할 실행
                     result_state = self._execute_with_auto_split(
                         segment_config=segment_config,
                         initial_state=initial_state,
@@ -1395,9 +1401,21 @@ class SegmentRunnerService:
                         run_config={"user_id": auth_user_id}
                     )
                 
+                # [Guard] [v3.6] Immortal Kernel: Node Result Normalization
+                from src.common.statebag import ensure_state_bag
+                result_state = ensure_state_bag(result_state)
+                
+                # Check for empty result (Context Loss)
+                # If run_workflow returns empty, it means we lost all state -> Revert to initial
+                if not result_state: 
+                     logger.error(f"[Kernel] [Alert] Execution yielded empty/null state! Context lost. Reverting to initial_state. Segment: {segment_config.get('id')}")
+                     result_state = ensure_state_bag(initial_state)
+                     result_state['__execution_null_recovered'] = True
+                     # Note: We prefer keep-alive over crash here.
+                
                 # 성공
                 if attempt > 0:
-                    logger.info(f"[Kernel Retry] ✅ Succeeded after {attempt} retries")
+                    logger.info(f"[Kernel Retry] [Success] Succeeded after {attempt} retries")
                     # 재시도 이력 기록
                     if isinstance(result_state, dict):
                         result_state['__kernel_retry_history'] = retry_history
@@ -1419,7 +1437,7 @@ class SegmentRunnerService:
                     # 지수 백오프 + 지터
                     delay = KERNEL_RETRY_BASE_DELAY * (2 ** attempt) + random.uniform(0, 1)
                     logger.warning(
-                        f"[Kernel Retry] ⚠️ Attempt {attempt + 1}/{KERNEL_MAX_RETRIES + 1} failed: {e}. "
+                        f"[Kernel Retry] [Warning] Attempt {attempt + 1}/{KERNEL_MAX_RETRIES + 1} failed: {e}. "
                         f"Retrying in {delay:.2f}s..."
                     )
                     time.sleep(delay)
@@ -1446,21 +1464,26 @@ class SegmentRunnerService:
         """
         Main execution logic for a workflow segment.
         
-        🛡️ [Kernel Defense] 4단계 방어 메커니즘:
+        [Guard] [Kernel Defense] 4단계 방어 메커니즘:
         1. Reserved Concurrency: Lambda 레벨 동시성 제한 (template.yaml)
         2. Kernel Scheduling: 부하 평탄화 + 배치 처리
         3. Intelligent Retry: 적응형 품질 임계값 + 정보 증류
         4. Budget/Drift Guardrail: 비용 서킷 브레이커 + 시맨틱 드리프트 감지
         """
+        # 🛡️ [v3.6] Entropy Shield: 입력을 받자마자 StateBag으로 변환하여 하위 로직 전체를 보호
+        # event.get('current_state')가 None이어도 ensure_state_bag이 빈 StateBag으로 승격시킴
+        from src.common.statebag import ensure_state_bag
+        event['current_state'] = ensure_state_bag(event.get('current_state') or event.get('state', {}))
+        
         execution_start_time = time.time()
         
         # ====================================================================
-        # 🛡️ [v2.6 P0 Fix] 모든 return 경로에서 사용할 메타데이터 사전 계산
+        # [Guard] [v2.6 P0 Fix] 모든 return 경로에서 사용할 메타데이터 사전 계산
         # Step Functions Choice 상태에서 null 참조를 방지하기 위해 반드시 포함되어야 함
         # ====================================================================
         _total_segments = _safe_get_total_segments(event)
         
-        # 🛡️ [Critical Fix] explicit None handling for segment_id
+        # [Guard] [Critical Fix] explicit None handling for segment_id
         # .get('key') returns None if key exists but value is null, which 'or' propagates
         _seg_id_val = event.get('segment_id')
         if _seg_id_val is None:
@@ -1469,7 +1492,7 @@ class SegmentRunnerService:
         
         def _finalize_response(res: Dict[str, Any]) -> Dict[str, Any]:
             """
-            🛡️ [v3.3 Standard Envelope] Universal Response Wrapper
+            [Guard] [v3.3 Standard Envelope] Universal Response Wrapper
             Ensures ALL return paths conform to Step Functions contract with guaranteed metadata.
             
             1. Extract metadata from final_state (or defaults).
@@ -1479,10 +1502,30 @@ class SegmentRunnerService:
             res.setdefault('total_segments', _total_segments)
             res.setdefault('segment_id', _segment_id)
             
-            # 🛡️ Extract standard metadata with fallback defaults
-            final_state = res.get('final_state', {})
-            if not isinstance(final_state, dict):
+            # [Guard] [v3.5] Hardened Response Wrapper
+            if res is None:
+                logger.error("[Alert] [Kernel] _finalize_response received None! Creating emergency error response.")
+                res = {
+                    "status": "FAILED",
+                    "error_info": {
+                        "error": "Kernel Internal Error: Result yielded None",
+                        "error_type": "KernelNullPanic"
+                    }
+                }
+            
+            res.setdefault('total_segments', _total_segments)
+            res.setdefault('segment_id', _segment_id)
+            
+            # [Guard] Extract standard metadata with fallback defaults
+            final_state = res.get('final_state')
+            # [Fix] Explicit None check because .get() returns None if key exists but value is null
+            if final_state is None:
                 final_state = {}
+                res['final_state'] = final_state
+            if not isinstance(final_state, dict):
+                logger.warning(f"[Kernel] final_state is not a dict ({type(final_state)}). Resetting.")
+                final_state = {}
+                res['final_state'] = final_state
             
             # Explicitly extract to ensure we get a value (defaulting to False/1/{})
             gv = final_state.get('guardrail_verified', False)
@@ -1496,19 +1539,19 @@ class SegmentRunnerService:
                 'state_size_threshold': self.threshold
             }
             
-            # 🛡️ 1. Inject into final_state (Persistence)
+            # [Guard] 1. Inject into final_state (Persistence)
             # This ensures the next step in SFN receives these values in its input state
             if isinstance(res.get('final_state'), dict):
                 res['final_state'].update(standard_metadata)
             
-            # 🛡️ 2. Inject into Top-level (SFN ResultSelector Access)
+            # [Guard] 2. Inject into Top-level (SFN ResultSelector Access)
             for key, value in standard_metadata.items():
                 res[key] = value
                 
             return res
         
         # ====================================================================
-        # 🛡️ [2단계] Pre-Execution Check: 동시성 및 예산 체크
+        # [Guard] [2단계] Pre-Execution Check: 동시성 및 예산 체크
         # ====================================================================
         if CONCURRENCY_CONTROLLER_AVAILABLE and self.concurrency_controller:
             pre_check = self.concurrency_controller.pre_execution_check()
@@ -1533,7 +1576,7 @@ class SegmentRunnerService:
             # 로드 레벨 로깅
             snapshot = pre_check.get('snapshot')
             if snapshot and snapshot.load_level.value in ['high', 'critical']:
-                logger.warning(f"[Kernel] ⚠️ High load detected: {snapshot.load_level.value} "
+                logger.warning(f"[Kernel] [Warning] High load detected: {snapshot.load_level.value} "
                              f"({snapshot.active_executions}/{snapshot.reserved_concurrency})")
         
         # [Fix] 이벤트에서 MOCK_MODE를 읽어서 환경 변수로 주입
@@ -1544,7 +1587,7 @@ class SegmentRunnerService:
             logger.info("🧪 MOCK_MODE enabled from event payload")
         
         # ====================================================================
-        # 🔀 [Aggregator] 병렬 결과 집계 처리
+        # [Parallel] [Aggregator] 병렬 결과 집계 처리
         # ASL의 AggregateParallelResults에서 호출됨
         # ====================================================================
         segment_type_param = event.get('segment_type')
@@ -1575,7 +1618,7 @@ class SegmentRunnerService:
         auth_user_id = event.get('ownerId') or event.get('owner_id') or event.get('user_id')
         workflow_id = event.get('workflowId') or event.get('workflow_id')
         # 🚀 [Hybrid Mode] Support both segment_id (hybrid) and segment_to_run (legacy)
-        # 🛡️ [Critical Fix] explicit None checking to prevent TypeError in comparisons
+        # [Guard] [Critical Fix] explicit None checking to prevent TypeError in comparisons
         _seg_id_cand = event.get('segment_id')
         if _seg_id_cand is None:
             _seg_id_cand = event.get('segment_to_run')
@@ -1586,7 +1629,7 @@ class SegmentRunnerService:
         s3_bucket = s3_bucket_raw.strip() if s3_bucket_raw else None
         
         if not s3_bucket:
-            logger.error("🚨 [CRITICAL] S3_BUCKET/SKELETON_S3_BUCKET environment variable is NOT SET or EMPTY! "
+            logger.error("[Alert] [CRITICAL] S3_BUCKET/SKELETON_S3_BUCKET environment variable is NOT SET or EMPTY! "
                         f"S3_BUCKET='{os.environ.get('S3_BUCKET')}', "
                         f"SKELETON_S3_BUCKET='{os.environ.get('SKELETON_S3_BUCKET')}'. "
                         "Large payloads (>256KB) will FAIL.")
@@ -1600,7 +1643,12 @@ class SegmentRunnerService:
         
         if state_s3_path:
             initial_state = self.state_manager.download_state_from_s3(state_s3_path)
-            
+        
+        # [Guard] [v3.6 P0] Data Ownership Defense: enforce StateBag
+        # StateBag guarantees Safe Access (get(key) != None)
+        from src.common.statebag import ensure_state_bag
+        initial_state = ensure_state_bag(initial_state)
+
         # 4. Resolve Segment Config
         # [Critical Fix] Support both test_workflow_config (E2E tests) and workflow_config
         workflow_config = event.get('test_workflow_config') or event.get('workflow_config')
@@ -1647,21 +1695,21 @@ class SegmentRunnerService:
             
             segment_config = self._resolve_segment_config(workflow_config, partition_map, segment_id)
         
-        # 🛡️ [v2.6 P0 Fix] 'code' 타입 오염 방지 Self-Healing
+        # [Guard] [v2.6 P0 Fix] 'code' 타입 오염 방지 Self-Healing
         # 상위 람다(PartitionService 등)에서 잘못된 타입이 주입될 수 있으므로 런타임 교정
         if segment_config and isinstance(segment_config, dict):
             for node in segment_config.get('nodes', []):
                 if isinstance(node, dict) and node.get('type') == 'code':
                     logger.warning(
-                        f"🛡️ [Self-Healing] Aliasing 'code' to 'operator' for node {node.get('id')}. "
+                        f"[Guard] [Self-Healing] Aliasing 'code' to 'operator' for node {node.get('id')}. "
                         f"This indicates upstream data mutation - investigate PartitionService."
                     )
                     node['type'] = 'operator'
         
-        # 🛡️ [Critical Fix] segment_config이 None이거나 error 타입이면 조기 에러 반환
+        # [Guard] [Critical Fix] segment_config이 None이거나 error 타입이면 조기 에러 반환
         if not segment_config or (isinstance(segment_config, dict) and segment_config.get('type') == 'error'):
             error_msg = segment_config.get('error', 'segment_config is None') if isinstance(segment_config, dict) else 'segment_config is None'
-            logger.error(f"🚨 [Critical] segment_config resolution failed: {error_msg}")
+            logger.error(f"[Alert] [Critical] segment_config resolution failed: {error_msg}")
             return _finalize_response({
                 "status": "FAILED",
                 "error": error_msg,
@@ -1682,13 +1730,13 @@ class SegmentRunnerService:
         
         # [Critical Fix] parallel_group 타입 세그먼트는 바로 PARALLEL_GROUP status 반환
         # ASL의 ProcessParallelSegments가 branches를 받아서 Map으로 병렬 실행함
-        # 🔀 [Pattern 3] 병렬 스케줄러 적용
+        # [Parallel] [Pattern 3] 병렬 스케줄러 적용
         segment_type = segment_config.get('type') if isinstance(segment_config, dict) else None
         if segment_type == 'parallel_group':
             branches = segment_config.get('branches', [])
-            logger.info(f"🔀 Parallel group detected with {len(branches)} branches")
+            logger.info(f"[Parallel] Parallel group detected with {len(branches)} branches")
             
-            # 🛡️ [Critical Fix] 단일 브랜치 + 내부 partition_map 케이스 처리
+            # [Guard] [Critical Fix] 단일 브랜치 + 내부 partition_map 케이스 처리
             # 이 경우 실제 병렬 실행이 필요 없으므로 브랜치 내부의 첫 번째 세그먼트 직접 실행
             if len(branches) == 1:
                 single_branch = branches[0]
@@ -1702,7 +1750,7 @@ class SegmentRunnerService:
                     first_inner_segment = branch_partition_map[0] if branch_partition_map else None
                     
                     if first_inner_segment:
-                        # 🔧 내부 partition_map을 새로운 실행 컨텍스트로 변환
+                        # [System] 내부 partition_map을 새로운 실행 컨텍스트로 변환
                         # 상태를 유지하면서 내부 세그먼트 체인 순차 실행
                         return _finalize_response({
                             "status": "SEQUENTIAL_BRANCH",
@@ -1713,7 +1761,7 @@ class SegmentRunnerService:
                             "error_info": None,
                             "branches": None,  # 병렬 실행 안함
                             "segment_type": "sequential_branch",
-                            # 🛡️ 내부 partition_map 정보 전달 (ASL이 순차 처리하도록)
+                            # [Guard] 내부 partition_map 정보 전달 (ASL이 순차 처리하도록)
                             "inner_partition_map": branch_partition_map,
                             "inner_segment_count": len(branch_partition_map),
                             "branch_id": single_branch.get('branch_id', 'B0'),
@@ -1724,7 +1772,7 @@ class SegmentRunnerService:
                             }
                         })
             
-            # 🔧 빈 브랜치 또는 노드가 없는 브랜치 필터링
+            # [System] 빈 브랜치 또는 노드가 없는 브랜치 필터링
             valid_branches = []
             for branch in branches:
                 branch_nodes = branch.get('nodes', [])
@@ -1734,13 +1782,13 @@ class SegmentRunnerService:
                 if branch_nodes or branch_partition:
                     valid_branches.append(branch)
                 else:
-                    logger.warning(f"[Kernel] ⚠️ Skipping empty branch: {branch.get('branch_id', 'unknown')}")
+                    logger.warning(f"[Kernel] [Warning] Skipping empty branch: {branch.get('branch_id', 'unknown')}")
             
-            # 🛡️ 유효한 브랜치가 없으면 SUCCEEDED로 진행
+            # [Guard] 유효한 브랜치가 없으면 SUCCEEDED로 진행
             if not valid_branches:
                 logger.info(f"[Kernel] ⏭️ No valid branches to execute, skipping parallel group")
                 return _finalize_response({
-                    "status": "CONTINUE",  # 🛡️ [Fix] Use CONTINUE for ASL routing
+                    "status": "CONTINUE",  # [Guard] [Fix] Use CONTINUE for ASL routing
                     "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
                     "next_segment_to_run": segment_id + 1,
@@ -1760,18 +1808,18 @@ class SegmentRunnerService:
             # SCHEDULED_PARALLEL: 배치별 순차 실행 필요
             if schedule_result['status'] == 'SCHEDULED_PARALLEL':
                 execution_batches = schedule_result['execution_batches']
-                # 🛡️ [P1 Fix] Inject scheduling_metadata into state for test verification
+                # [Guard] [P1 Fix] Inject scheduling_metadata into state for test verification
                 meta = schedule_result.get('scheduling_metadata', {})
                 batch_count = meta.get('batch_count', 1)
                 
                 initial_state['scheduling_metadata'] = meta
                 initial_state['batch_count_actual'] = batch_count
                 
-                # 🛡️ [P1 Fix] SPEED_GUARDRAIL_TEST requires this flag when splitting occurs
+                # [Guard] [P1 Fix] SPEED_GUARDRAIL_TEST requires this flag when splitting occurs
                 if meta.get('strategy') == 'SPEED_OPTIMIZED' and batch_count > 1:
                     initial_state['guardrail_verified'] = True
                 
-                logger.info(f"[Scheduler] 🔧 Scheduled {metadata['total_branches']} branches into "
+                logger.info(f"[Scheduler] [System] Scheduled {metadata['total_branches']} branches into "
                            f"{metadata['batch_count']} batches (strategy: {metadata['strategy']})")
                 
                 return _finalize_response({
@@ -1788,7 +1836,7 @@ class SegmentRunnerService:
                 })
             
             # PARALLEL_GROUP: 기본 병렬 실행
-            # 🛡️ [P1 Fix] Inject scheduling_metadata into state for test verification (Consistent with SCHEDULED_PARALLEL)
+            # [Guard] [P1 Fix] Inject scheduling_metadata into state for test verification (Consistent with SCHEDULED_PARALLEL)
             meta = schedule_result.get('scheduling_metadata', {})
             initial_state['scheduling_metadata'] = meta
             initial_state['batch_count_actual'] = meta.get('batch_count', 1)
@@ -1806,7 +1854,7 @@ class SegmentRunnerService:
                 "scheduling_metadata": meta
             })
         
-        # 🛡️ [Pattern 2] 커널 검증: 이 세그먼트가 SKIPPED 상태인가?
+        # [Guard] [Pattern 2] 커널 검증: 이 세그먼트가 SKIPPED 상태인가?
         segment_status = self._check_segment_status(segment_config)
         if segment_status == SEGMENT_STATUS_SKIPPED:
             skip_reason = segment_config.get('skip_reason', 'Kernel decision')
@@ -1836,7 +1884,7 @@ class SegmentRunnerService:
         # 5. Apply Self-Healing (Prompt Injection / Refinement)
         self.healer.apply_healing(segment_config, event.get("_self_healing_metadata"))
         
-        # 🛡️ [v2.2] Ring Protection: 프롬프트 보안 검증
+        # [Guard] [v2.2] Ring Protection: 프롬프트 보안 검증
         # 세그먼트 내 LLM 노드의 프롬프트를 검증하고 위험 패턴 탐지
         security_violations = []
         if self.security_guard and RING_PROTECTION_AVAILABLE:
@@ -1850,7 +1898,7 @@ class SegmentRunnerService:
             # CRITICAL 위반 시 SIGKILL (세그먼트 강제 종료)
             critical_violations = [v for v in security_violations if v.get('should_sigkill')]
             if critical_violations:
-                logger.error(f"[Kernel] 🛡️ SIGKILL triggered by Ring Protection: {len(critical_violations)} critical violations")
+                logger.error(f"[Kernel] [Guard] SIGKILL triggered by Ring Protection: {len(critical_violations)} critical violations")
                 return _finalize_response({
                     "status": "SIGKILL",
                     "final_state": mask_pii_in_state(initial_state),
@@ -1883,7 +1931,7 @@ class SegmentRunnerService:
                 logger.warning("User check failed, but proceeding if possible: %s", e)
 
         # 7. Execute Workflow Segment with Kernel Defense
-        # 🛡️ [Kernel Defense] Aggressive Retry + Partial Success
+        # [Guard] [Kernel Defense] Aggressive Retry + Partial Success
         start_time = time.time()
         
         result_state, execution_error = self._execute_with_kernel_retry(
@@ -1895,10 +1943,10 @@ class SegmentRunnerService:
         
         execution_time = time.time() - start_time
         
-        # 🛡️ [Partial Success] 실패해도 SUCCEEDED 반환 + 에러 메타데이터 기록
+        # [Guard] [Partial Success] 실패해도 SUCCEEDED 반환 + 에러 메타데이터 기록
         if execution_error and ENABLE_PARTIAL_SUCCESS:
             logger.warning(
-                f"[Kernel] ⚠️ Segment {segment_id} failed but returning PARTIAL_SUCCESS. "
+                f"[Kernel] [Warning] Segment {segment_id} failed but returning PARTIAL_SUCCESS. "
                 f"Error: {execution_error['error']}"
             )
             
@@ -1918,7 +1966,7 @@ class SegmentRunnerService:
                 'timestamp': time.time()
             }
             
-            # 🚨 핵심: FAILED 대신 SUCCEEDED 반환 (ToleratedFailureThreshold 방지)
+            # [Alert] 핵심: FAILED 대신 SUCCEEDED 반환 (ToleratedFailureThreshold 방지)
             final_state, output_s3_path = self.state_manager.handle_state_storage(
                 state=result_state,
                 auth_user_id=auth_user_id,
@@ -1933,7 +1981,7 @@ class SegmentRunnerService:
             has_more_segments = next_segment < total_segments
             
             return _finalize_response({
-                # 🛡️ [Fix] Use CONTINUE/COMPLETE instead of SUCCEEDED for ASL routing
+                # [Guard] [Fix] Use CONTINUE/COMPLETE instead of SUCCEEDED for ASL routing
                 "status": "CONTINUE" if has_more_segments else "COMPLETE",
                 "final_state": final_state,
                 "final_state_s3_path": output_s3_path,
@@ -1950,7 +1998,7 @@ class SegmentRunnerService:
         
         execution_time = time.time() - start_time
         
-        # 🛡️ [Pattern 2] 조건부 스킵 결정
+        # [Guard] [Pattern 2] 조건부 스킵 결정
         # 실행 결과에서 스킵할 세그먼트가 지정되었는지 확인
         manifest_s3_path = event.get('segment_manifest_s3_path')
         if manifest_s3_path and isinstance(result_state, dict):
@@ -1978,7 +2026,7 @@ class SegmentRunnerService:
                    f"s3_bucket: {'SET' if s3_bucket else 'NOT SET'}, threshold: {self.threshold}")
         
         if result_state_size > 250000:  # 250KB - Step Functions limit is 256KB
-            logger.warning(f"🚨 [Large Payload Warning] result_state exceeds 250KB! "
+            logger.warning(f"[Alert] [Large Payload Warning] result_state exceeds 250KB! "
                           f"Size: {result_state_size/1024:.1f}KB. S3 offload REQUIRED.")
         
         final_state, output_s3_path = self.state_manager.handle_state_storage(
@@ -2005,7 +2053,7 @@ class SegmentRunnerService:
         is_e2e_test = event.get('test_workflow_config') is not None
         has_partition_map = partition_map is not None and len(partition_map) > 0
         
-        # 🛡️ 커널 메타데이터 추출 (있는 경우)
+        # 커널 메타데이터 추출 (있는 경우)
         kernel_actions = result_state.get('__kernel_actions', []) if isinstance(result_state, dict) else []
         
         if is_e2e_test or not has_partition_map:
@@ -2049,7 +2097,7 @@ class SegmentRunnerService:
         
         # 아직 실행할 세그먼트가 남아있음
         return _finalize_response({
-            "status": "CONTINUE",  # 🛡️ [Fix] Explicit status for loop continuation (was 'SUCCEEDED')
+            "status": "CONTINUE",  # [Guard] [Fix] Explicit status for loop continuation (was 'SUCCEEDED')
             "final_state": final_state,
             "final_state_s3_path": output_s3_path,
             "next_segment_to_run": next_segment,
@@ -2069,7 +2117,7 @@ class SegmentRunnerService:
         """
         # [Critical Fix] workflow_config이 None이면 조기 처리
         if not workflow_config:
-            logger.error(f"[_resolve_segment_config] ⚠️ workflow_config is None! segment_id={segment_id}")
+            logger.error(f"[_resolve_segment_config] [Warning] workflow_config is None! segment_id={segment_id}")
             # partition_map에서 직접 찾기 시도
             if partition_map:
                 if isinstance(partition_map, list) and 0 <= segment_id < len(partition_map):
@@ -2096,7 +2144,7 @@ class SegmentRunnerService:
                 return parts[segment_id]
             return workflow_config # Fallback
 
-        # 🚨 [Critical Fix] partition_map이 list 또는 dict일 수 있음
+        # [Critical Fix] partition_map이 list 또는 dict일 수 있음
         if partition_map:
             if isinstance(partition_map, list):
                 # list인 경우: 인덱스로 접근
@@ -2112,7 +2160,7 @@ class SegmentRunnerService:
             return workflow_config
         
         # [Critical Fix] 모든 fallback 실패 시 에러 상태 반환 (None 반환 방지)
-        logger.error(f"[_resolve_segment_config] 🚨 All fallbacks failed! segment_id={segment_id}")
+        logger.error(f"[_resolve_segment_config] [Alert] All fallbacks failed! segment_id={segment_id}")
         return {
             "type": "error",
             "error": "Failed to resolve segment config - both workflow_config and partition_map are invalid",

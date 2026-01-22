@@ -490,8 +490,18 @@ class DynamicWorkflowBuilder:
                     # Standard interface: pass state and node_def as config
                     result = registry_func(state, node_def)
                     logger.info(f"✅ {node_type} node {node_id} completed")
-                    # [Annotated + Reducer] 업데이트만 반환
-                    return result if isinstance(result, dict) else {}
+                    
+                    # 🛡️ [v3.6 Data Ownership Defense]
+                    # Nodes MUST return a dict (delta) or None (no op).
+                    # Explicitly handle None or valid non-dict returns by treating them as "no update"
+                    if result is None:
+                        logger.warning(f"⚠️ Node {node_id} returned None. Preserving previous state.")
+                        return {}
+                    if not isinstance(result, dict):
+                        logger.error(f"🚨 Node {node_id} returned non-dict ({type(result)}). Dropping invalid update.")
+                        return {}
+                        
+                    return result
                 except Exception as e:
                     logger.error(f"🚨 {node_type} node {node_id} failed: {e}")
                     raise
@@ -510,6 +520,14 @@ class DynamicWorkflowBuilder:
                     try:
                         result = llm_chat_runner(state, node_config)
                         logger.info(f"✅ {node_type} node {node_id} completed")
+                        
+                        # 🛡️ [v3.6] LLM Guard
+                        if result is None:
+                            logger.error(f"🚨 LLM Node {node_id} returned None. Recovering.")
+                            return {}
+                        if not isinstance(result, dict):
+                             return {}
+                             
                         return result
                     except Exception as e:
                         logger.error(f"🚨 {node_type} node {node_id} failed: {e}")
@@ -526,10 +544,17 @@ class DynamicWorkflowBuilder:
                     logger.info(f"🔧 Executing operator node: {node_id}")
                     try:
                         result = operator_runner(state, node_def)
+                        
+                        # 🛡️ [v3.6 Data Ownership Defense] Operator Guard
+                        if result is None:
+                            logger.error(f"🚨 Operator Node {node_id} returned None! Reverting to previous state.")
+                            return {}
+                        
+                        if not isinstance(result, dict):
+                             logger.error(f"🚨 Operator Node {node_id} returned non-dict ({type(result)}). Reverting.")
+                             return {}
+
                         logger.info(f"✅ Operator node {node_id} completed with {len(result)} updates")
-                        # [Annotated + Reducer] 업데이트만 반환
-                        # DynamicWorkflowState의 merge_state_dict reducer가 
-                        # 기존 state와 자동으로 병합합니다
                         return result
                     except Exception as e:
                         logger.error(f"🚨 Operator node {node_id} failed: {e}")
@@ -558,6 +583,15 @@ class DynamicWorkflowBuilder:
                     node_id = node_def.get('id', 'unknown_code')
                     logger.info(f"🔧 Executing code node (as operator): {node_id}")
                     result = operator_runner(state, node_def)
+                    
+                    # 🛡️ [v3.6 Data Ownership Defense] Code Node Guard
+                    if result is None:
+                        logger.error(f"🚨 Code Node {node_id} yielded None! Preserving state.")
+                        return {}
+                    if not isinstance(result, dict):
+                        logger.error(f"🚨 Code Node {node_id} yielded non-dict ({type(result)}). Preserving state.")
+                        return {}
+                        
                     return result
                 return _code_node
             except ImportError as e:
