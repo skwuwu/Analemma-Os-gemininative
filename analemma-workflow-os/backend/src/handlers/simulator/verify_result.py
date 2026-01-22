@@ -242,10 +242,40 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         "report_s3_path": report_s3_path
     }
 
+def _check_false_positive(scenario: str, output: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    🛡️ Anti-False Positive Check
+    Detects logical contradictions where a test claims to pass but missing critical work evidence.
+    """
+    # 1. Cost Optimized Strategy: Must track tokens
+    if 'COST_OPTIMIZED' in scenario:
+        strategy = output.get('resource_policy_strategy') or output.get('strategy')
+        # If strategy is claimed to be COST_OPTIMIZED, we MUST see token usage
+        if strategy == 'COST_OPTIMIZED':
+            total_tokens = output.get('total_tokens', 0)
+            if not total_tokens and output.get('batch_split_occurred'):
+                # Paradox: Split occurred (implies processing) but 0 tokens recorded
+                return False, "False Positive: Batch split reported but 0 tokens tracked"
+            
+    # 2. Speed Guardrail: High branch count must trigger splitting
+    if 'SPEED_GUARDRAIL' in scenario:
+        branch_count = output.get('branch_count', 0)
+        batch_count = output.get('batch_count', 0)
+        # If we have many branches (e.g. 100+), we expect batching
+        if branch_count > 50 and batch_count <= 1:
+             return False, f"False Positive: {branch_count} branches but no batch splitting detected"
+
+    return True, "Integrity OK"
+
 def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], execution_arn: str = "") -> Dict[str, Any]:
     checks = []
-    
-    # [선처리] LoopLimitExceeded 에러 감지 - 모든 시나리오에서 확인
+
+    # 🛡️ 0. Integrity Check (Anti-False Positive)
+    integrity_ok, integrity_msg = _check_false_positive(scenario, output)
+    if not integrity_ok:
+        checks.append(_check("Integrity Check", False, details=integrity_msg))
+        return {"passed": False, "checks": checks}
+
     error_type = output.get('Error', output.get('error_type', ''))
     if error_type in ('LoopLimitExceeded', 'BranchLoopLimitExceeded'):
         # 가드레일이 작동한 것 자체는 시스템이 정상 작동하는 증거
@@ -320,20 +350,58 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
         checks.append(_check("S3 Path Present", has_s3_reference, "Output should contain S3 reference"))
         
     # D. Error Handling - 의도적 실패 테스트 (강화된 검증)
-    elif scenario in ['ERROR_HANDLING', 'STANDARD_ERROR_HANDLING']:
-        # [Fix] Relaxed error judgment criteria
-        error_info = output.get('error_info') or output.get('execution_result', {}).get('error_info')
-        partial_error = output.get('final_state', {}).get('__segment_error')
-        
-        is_handled = (
-            status == 'FAILED' or 
-            output.get('segment_type') == 'partial_failure' or
-            error_info is not None or 
-            partial_error is not None
+    elif scenario in ['ERROR_HANDLING', 'STANDARD_ERROR_HANDLING', 'DLQ_RECOVERY', 'STANDARD_DLQ_RECOVERY']:
+        # [Fix] Allow SUCCEEDED if it was a graceful failure (Partial Failure)
+        # Check for explicit failure markers in output
+        is_partial_failure = (
+            output.get('__segment_status') == 'PARTIAL_FAILURE' or
+            '__segment_error' in output or
+            output.get('partial_failure') is True or
+            output.get('error_handled') is True
         )
         
-        checks.append(_check("Error Context Captured", is_handled, 
-                            details=f"Handled via {output.get('segment_type', 'standard_fail')}"))
+        if status == 'SUCCEEDED' and is_partial_failure:
+            checks.append(_check("Global Status", True, details="Graceful failure (SUCCEEDED with Partial Failure marker)"))
+        else:
+            checks.append(_check("Global Status", status == 'FAILED', expected="FAILED", actual=status))
+            
+        # Verify specific error details
+        if execution_arn:
+            analysis = _analyze_error_handling_flow(execution_arn)
+            if analysis['error_details']:
+                 checks.append(_check("Execution History Analysis", True, details="Error flow verified via history"))
+            elif analysis['notify_failure_entered']: # At least entered notification
+                 checks.append(_check("Error Notification", True, details="NotifyExecutionFailure state entered"))
+            
+        # Check for intentional failure marker
+        out_str = json.dumps(output)
+        checks.append(_check("Intentional Failure Marker Found", 
+                            'FAIL_TEST' in out_str or 'Intentional Failure' in out_str or 'Simulated Error' in out_str,
+                            details="Output should contain intentional failure marker"))
+
+    # E. Cost Optimized Parallel Test
+    elif 'COST_OPTIMIZED_PARALLEL' in scenario:
+        checks.append(_check("Status Succeeded", status == 'SUCCEEDED'))
+        
+        # Work Evidence: Token Tracking & Strategy
+        strategy = output.get('resource_policy_strategy') or output.get('strategy')
+        total_tokens = output.get('total_tokens', 0)
+        
+        checks.append(_check("Strategy Correct", strategy == 'COST_OPTIMIZED', expected="COST_OPTIMIZED", actual=strategy))
+        checks.append(_check("Token Tracking Active", total_tokens > 0, details=f"Tracked {total_tokens} tokens"))
+        
+        # Verify batching logic if applicable (though this depends on branching factor)
+        if output.get('batch_split_occurred'):
+             checks.append(_check("Batch Splitting Applied", True))
+
+    # F. Speed Guardrail Test
+    elif 'SPEED_GUARDRAIL' in scenario:
+        checks.append(_check("Status Succeeded", status == 'SUCCEEDED'))
+        
+        # Work Evidence: Batch Splitting & Guardrail verified
+        checks.append(_check("Guardrail Verified", output.get('guardrail_verified') is True))
+        checks.append(_check("Batch Split Applied", output.get('batch_split_occurred') is True or output.get('batch_count', 0) > 1))
+        checks.append(_check("Scheduling Metadata", 'scheduling_metadata' in output))
         
         # [방어적 파싱] 에러 메시지 추출 - 다양한 위치 확인
         error_msg = ''

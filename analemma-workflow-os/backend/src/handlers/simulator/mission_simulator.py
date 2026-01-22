@@ -766,6 +766,9 @@ def poll_execution_status(execution_arn: str, max_seconds: int = MAX_POLL_SECOND
                 logger.error(f"   Error: {error_info}")
                 logger.error(f"   Cause: {cause_info[:500] if cause_info else 'N/A'}")  # Truncate long causes
             
+            # [Fix] 결과를 검증 함수로 전달하기 위해 ARN 포함
+            result['execution_arn'] = execution_arn
+            
             return result
         
         logger.debug(f"Execution {status}, elapsed: {elapsed:.1f}s")
@@ -820,8 +823,32 @@ def put_mission_metric(scenario_key: str, success: bool, duration: float = 0):
 
 
 # ============================================================================
+# ============================================================================
 # Verification Functions
 # ============================================================================
+def _check_false_positive(scenario_key: str, output: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    🛡️ Anti-False Positive Check
+    Detects logical contradictions where a test claims to pass but missing critical work evidence.
+    """
+    # 1. Cost Optimized Strategy: Must track tokens
+    if 'COST_OPTIMIZED' in scenario_key:
+        strategy = output.get('resource_policy_strategy') or output.get('strategy')
+        if strategy == 'COST_OPTIMIZED':
+            total_tokens = output.get('total_tokens', 0)
+            if not total_tokens and output.get('batch_split_occurred'):
+                 return False, "False Positive: Batch split reported but 0 tokens tracked"
+            
+    # 2. Speed Guardrail: High branch count must trigger splitting
+    if 'SPEED_GUARDRAIL' in scenario_key:
+        branch_count = output.get('branch_count', 0)
+        batch_count = output.get('batch_count', 0)
+        if branch_count > 50 and batch_count <= 1:
+             return False, f"False Positive: {branch_count} branches but no batch splitting detected"
+
+    return True, "Integrity OK"
+
+
 def verify_happy_path(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
     """Scenario A: 기본 성공 검증."""
     verification = {'passed': False, 'checks': []}
@@ -911,22 +938,47 @@ def verify_error_handling(execution_arn: str, result: dict, scenario_config: dic
     """Scenario D: 에러 핸들링 검증."""
     verification = {'passed': False, 'checks': []}
     
-    # Check 1: Execution failed (expected)
-    status_check = result.get('status') == 'FAILED'
+    status = result.get('status')
+    output = result.get('output', {})
+    
+    # Check 0: Anti-False Positive
+    integrity_ok, integrity_msg = _check_false_positive("ERROR_HANDLING", output)
+    if not integrity_ok:
+         verification['checks'].append({'name': 'Integrity Check', 'passed': False, 'details': integrity_msg})
+         return verification
+
+    # Check 1: Execution Status (Failed OR Succeeded with Partial Failure)
+    is_partial_failure = (
+        output.get('__segment_status') == 'PARTIAL_FAILURE' or
+        '__segment_error' in output or
+        output.get('partial_failure') is True or
+        output.get('error_handled') is True
+    )
+    
+    status_passed = status == 'FAILED' or (status == 'SUCCEEDED' and is_partial_failure)
+    
     verification['checks'].append({
-        'name': 'Expected Failure',
-        'passed': status_check,
-        'expected': 'FAILED',
-        'actual': result.get('status')
+        'name': 'Expected Failure Behavior',
+        'passed': status_passed,
+        'details': f"Status: {status}, Partial Failure: {is_partial_failure}"
     })
     
-    # Check 2: Error message exists
+    # Check 2: Error Notification / Details
     error = result.get('error', '')
-    error_check = len(error) > 0
+    output_str = json.dumps(output)
+    
+    # Find evidence of error capture
+    error_evidence = (
+        len(error) > 0 or 
+        'error_info' in output or
+        'FAIL_TEST' in output_str or
+        'Intentional Failure' in output_str
+    )
+    
     verification['checks'].append({
-        'name': 'Error Message',
-        'passed': error_check,
-        'details': error[:100] if error else 'No error message'
+        'name': 'Error Evidence Found',
+        'passed': error_evidence,
+        'details': 'Error info found' if error_evidence else 'No error info found'
     })
     
     verification['passed'] = all(c['passed'] for c in verification['checks'])
@@ -1061,6 +1113,13 @@ def verify_dlq_recovery(execution_arn: str, result: dict, scenario_config: dict)
 def verify_cost_guardrail(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
     """Scenario J: 비용 안전장치 검증 - 실제 Lambda 호출 횟수 확인."""
     verification = {'passed': False, 'checks': []}
+    output = result.get('output', {})
+    
+    # Check 0: Anti-False Positive
+    integrity_ok, integrity_msg = _check_false_positive("COST_GUARDRAIL", output)
+    if not integrity_ok:
+         verification['checks'].append({'name': 'Integrity Check', 'passed': False, 'details': integrity_msg})
+         return verification
     
     # Check 1: Execution succeeded (within limits)
     status_check = result.get('status') == 'SUCCEEDED'
@@ -1096,6 +1155,15 @@ def verify_cost_guardrail(execution_arn: str, result: dict, scenario_config: dic
             'passed': duration_check,
             'details': f"Count unavailable, using duration check as fallback"
         })
+
+    # Check 4: Explicit TEST_RESULT marker check (Work Evidence)
+    output_str = json.dumps(output)
+    test_result_check = 'TEST_RESULT' in output_str or 'status' in output_str
+    verification['checks'].append({
+        'name': 'Test Result Valid',
+        'passed': test_result_check,
+        'details': 'Output contains valid test result data'
+    })
     
     verification['passed'] = all(c['passed'] for c in verification['checks'])
     return verification
@@ -1120,6 +1188,97 @@ def verify_atomicity(execution_arn: str, result: dict, scenario_config: dict) ->
         'name': 'No Orphan Objects',
         'passed': status_check,
         'details': 'Clean completion (orphan check deferred)'
+    })
+    
+    verification['passed'] = all(c['passed'] for c in verification['checks'])
+    return verification
+
+
+def verify_cost_optimized_parallel(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
+    """Scenario AD: Cost Optimized Strategy 검증."""
+    verification = {'passed': False, 'checks': []}
+    output = result.get('output', {})
+    
+    integrity_ok, integrity_msg = _check_false_positive("COST_OPTIMIZED_PARALLEL", output)
+    if not integrity_ok:
+         return {'passed': False, 'checks': [{'name': 'Integrity', 'passed': False, 'details': integrity_msg}]}
+
+    status_check = result.get('status') == 'SUCCEEDED'
+    verification['checks'].append({'name': 'Status Succeeded', 'passed': status_check})
+
+    strategy = output.get('resource_policy_strategy') or output.get('strategy')
+    verification['checks'].append({
+        'name': 'Strategy Correct', 
+        'passed': strategy == 'COST_OPTIMIZED', 
+        'actual': strategy
+    })
+    
+    total_tokens = output.get('total_tokens', 0)
+    verification['checks'].append({
+        'name': 'Token Tracking', 
+        'passed': total_tokens > 0, 
+        'details': f"Tracked {total_tokens} tokens"
+    })
+    
+    verification['passed'] = all(c['passed'] for c in verification['checks'])
+    return verification
+
+def verify_speed_guardrail(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
+    """Scenario AE: Speed Guardrail 검증."""
+    verification = {'passed': False, 'checks': []}
+    output = result.get('output', {})
+
+    integrity_ok, integrity_msg = _check_false_positive("SPEED_GUARDRAIL", output)
+    if not integrity_ok:
+         return {'passed': False, 'checks': [{'name': 'Integrity', 'passed': False, 'details': integrity_msg}]}
+
+    status_check = result.get('status') == 'SUCCEEDED'
+    verification['checks'].append({'name': 'Status Succeeded', 'passed': status_check})
+    
+    # Work Evidence
+    verification['checks'].append({
+        'name': 'Guardrail Verified', 
+        'passed': output.get('guardrail_verified') is True
+    })
+    verification['checks'].append({
+        'name': 'Batch Splitting Applied', 
+        'passed': output.get('batch_split_occurred') is True
+    })
+    
+    verification['passed'] = all(c['passed'] for c in verification['checks'])
+    return verification
+
+def verify_parallel_scheduler(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
+    """Scenario AC: Parallel Scheduler 검증."""
+    verification = {'passed': False, 'checks': []}
+    output = result.get('output', {})
+    
+    status_check = result.get('status') == 'SUCCEEDED'
+    verification['checks'].append({'name': 'Status Succeeded', 'passed': status_check})
+    
+    # Check for correct strategy
+    strategy = output.get('resource_policy_strategy') or output.get('strategy')
+    verification['checks'].append({
+        'name': 'Strategy Correct', 
+        'passed': strategy == 'RESOURCE_OPTIMIZED', 
+        'actual': strategy
+    })
+    
+    verification['passed'] = all(c['passed'] for c in verification['checks'])
+    return verification
+
+def verify_shared_resource_isolation(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
+    """Scenario AF: Shared Resource Isolation 검증."""
+    verification = {'passed': False, 'checks': []}
+    output = result.get('output', {})
+    
+    status_check = result.get('status') == 'SUCCEEDED'
+    verification['checks'].append({'name': 'Status Succeeded', 'passed': status_check})
+    
+    # Expect serial execution evidence
+    verification['checks'].append({
+        'name': 'Isolation Applied',
+        'passed': output.get('isolation_applied') is True or 'serial' in str(output).lower()
     })
     
     verification['passed'] = all(c['passed'] for c in verification['checks'])

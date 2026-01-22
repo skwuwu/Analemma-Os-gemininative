@@ -109,8 +109,21 @@ ALLOWED_NODE_TYPES = {
 # 🔄 별칭(Alias) 매핑 - field_validator에서 정규 타입으로 변환됨
 NODE_TYPE_ALIASES = {
     "code": "operator",      # 'code'는 'operator'의 별칭
-    "aimodel": "llm",        # [Fix] support legacy/frontend type
-    "aiModel": "llm",        # [Fix] case-sensitive match
+    "aimodel": "llm_chat",   # [Fix] map to canonical 'llm_chat'
+    "aiModel": "llm_chat",   # [Fix] map to canonical 'llm_chat'
+    "llm": "llm_chat",       # [Fix] legacy support
+    "chat": "llm_chat",
+    "genai": "llm_chat",
+    "gpt": "llm_chat",
+    "claude": "llm_chat",
+    "gemini": "llm_chat",
+    "function": "operator",
+    "lambda": "operator",
+    "task": "operator",
+    "parallel": "parallel_group",
+    "map": "for_each",
+    "foreach": "for_each",
+    "loop": "for_each"
 }
 
 class EdgeModel(BaseModel):
