@@ -58,7 +58,8 @@
                     "PARALLEL_SCHEDULER_TEST",
                     "COST_OPTIMIZED_PARALLEL_TEST",
                     "SPEED_GUARDRAIL_TEST",
-                    "SHARED_RESOURCE_ISOLATION_TEST"
+                    "SHARED_RESOURCE_ISOLATION_TEST",
+                    "TIME_MACHINE_HYPER_STRESS"
                 ]
             },
             "Next": "InitializeSimulator"
@@ -142,7 +143,9 @@
                         ],
                         "Catch": [
                             {
-                                "ErrorEquals": ["States.ALL"],
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
                                 "ResultPath": "$.prep_error",
                                 "Next": "HandlePrepError"
                             }
@@ -245,7 +248,9 @@
                         ],
                         "Catch": [
                             {
-                                "ErrorEquals": ["States.ALL"],
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
                                 "ResultPath": "$.exec_result",
                                 "Next": "VerifyResult"
                             }
@@ -277,7 +282,9 @@
                         ],
                         "Catch": [
                             {
-                                "ErrorEquals": ["States.ALL"],
+                                "ErrorEquals": [
+                                    "States.ALL"
+                                ],
                                 "ResultPath": "$.verify_error",
                                 "Next": "VerifyFallback"
                             }
@@ -331,7 +338,9 @@
             ],
             "Catch": [
                 {
-                    "ErrorEquals": ["States.ALL"],
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
                     "ResultPath": "$.report_error",
                     "Next": "GlobalCleanup"
                 }
@@ -368,7 +377,9 @@
             ],
             "Catch": [
                 {
-                    "ErrorEquals": ["States.ALL"],
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
                     "ResultPath": "$.cleanup_error",
                     "Next": "SimulatorComplete"
                 }

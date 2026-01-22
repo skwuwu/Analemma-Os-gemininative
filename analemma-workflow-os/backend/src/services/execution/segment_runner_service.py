@@ -1467,20 +1467,31 @@ class SegmentRunnerService:
             Step Functions ASL에서 $.total_segments, $.segment_id를 참조하므로
             어떤 경로에서 return 되더라도 이 필드들이 반드시 포함되어야 함
             
-            🛡️ [P1 Fix] guardrail_verified를 final_state에서 추출하여 최상위 레벨에 주입
-            Step Functions ASL이 $.Payload.guardrail_verified를 참조함
+            🛡️ [v3.1 Zero-Exception] Standard Envelope Pattern
+            모든 상황에서 Step Functions가 기대하는 모든 필드에 기본값 보장
+            - guardrail_verified: 가드레일 검증 여부
+            - batch_count_actual: 실제 배치 수
+            - scheduling_metadata: 스케줄링 메타데이터
             """
             res.setdefault('total_segments', _total_segments)
             res.setdefault('segment_id', _segment_id)
             
-            # 🛡️ [P1 Fix] Extract guardrail_verified from final_state to top level
-            # Step Functions expects $.Payload.guardrail_verified but it's stored in final_state
+            # 🛡️ [v3.1] Extract standard metadata from final_state with fallback defaults
             final_state = res.get('final_state', {})
-            if isinstance(final_state, dict):
-                guardrail_verified = final_state.get('guardrail_verified', False)
-                res.setdefault('guardrail_verified', guardrail_verified)
-            else:
-                res.setdefault('guardrail_verified', False)
+            if not isinstance(final_state, dict):
+                final_state = {}
+            
+            # 🛡️ Standard Envelope: 필수 필드 기본값 보장
+            standard_metadata = {
+                'guardrail_verified': final_state.get('guardrail_verified', False),
+                'batch_count_actual': final_state.get('batch_count_actual', 1),
+                'scheduling_metadata': final_state.get('scheduling_metadata', {}),
+                'state_size_threshold': self.threshold
+            }
+            
+            # 🛡️ Top-level 평탄화: Step Functions ResultSelector 에러 방지
+            for key, default_value in standard_metadata.items():
+                res.setdefault(key, default_value)
             
             return res
         
