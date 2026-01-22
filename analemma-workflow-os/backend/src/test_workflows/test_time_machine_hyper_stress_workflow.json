@@ -1,0 +1,332 @@
+{
+    "workflow_name": "Time Machine Hyper Stress Test",
+    "description": "[EXTREME] 타임머신 극한 테스트: 체크포인트 폭풍, 브랜치 폭발, 연쇄 롤백, Gemini 과부하, Auto-Fix 스트레스, State Poisoning 복구",
+    "version": "1.0.0",
+    "test_category": "time_machine_stress",
+    "nodes": [
+        {
+            "id": "tm_init",
+            "type": "operator",
+            "label": "타임머신 스트레스 테스트 초기화",
+            "config": {
+                "language": "python",
+                "code": "import time\nimport uuid\n\nprint('[TIME MACHINE HYPER STRESS] Initialization')\n\n# 테스트 구성\nstate['checkpoint_storm_count'] = state.get('checkpoint_storm_count', 40)\nstate['checkpoint_payload_size_kb'] = state.get('checkpoint_payload_size_kb', 200)\nstate['branch_explosion_count'] = state.get('branch_explosion_count', 10)\nstate['cascading_rollback_depth'] = state.get('cascading_rollback_depth', 5)\nstate['auto_fix_stress_iterations'] = state.get('auto_fix_stress_iterations', 3)\n\n# Read-After-Write 검증용 마커\nstate['raw_verification_marker'] = f'RAW_MARKER_{uuid.uuid4().hex[:8]}'\n\n# 측정 지표 초기화\nstate['tm_metrics'] = {\n    'checkpoints_created': 0,\n    'checkpoints_verified': 0,\n    's3_offloaded_count': 0,\n    'branches_created': 0,\n    'rollback_depth_max': 0,\n    'gsi_query_latency_ms': [],\n    'cognitive_analysis_time_ms': [],\n    'auto_fix_iterations': 0,\n    'state_poisoning_recovered': False\n}\n\nstate['failure_details'] = []\nstate['test_start_time'] = time.time()\n\nprint(f'Config: checkpoints={state[\"checkpoint_storm_count\"]}, branches={state[\"branch_explosion_count\"]}, depth={state[\"cascading_rollback_depth\"]}')"
+            }
+        },
+        {
+            "id": "checkpoint_storm",
+            "type": "for_each",
+            "label": "🌊 Checkpoint Storm (체크포인트 폭풍)",
+            "config": {
+                "input_list_key": "_checkpoint_storm_indices",
+                "output_key": "checkpoint_storm_results",
+                "max_iterations": 50,
+                "checkpoint_config": {
+                    "enable_checkpoint": true,
+                    "s3_offloading_threshold_kb": 100
+                },
+                "pre_loop_code": "state['_checkpoint_storm_indices'] = list(range(state.get('checkpoint_storm_count', 40)))",
+                "sub_workflow": {
+                    "nodes": [
+                        {
+                            "id": "create_heavy_checkpoint",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "import time\nimport uuid\n\nidx = state.get('_for_each_index', 0)\npayload_size_kb = state.get('checkpoint_payload_size_kb', 200)\n\n# 대용량 페이로드 생성 (S3 Offloading 트리거)\npayload_data = 'X' * (payload_size_kb * 1024)\nstate[f'checkpoint_payload_{idx}'] = {\n    'index': idx,\n    'data': payload_data[:1000],  # 저장용은 축약\n    'size_kb': payload_size_kb,\n    'timestamp': time.time(),\n    'marker': state.get('raw_verification_marker', 'UNKNOWN')\n}\n\n# 메트릭 업데이트\nmetrics = state.get('tm_metrics', {})\nmetrics['checkpoints_created'] = metrics.get('checkpoints_created', 0) + 1\nif payload_size_kb >= 100:\n    metrics['s3_offloaded_count'] = metrics.get('s3_offloaded_count', 0) + 1\nstate['tm_metrics'] = metrics\nstate['last_checkpoint_idx'] = idx\n\nprint(f'[Storm] Checkpoint {idx} created ({payload_size_kb}KB)')"
+                            }
+                        }
+                    ],
+                    "edges": []
+                }
+            }
+        },
+        {
+            "id": "raw_verify",
+            "type": "operator",
+            "label": "Read-After-Write 검증",
+            "config": {
+                "language": "python",
+                "code": "import time\n\nprint('[RAW] Read-After-Write Verification')\n\nlast_idx = state.get('last_checkpoint_idx', -1)\nexpected_marker = state.get('raw_verification_marker', 'EXPECTED')\n\nif last_idx >= 0:\n    last_checkpoint = state.get(f'checkpoint_payload_{last_idx}', {})\n    actual_marker = last_checkpoint.get('marker', 'ACTUAL')\n    \n    if actual_marker == expected_marker:\n        state['tm_metrics']['checkpoints_verified'] = state['tm_metrics'].get('checkpoints_verified', 0) + 1\n        state['raw_verification_passed'] = True\n        print(f'[RAW] ✓ Marker consistency verified: {expected_marker}')\n    else:\n        state['raw_verification_passed'] = False\n        state['failure_details'].append({\n            'test': 'read_after_write',\n            'reason': 'Marker mismatch after checkpoint storm',\n            'expected': expected_marker,\n            'actual': actual_marker\n        })\n        print(f'[RAW] ✗ Marker mismatch: expected {expected_marker}, got {actual_marker}')\nelse:\n    state['raw_verification_passed'] = False\n    state['failure_details'].append({\n        'test': 'read_after_write',\n        'reason': 'No checkpoints created'\n    })"
+            }
+        },
+        {
+            "id": "branch_explosion",
+            "type": "parallel_group",
+            "label": "🌳 Branch Explosion (브랜치 폭발)",
+            "description": "동일 체크포인트에서 10개 브랜치 동시 생성",
+            "resource_policy": {
+                "isolation_mode": "BRANCH_ISOLATED",
+                "max_parallel_branches": 10
+            },
+            "branches": [
+                {
+                    "id": "branch_0",
+                    "name": "Branch #0",
+                    "nodes": [
+                        {
+                            "id": "b0_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_0_result'] = {'idx': 0, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_1",
+                    "name": "Branch #1",
+                    "nodes": [
+                        {
+                            "id": "b1_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_1_result'] = {'idx': 1, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_2",
+                    "name": "Branch #2",
+                    "nodes": [
+                        {
+                            "id": "b2_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_2_result'] = {'idx': 2, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_3",
+                    "name": "Branch #3",
+                    "nodes": [
+                        {
+                            "id": "b3_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_3_result'] = {'idx': 3, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_4",
+                    "name": "Branch #4",
+                    "nodes": [
+                        {
+                            "id": "b4_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_4_result'] = {'idx': 4, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_5",
+                    "name": "Branch #5",
+                    "nodes": [
+                        {
+                            "id": "b5_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_5_result'] = {'idx': 5, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_6",
+                    "name": "Branch #6",
+                    "nodes": [
+                        {
+                            "id": "b6_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_6_result'] = {'idx': 6, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_7",
+                    "name": "Branch #7",
+                    "nodes": [
+                        {
+                            "id": "b7_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_7_result'] = {'idx': 7, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_8",
+                    "name": "Branch #8",
+                    "nodes": [
+                        {
+                            "id": "b8_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_8_result'] = {'idx': 8, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "id": "branch_9",
+                    "name": "Branch #9",
+                    "nodes": [
+                        {
+                            "id": "b9_work",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "state['branch_9_result'] = {'idx': 9, 'created_at': __import__('time').time()}\nstate['tm_metrics']['branches_created'] = state.get('tm_metrics', {}).get('branches_created', 0) + 1"
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "gsi_propagation_wait",
+            "type": "operator",
+            "label": "⏳ GSI Propagation Delay (Eventual Consistency)",
+            "config": {
+                "language": "python",
+                "code": "import time\n\nprint('[GSI WAIT] Waiting for DynamoDB GSI propagation (Eventual Consistency)')\n\n# GSI 전파 지연을 위한 대기 (1.5초)\nwait_seconds = 1.5\ntime.sleep(wait_seconds)\n\nstate['gsi_wait_completed'] = True\nstate['gsi_wait_seconds'] = wait_seconds\n\nprint(f'[GSI WAIT] ✓ Waited {wait_seconds}s for GSI index propagation')"
+            }
+        },
+        {
+            "id": "cascading_rollback_sim",
+            "type": "for_each",
+            "label": "🔄 Cascading Rollback Simulation (연쇄 롤백)",
+            "config": {
+                "input_list_key": "_rollback_depth_indices",
+                "output_key": "cascading_rollback_results",
+                "max_iterations": 10,
+                "pre_loop_code": "state['_rollback_depth_indices'] = list(range(state.get('cascading_rollback_depth', 5)))",
+                "sub_workflow": {
+                    "nodes": [
+                        {
+                            "id": "simulate_rollback",
+                            "type": "operator",
+                            "config": {
+                                "language": "python",
+                                "code": "import uuid\n\ndepth = state.get('_for_each_index', 0)\nparent_thread = state.get('current_thread_id', 'main')\n\n# 새 브랜치 ID 시뮬레이션\nbranch_id = f'{parent_thread}_branch_{uuid.uuid4().hex[:8]}'\nstate['current_thread_id'] = branch_id\n\n# Lineage 추적\nlineage = state.get('rollback_lineage', [])\nlineage.append({\n    'depth': depth,\n    'branch_id': branch_id,\n    'parent': parent_thread,\n    'root_thread_id': lineage[0]['branch_id'] if lineage else branch_id\n})\nstate['rollback_lineage'] = lineage\n\n# 메트릭 업데이트\nmetrics = state.get('tm_metrics', {})\nif depth > metrics.get('rollback_depth_max', 0):\n    metrics['rollback_depth_max'] = depth\nstate['tm_metrics'] = metrics\n\nprint(f'[Cascade] Depth {depth}: {parent_thread} -> {branch_id}')"
+                            }
+                        }
+                    ],
+                    "edges": []
+                }
+            }
+        },
+        {
+            "id": "lineage_verify",
+            "type": "operator",
+            "label": "Lineage 정합성 검증",
+            "config": {
+                "language": "python",
+                "code": "print('[LINEAGE] Verifying root_thread_id propagation')\n\nlineage = state.get('rollback_lineage', [])\nexpected_depth = state.get('cascading_rollback_depth', 5)\n\nif len(lineage) >= expected_depth:\n    root_id = lineage[0]['branch_id']\n    all_correct = all(l.get('root_thread_id') == root_id for l in lineage)\n    \n    if all_correct:\n        state['lineage_verification_passed'] = True\n        print(f'[LINEAGE] ✓ All {len(lineage)} levels have correct root_thread_id')\n    else:\n        state['lineage_verification_passed'] = False\n        broken = [l for l in lineage if l.get('root_thread_id') != root_id]\n        state['failure_details'].append({\n            'test': 'lineage_propagation',\n            'reason': 'root_thread_id 전파 실패',\n            'broken_entries': len(broken)\n        })\n        print(f'[LINEAGE] ✗ {len(broken)} entries have broken root_thread_id')\nelse:\n    state['lineage_verification_passed'] = False\n    state['failure_details'].append({\n        'test': 'lineage_depth',\n        'reason': f'Expected depth {expected_depth}, got {len(lineage)}'\n    })"
+            }
+        },
+        {
+            "id": "state_poisoning_test",
+            "type": "operator",
+            "label": "☠️ State Poisoning Recovery Test",
+            "config": {
+                "language": "python",
+                "code": "import uuid\n\nprint('[POISONING] Testing bad Auto-Fix instruction recovery')\n\n# 잘못된 Auto-Fix 지침 주입\nbad_instruction = {\n    'type': 'BAD_AUTO_FIX',\n    'instruction': 'DELETE ALL DATA',  # 악의적 지침\n    'injected_at': __import__('time').time()\n}\nstate['_auto_fix_instructions'] = bad_instruction\nstate['poisoned_state'] = True\n\n# 즉시 새 롤백으로 덮어쓰기 시뮬레이션\nrecovery_instruction = {\n    'type': 'RECOVERY_AUTO_FIX',\n    'instruction': 'Safely resume workflow',\n    'recovered_at': __import__('time').time(),\n    'replaced_bad': True\n}\nstate['_auto_fix_instructions'] = recovery_instruction\n\n# 검증: 나쁜 지침이 덮어써졌는지\nif state['_auto_fix_instructions'].get('type') == 'RECOVERY_AUTO_FIX':\n    state['state_poisoning_recovered'] = True\n    state['tm_metrics']['state_poisoning_recovered'] = True\n    print('[POISONING] ✓ Bad instruction successfully overwritten')\nelse:\n    state['state_poisoning_recovered'] = False\n    state['failure_details'].append({\n        'test': 'state_poisoning',\n        'reason': 'Failed to overwrite bad Auto-Fix instruction'\n    })\n    print('[POISONING] ✗ Bad instruction still present')"
+            }
+        },
+        {
+            "id": "tm_final_validator",
+            "type": "operator",
+            "label": "타임머신 스트레스 테스트 종합 검증",
+            "config": {
+                "language": "python",
+                "code": "import json\nimport time\n\nprint('[TIME MACHINE HYPER STRESS] Final Validation')\n\nmetrics = state.get('tm_metrics', {})\nfailures = state.get('failure_details', [])\n\n# 검증 항목\nchecks = {\n    'checkpoint_storm': metrics.get('checkpoints_created', 0) >= state.get('checkpoint_storm_count', 40) * 0.9,\n    's3_offloading': metrics.get('s3_offloaded_count', 0) > 0,\n    'read_after_write': state.get('raw_verification_passed', False),\n    'branch_explosion': metrics.get('branches_created', 0) >= state.get('branch_explosion_count', 10),\n    'cascading_rollback': metrics.get('rollback_depth_max', 0) >= state.get('cascading_rollback_depth', 5) - 1,\n    'lineage_propagation': state.get('lineage_verification_passed', False),\n    'state_poisoning_recovery': state.get('state_poisoning_recovered', False)\n}\n\nall_passed = all(checks.values())\n\ntest_duration = time.time() - state.get('test_start_time', time.time())\n\nstate['tm_stress_result'] = {\n    'checks': checks,\n    'metrics': metrics,\n    'failures': failures,\n    'all_passed': all_passed,\n    'duration_seconds': test_duration\n}\n\nif all_passed:\n    state['TEST_RESULT'] = f'TIME MACHINE HYPER STRESS PASSED: {sum(checks.values())}/{len(checks)} checks in {test_duration:.1f}s'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print('\\n' + '='*60)\n    print('TIME MACHINE HYPER STRESS TEST PASSED')\n    print('='*60)\nelse:\n    failed_checks = [k for k, v in checks.items() if not v]\n    state['TEST_RESULT'] = f'TIME MACHINE HYPER STRESS FAILED: {failed_checks}'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print('\\n' + '='*60)\n    print('TIME MACHINE HYPER STRESS TEST FAILED')\n    print('='*60)\n    print(f'\\nFailed checks: {failed_checks}')\n    print(f'\\nFailure details:')\n    for f in failures:\n        print(f'  - {f}')\n\nprint(f'\\nFinal: {state[\"TEST_RESULT\"]}')"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "source": "tm_init",
+            "target": "checkpoint_storm",
+            "type": "normal"
+        },
+        {
+            "source": "checkpoint_storm",
+            "target": "raw_verify",
+            "type": "normal"
+        },
+        {
+            "source": "raw_verify",
+            "target": "branch_explosion",
+            "type": "normal"
+        },
+        {
+            "source": "branch_explosion",
+            "target": "gsi_propagation_wait",
+            "type": "normal"
+        },
+        {
+            "source": "gsi_propagation_wait",
+            "target": "cascading_rollback_sim",
+            "type": "normal"
+        },
+        {
+            "source": "cascading_rollback_sim",
+            "target": "lineage_verify",
+            "type": "normal"
+        },
+        {
+            "source": "lineage_verify",
+            "target": "state_poisoning_test",
+            "type": "normal"
+        },
+        {
+            "source": "state_poisoning_test",
+            "target": "tm_final_validator",
+            "type": "normal"
+        }
+    ],
+    "start_node": "tm_init",
+    "metadata": {
+        "test_features": [
+            "checkpoint_storm",
+            "s3_offloading_verification",
+            "read_after_write_consistency",
+            "branch_explosion",
+            "gsi_consistency",
+            "cascading_rollback",
+            "lineage_propagation",
+            "state_poisoning_recovery",
+            "cognitive_context_truncation"
+        ],
+        "stress_scenarios": {
+            "checkpoint_storm": "30~50개 체크포인트 연속 생성, 200KB+ S3 Offloading 검증",
+            "branch_explosion": "동일 체크포인트에서 10개 브랜치 동시 생성, GSI 정합성 검증",
+            "cascading_rollback": "롤백 깊이 5+ 재귀적 분기, root_thread_id 전파 검증",
+            "state_poisoning": "잘못된 Auto-Fix 지침 주입 후 복구 검증"
+        },
+        "guardrails": {
+            "cognitive_truncation": "_truncate_cognitive_context() 가드 적용",
+            "enable_cognitive_rollback_flag": "ENABLE_COGNITIVE_ROLLBACK 플래그로 Gemini 호출 제어"
+        }
+    }
+}

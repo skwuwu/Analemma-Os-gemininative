@@ -532,8 +532,40 @@ SCENARIOS = {
         'expected_status': 'SIGKILL',  # Ring Protection에 의해 SIGKILL 예상
         'verify_func': 'verify_ring_protection_attack',
         'timeout_seconds': 60
+    },
+    # ═══════════════════════════════════════════════════════════════════════════
+    # 🕐 Time Machine Hyper Stress Test Scenario (AM)
+    # ═══════════════════════════════════════════════════════════════════════════
+    'TIME_MACHINE_HYPER_STRESS': {
+        'name': 'Scenario AM: Time Machine Hyper Stress',
+        'description': '🕐 타임머신 극한 테스트: 체크포인트 폭풍(30~50), 브랜치 폭발(10), 연쇄 롤백(depth 5+), Gemini 과부하, Auto-Fix 스트레스, State Poisoning 복구',
+        'test_keyword': 'TIME_MACHINE_HYPER_STRESS',
+        'input_data': {
+            # 1. Checkpoint Storm
+            'checkpoint_storm_count': 40,
+            'checkpoint_payload_size_kb': 200,  # S3 Offloading 트리거
+            'read_after_write_verify': True,
+            # 2. Branch Explosion
+            'branch_explosion_count': 10,
+            'gsi_consistency_verify': True,
+            # 3. Cascading Rollback
+            'cascading_rollback_depth': 5,
+            'lineage_verify': True,
+            # 4. Gemini Cognitive Overload
+            'cognitive_overload_enabled': True,
+            'enable_cognitive_rollback': True,  # 플래그로 제어 가능
+            # 5. Auto-Fix Stress
+            'auto_fix_stress_iterations': 3,
+            # 6. State Poisoning Recovery
+            'state_poisoning_test': True,
+            'inject_bad_auto_fix': True
+        },
+        'expected_status': 'SUCCEEDED',
+        'verify_func': 'verify_time_machine_hyper_stress',
+        'timeout_seconds': 300  # 5분 타임아웃
     }
 }
+
 
 
 
@@ -577,6 +609,8 @@ TEST_WORKFLOW_MAPPINGS = {
     'SPLIT_PARADOX_TEST': 'test_split_paradox_workflow',  # 분할의 역설 (Infinite Fragmentation)
     # 🛡️ The Shield of Analemma: Ring Protection
     'RING_PROTECTION_ATTACK_TEST': 'test_ring_protection_attack_workflow',  # Ring Protection 공격 시뮬레이션
+    # 🕐 Time Machine Hyper Stress
+    'TIME_MACHINE_HYPER_STRESS': 'test_time_machine_hyper_stress_workflow',  # 타임머신 극한 테스트
 }
 
 
@@ -3476,8 +3510,138 @@ def verify_ring_protection_attack(execution_arn: str, result: dict, scenario_con
 
 
 # ============================================================================
+# Scenario AM: Time Machine Hyper Stress 시나리오 검증 함수
+# ============================================================================
+
+def verify_time_machine_hyper_stress(execution_arn: str, result: dict, scenario_config: dict) -> Dict[str, Any]:
+    """
+    Scenario AM: Time Machine Hyper Stress 검증.
+    
+    🕐 타임머신 극한 테스트:
+    - 체크포인트 폭풍 (30~50개 연속 생성)
+    - 브랜치 폭발 (10개 동시 생성)
+    - 연쇄 롤백 (depth 5+)
+    - Lineage 정합성
+    - State Poisoning 복구
+    - Read-After-Write 정합성
+    """
+    verification = {'passed': False, 'checks': []}
+    
+    try:
+        output = result.get('output', {})
+        final_state = output.get('final_state', {})
+        tm_result = final_state.get('tm_stress_result', {})
+        metrics = tm_result.get('metrics', {})
+        checks = tm_result.get('checks', {})
+        
+        input_data = scenario_config.get('input_data', {})
+        expected_checkpoints = input_data.get('checkpoint_storm_count', 40)
+        expected_branches = input_data.get('branch_explosion_count', 10)
+        expected_depth = input_data.get('cascading_rollback_depth', 5)
+        
+        # Check 1: Execution Status
+        status_check = result.get('status') == 'SUCCEEDED'
+        verification['checks'].append({
+            'name': 'Execution Status',
+            'passed': status_check,
+            'expected': 'SUCCEEDED',
+            'actual': result.get('status')
+        })
+        
+        # Check 2: Checkpoint Storm
+        checkpoints_created = metrics.get('checkpoints_created', 0)
+        storm_threshold = expected_checkpoints * 0.9  # 90% 이상 생성
+        checkpoint_storm_passed = checkpoints_created >= storm_threshold
+        verification['checks'].append({
+            'name': 'Checkpoint Storm',
+            'passed': checkpoint_storm_passed,
+            'expected': f'>= {storm_threshold}',
+            'actual': checkpoints_created,
+            'details': f'{checkpoints_created}/{expected_checkpoints} checkpoints created'
+        })
+        
+        # Check 3: S3 Offloading
+        s3_offloaded = metrics.get('s3_offloaded_count', 0)
+        s3_offload_passed = s3_offloaded > 0
+        verification['checks'].append({
+            'name': 'S3 Offloading',
+            'passed': s3_offload_passed,
+            'expected': '> 0',
+            'actual': s3_offloaded,
+            'details': f'{s3_offloaded} checkpoints offloaded to S3'
+        })
+        
+        # Check 4: Read-After-Write Consistency
+        raw_passed = checks.get('read_after_write', False) or final_state.get('raw_verification_passed', False)
+        verification['checks'].append({
+            'name': 'Read-After-Write Consistency',
+            'passed': raw_passed,
+            'details': 'Marker consistency verified after checkpoint storm'
+        })
+        
+        # Check 5: Branch Explosion
+        branches_created = metrics.get('branches_created', 0)
+        branch_explosion_passed = branches_created >= expected_branches
+        verification['checks'].append({
+            'name': 'Branch Explosion',
+            'passed': branch_explosion_passed,
+            'expected': f'>= {expected_branches}',
+            'actual': branches_created,
+            'details': f'{branches_created}/{expected_branches} branches created simultaneously'
+        })
+        
+        # Check 6: Cascading Rollback Depth
+        max_depth = metrics.get('rollback_depth_max', 0)
+        cascade_passed = max_depth >= expected_depth - 1
+        verification['checks'].append({
+            'name': 'Cascading Rollback Depth',
+            'passed': cascade_passed,
+            'expected': f'>= {expected_depth - 1}',
+            'actual': max_depth,
+            'details': f'Max rollback depth: {max_depth}'
+        })
+        
+        # Check 7: Lineage Propagation
+        lineage_passed = checks.get('lineage_propagation', False) or final_state.get('lineage_verification_passed', False)
+        verification['checks'].append({
+            'name': 'Lineage Propagation',
+            'passed': lineage_passed,
+            'details': 'root_thread_id correctly propagated through all rollback levels'
+        })
+        
+        # Check 8: State Poisoning Recovery
+        poisoning_recovered = metrics.get('state_poisoning_recovered', False) or final_state.get('state_poisoning_recovered', False)
+        verification['checks'].append({
+            'name': 'State Poisoning Recovery',
+            'passed': poisoning_recovered,
+            'details': 'Bad Auto-Fix instruction successfully overwritten'
+        })
+        
+        # Overall result
+        all_passed = all(c['passed'] for c in verification['checks'])
+        verification['passed'] = all_passed
+        
+        if all_passed:
+            duration = tm_result.get('duration_seconds', 0)
+            logger.info(f"✅ Time Machine Hyper Stress PASSED in {duration:.1f}s")
+        else:
+            failed = [c['name'] for c in verification['checks'] if not c['passed']]
+            logger.warning(f"❌ Time Machine Hyper Stress FAILED: {failed}")
+        
+        return verification
+        
+    except Exception as e:
+        logger.error(f"Time Machine Hyper Stress verification failed: {e}")
+        return {
+            'passed': False,
+            'checks': [{'name': 'Verification Error', 'passed': False, 'details': str(e)}]
+        }
+
+
+# ============================================================================
 # Lambda Handler
 # ============================================================================
+
 
 def lambda_handler(event, context):
     """

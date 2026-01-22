@@ -1466,9 +1466,22 @@ class SegmentRunnerService:
             🛡️ [P0] 모든 return 경로에 필수 메타데이터 강제 주입
             Step Functions ASL에서 $.total_segments, $.segment_id를 참조하므로
             어떤 경로에서 return 되더라도 이 필드들이 반드시 포함되어야 함
+            
+            🛡️ [P1 Fix] guardrail_verified를 final_state에서 추출하여 최상위 레벨에 주입
+            Step Functions ASL이 $.Payload.guardrail_verified를 참조함
             """
             res.setdefault('total_segments', _total_segments)
             res.setdefault('segment_id', _segment_id)
+            
+            # 🛡️ [P1 Fix] Extract guardrail_verified from final_state to top level
+            # Step Functions expects $.Payload.guardrail_verified but it's stored in final_state
+            final_state = res.get('final_state', {})
+            if isinstance(final_state, dict):
+                guardrail_verified = final_state.get('guardrail_verified', False)
+                res.setdefault('guardrail_verified', guardrail_verified)
+            else:
+                res.setdefault('guardrail_verified', False)
+            
             return res
         
         # ====================================================================

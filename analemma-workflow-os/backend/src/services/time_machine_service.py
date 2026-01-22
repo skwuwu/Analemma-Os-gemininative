@@ -664,6 +664,61 @@ class TimeMachineService:
             logger.error(f"Failed to get rollback suggestions: {e}")
             return []
     
+    def _truncate_cognitive_context(
+        self,
+        checkpoints: List[Dict[str, Any]],
+        max_checkpoints: int = 10
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """
+        Gemini의 Token Limit을 넘지 않도록 체크포인트 컨텍스트를 전략적으로 축소
+        
+        [Hyper Stress Guard]
+        - 20개 초과 시 최신 10개로 제한
+        - 상태 스냅샷에서 변화가 없는 키는 제외하고 의미 있는 차이(Diff)만 추출
+        
+        Args:
+            checkpoints: 체크포인트 목록
+            max_checkpoints: 최대 유지할 체크포인트 수
+            
+        Returns:
+            (축소된 체크포인트 목록, 축소 여부)
+        """
+        was_truncated = False
+        
+        if len(checkpoints) > 20:
+            logger.warning(
+                f"Cognitive Overload detected: {len(checkpoints)} checkpoints. "
+                f"Trimming to latest {max_checkpoints}."
+            )
+            checkpoints = checkpoints[-max_checkpoints:]
+            was_truncated = True
+        
+        # 상태 스냅샷 Diff 추출 (인접 체크포인트 간 변화만 유지)
+        optimized_checkpoints = []
+        prev_state_keys = set()
+        
+        for cp in checkpoints:
+            current_state = cp.get('state_snapshot', {})
+            current_keys = set(current_state.keys())
+            
+            # 새로 추가되거나 변경된 키만 추출
+            diff_keys = current_keys - prev_state_keys
+            if diff_keys or cp.get('status') in ['FAILED', 'ERROR']:
+                # 중요 체크포인트는 유지
+                optimized_checkpoints.append(cp)
+            
+            prev_state_keys = current_keys
+        
+        # 최소 3개는 유지 (시작, 중간, 끝)
+        if len(optimized_checkpoints) < 3 and checkpoints:
+            optimized_checkpoints = [
+                checkpoints[0],
+                checkpoints[len(checkpoints) // 2],
+                checkpoints[-1]
+            ]
+        
+        return optimized_checkpoints, was_truncated
+    
     async def _cognitive_rollback_analysis(
         self,
         thread_id: str,
@@ -682,6 +737,11 @@ class TimeMachineService:
          해당 시점으로 돌아가 파싱 로직을 수정하는 것을 추천합니다"
         """
         try:
+            # 🛡️ Cognitive Overload Guard - 체크포인트 컨텍스트 축소
+            checkpoints, was_truncated = self._truncate_cognitive_context(checkpoints)
+            if was_truncated:
+                logger.info(f"Context truncated for cognitive analysis. Proceeding with {len(checkpoints)} checkpoints.")
+            
             # 체크포인트 요약 생성
             checkpoint_summaries = []
             for i, cp in enumerate(checkpoints):
