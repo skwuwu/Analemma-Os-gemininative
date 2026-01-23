@@ -1155,19 +1155,24 @@ class SegmentRunnerService:
                    f"{successful_branches}/{len(parallel_results)} branches succeeded, "
                    f"next_segment={next_segment if not is_complete else 'COMPLETE'}")
         
-        # [Guard] [P0 Fix] total_segments 반드시 포함 - ASL Choice 상태의 null 참조 방지
+        # [Guard] [v3.9] Core aggregator response
+        # ASL passthrough 필드는 _finalize_response에서 자동 주입됨
         return {
-            # [Guard] [Fix] Use CONTINUE instead of SUCCEEDED for ASL routing
+            # Core execution result
             "status": "COMPLETE" if is_complete else "CONTINUE",
             "final_state": final_state,
             "final_state_s3_path": output_s3_path,
+            "current_state": final_state,  # ASL 호환용 별칭
+            "state_s3_path": output_s3_path,  # ASL 호환용 별칭
             "next_segment_to_run": None if is_complete else next_segment,
             "new_history_logs": all_history_logs,
             "error_info": branch_errors if branch_errors else None,
             "branches": None,
             "segment_type": "aggregator",
             "segment_id": segment_to_run,
-            "total_segments": total_segments,  # [Guard] [P0] 필수 메타데이터
+            "total_segments": total_segments,
+            
+            # Aggregator specific metadata
             "aggregator_metadata": {
                 'total_branches': len(parallel_results),
                 'successful_branches': successful_branches,
@@ -1509,6 +1514,7 @@ class SegmentRunnerService:
             1. Extract metadata from final_state (or defaults).
             2. Inject back into final_state (persistence).
             3. Inject into top-level response (ResultSelector access).
+            4. [v3.9] ASL passthrough fields - 입력 이벤트의 메타데이터를 그대로 전달
             """
             res.setdefault('total_segments', _total_segments)
             res.setdefault('segment_id', _segment_id)
@@ -1558,6 +1564,30 @@ class SegmentRunnerService:
             # [Guard] 2. Inject into Top-level (SFN ResultSelector Access)
             for key, value in standard_metadata.items():
                 res[key] = value
+            
+            # [Guard] [v3.9] ASL Passthrough Fields - 입력 이벤트의 메타데이터를 응답에 주입
+            # ASL JSONPath는 Lambda 응답을 직접 파싱하므로 필드가 없으면 오류 발생
+            # StateBag은 Python 레벨에서만 동작하고 ASL에는 영향 없음
+            asl_passthrough_fields = [
+                'workflow_config', 'current_state', 'state_s3_path',
+                'ownerId', 'workflowId', 'idempotency_key', 'quota_reservation_id',
+                'partition_map', 'partition_map_s3_path',
+                'segment_manifest', 'segment_manifest_s3_path',
+                'distributed_mode', 'max_concurrency',
+                'max_loop_iterations', 'max_branch_iterations',
+                'loop_counter', 'llm_segments', 'hitp_segments', 'state_durations'
+            ]
+            for field in asl_passthrough_fields:
+                if field not in res:
+                    # 이벤트에서 값 가져오기 (test_workflow_config -> workflow_config 별칭 처리)
+                    if field == 'workflow_config':
+                        res[field] = event.get('test_workflow_config') or event.get('workflow_config')
+                    elif field == 'ownerId':
+                        res[field] = event.get('ownerId') or event.get('owner_id')
+                    elif field == 'workflowId':
+                        res[field] = event.get('workflowId') or event.get('workflow_id')
+                    else:
+                        res[field] = event.get(field)
                 
             return res
         

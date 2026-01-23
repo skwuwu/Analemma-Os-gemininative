@@ -67,6 +67,22 @@ def ensure_state_bag(state: Any) -> StateBag:
     # Recursion happens inside StateBag constructor
     return StateBag(state if isinstance(state, dict) else {})
 
+def normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    🛡️ [v3.6] Normalize incoming event for Lambda handlers.
+    - Ensures current_state is a StateBag
+    - Returns the same event (mutated in place) for chaining
+    
+    Safe to call on any event (API Gateway, Step Functions, etc.)
+    """
+    if not isinstance(event, dict):
+        return event
+    
+    if 'current_state' in event:
+        event['current_state'] = ensure_state_bag(event['current_state'])
+    
+    return event
+
 def normalize_inplace(event: Dict[str, Any], remove_state_data: bool = False):
     """
     🛡️ [v3.6] Legacy Support & Event Normalization

@@ -413,7 +413,9 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
                            details="Should define large_s3_result=True or contain s3:// path"))
         
     # D. Error Handling - 의도적 실패 테스트 (강화된 검증)
-    elif scenario in ['ERROR_HANDLING', 'STANDARD_ERROR_HANDLING', 'DLQ_RECOVERY', 'STANDARD_DLQ_RECOVERY']:
+    # Note: DLQ_RECOVERY is handled separately in Local Runner Scenarios section (line ~559)
+    # because DLQ recovery should SUCCEED when recovery works properly
+    elif scenario in ['ERROR_HANDLING', 'STANDARD_ERROR_HANDLING', 'STANDARD_DLQ_RECOVERY']:
         # [Fix] Allow SUCCEEDED if it was a graceful failure (Partial Failure)
         # Check for explicit failure markers in output
         is_partial_failure = (

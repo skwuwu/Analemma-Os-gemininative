@@ -50,7 +50,8 @@
         },
         {
             "id": "hitp_node",
-            "type": "hitp",
+            "type": "operator",
+            "hitp": true,
             "config": {
                 "message": "Aggregation 완료. 아래 데이터에서 [TEST_RESULT: ✅ SUCCESS]를 확인하고 승인하세요.",
                 "schema": {
