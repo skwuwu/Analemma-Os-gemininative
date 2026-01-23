@@ -1087,8 +1087,53 @@ class SegmentRunnerService:
             branch_id = branch_result.get('branch_id', f'branch_{i}')
             branch_status = branch_result.get('branch_status', 'UNKNOWN')
             branch_state = branch_result.get('final_state', {})
+            # [Fix] Also check 'state' alias (some workflows might use it)
+            if not branch_state:
+                branch_state = branch_result.get('state', {})
+                
             branch_logs = branch_result.get('new_history_logs', [])
             error_info = branch_result.get('error_info')
+            
+            # ================================================================
+            # [Guard] [v3.9] Branch Result Hydration (S3 Offloading Support)
+            # 브랜치 실행 결과가 S3로 오프로딩된 경우 Aggregation 전에 복원해야 함
+            # ================================================================
+            branch_s3_path = branch_result.get('final_state_s3_path') or branch_result.get('state_s3_path')
+            
+            # 상태가 비어있거나 Truncated 상태인데 S3 경로가 있다면 다운로드 시도
+            is_truncated = branch_state.get('__state_truncated') is True if isinstance(branch_state, dict) else False
+            
+            if (not branch_state or is_truncated) and branch_s3_path:
+                try:
+                    logger.info(f"[Aggregator] ⬇️ Hydrating branch {branch_id} result from S3: {branch_s3_path}")
+                    
+                    def _download_branch_state():
+                        bucket_name = branch_s3_path.replace("s3://", "").split("/")[0]
+                        key_name = "/".join(branch_s3_path.replace("s3://", "").split("/")[1:])
+                        s3_client = self.state_manager.s3_client
+                        obj = s3_client.get_object(Bucket=bucket_name, Key=key_name)
+                        return json.loads(obj['Body'].read().decode('utf-8'))
+
+                    if RETRY_UTILS_AVAILABLE:
+                        branch_state = retry_call(
+                            _download_branch_state,
+                            max_retries=3,
+                            base_delay=0.5,
+                            max_delay=3.0,
+                            exceptions=(Exception,)
+                        )
+                    else:
+                        branch_state = _download_branch_state()
+                        
+                    logger.info(f"[Aggregator] ✅ Hydrated branch {branch_id} ({len(json.dumps(branch_state))} bytes)")
+                    
+                except Exception as e:
+                    logger.error(f"[Aggregator] ❌ Failed to hydrate branch {branch_id} from S3: {e}")
+                    # 실패 시 에러 기록하고 Truncated 상태 유지 (또는 빈 상태)
+                    branch_errors.append({
+                        'branch_id': branch_id,
+                        'error': f"Aggregation Hydration Failed: {str(e)}"
+                    })
             
             logger.info(f"[Aggregator] Branch {branch_id}: status={branch_status}")
             
@@ -1700,7 +1745,7 @@ class SegmentRunnerService:
 
         # ====================================================================
         # [Hydration] [v3.9] Early Config Hydration from S3
-        # Hyper Stress Test 등 대용량 Config가 S3로 오프로딩된 경우 복원
+        # for extremely large config using s3
         # ====================================================================
         config_s3_path = event.get('test_workflow_config_s3_path')
         if config_s3_path and not event.get('test_workflow_config'):
@@ -1708,7 +1753,6 @@ class SegmentRunnerService:
                 logger.info(f"⬇️ [Hydration] Downloading test_workflow_config from S3: {config_s3_path}")
                 
                 # S3 Download with Retry (Eventual Consistency Protection)
-                # 시뮬레이터가 PutObject 직후 실행하므로 404 가능성 대비
                 def _download_config():
                     bucket_name = config_s3_path.replace("s3://", "").split("/")[0]
                     key_name = "/".join(config_s3_path.replace("s3://", "").split("/")[1:])
@@ -2165,13 +2209,30 @@ class SegmentRunnerService:
             logger.warning(f"[Alert] [Large Payload Warning] result_state exceeds 250KB! "
                           f"Size: {result_state_size/1024:.1f}KB. S3 offload REQUIRED.")
         
+        # [v3.10] Extract loop_counter for Loop-Safe S3 Paths
+        # Check result_state first (dynamic updates), then event (context)
+        loop_counter = None
+        if isinstance(result_state, dict):
+            loop_counter = result_state.get('loop_counter')
+        
+        if loop_counter is None:
+            loop_counter = event.get('loop_counter')
+            
+        # Ensure proper type
+        if loop_counter is not None:
+            try:
+                loop_counter = int(loop_counter)
+            except (ValueError, TypeError):
+                loop_counter = None
+
         final_state, output_s3_path = self.state_manager.handle_state_storage(
             state=result_state,
             auth_user_id=auth_user_id,
             workflow_id=workflow_id,
             segment_id=segment_id,
             bucket=s3_bucket,
-            threshold=self.threshold
+            threshold=self.threshold,
+            loop_counter=loop_counter
         )
         
         # [Critical] Log the actual return payload size

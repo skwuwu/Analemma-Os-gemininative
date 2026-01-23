@@ -135,7 +135,7 @@ class StateManager:
             logger.error("❌ Failed to upload raw bytes to %s: %s", bucket, e)
             raise RuntimeError(f"Failed to upload raw bytes to S3: {e}")
 
-    def handle_state_storage(self, state: Dict[str, Any], auth_user_id: str, workflow_id: str, segment_id: int, bucket: Optional[str], threshold: Optional[int] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    def handle_state_storage(self, state: Dict[str, Any], auth_user_id: str, workflow_id: str, segment_id: int, bucket: Optional[str], threshold: Optional[int] = None, loop_counter: Optional[int] = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """
         Decide whether to store state inline or in S3 based on size threshold.
         PII data is masked before storage to ensure privacy compliance.
@@ -148,6 +148,9 @@ class StateManager:
         - Single serialization: 직렬화 결과를 재사용하여 중복 연산 제거
         - Selective masking: 대용량 키는 마스킹 우회
         - Safe threshold: 180KB로 하향하여 SF 래퍼 오버헤드 고려
+        
+        [v3.10] Loop Support:
+        - loop_counter arg added to prevent S3 overwrite during loops
         """
         try:
             # 🛡️ PII 마스킹 적용 (개인정보 보호) - 대용량 키 우회 적용됨
@@ -208,7 +211,13 @@ class StateManager:
                 if not auth_user_id:
                     raise PermissionError("Missing authenticated user id for S3 upload")
                 
-                prefix = f"workflow-states/{auth_user_id}/{workflow_id}/segments/{segment_id}"
+                # [v3.10] Loop-Safe Path Construction
+                if loop_counter is not None and isinstance(loop_counter, int) and loop_counter >= 0:
+                    # e.g. .../segments/10/5/output.json (Loop #5)
+                    prefix = f"workflow-states/{auth_user_id}/{workflow_id}/segments/{segment_id}/{loop_counter}"
+                else:
+                    prefix = f"workflow-states/{auth_user_id}/{workflow_id}/segments/{segment_id}"
+                
                 # [Perf Optimization] 이미 직렬화된 바이트를 직접 S3에 업로드 (중복 직렬화 제거)
                 s3_path = self._upload_raw_bytes_to_s3(bucket, prefix, serialized_bytes, deterministic_filename="output.json")
                 logger.info("📦 State uploaded to S3: %s (%d bytes, %.1fKB)", s3_path, state_size, state_size/1024)
