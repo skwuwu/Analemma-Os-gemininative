@@ -1698,6 +1698,50 @@ class SegmentRunnerService:
         from src.common.statebag import ensure_state_bag
         initial_state = ensure_state_bag(initial_state)
 
+        # ====================================================================
+        # [Hydration] [v3.9] Early Config Hydration from S3
+        # Hyper Stress Test 등 대용량 Config가 S3로 오프로딩된 경우 복원
+        # ====================================================================
+        config_s3_path = event.get('test_workflow_config_s3_path')
+        if config_s3_path and not event.get('test_workflow_config'):
+            try:
+                logger.info(f"⬇️ [Hydration] Downloading test_workflow_config from S3: {config_s3_path}")
+                
+                # S3 Download with Retry (Eventual Consistency Protection)
+                # 시뮬레이터가 PutObject 직후 실행하므로 404 가능성 대비
+                def _download_config():
+                    bucket_name = config_s3_path.replace("s3://", "").split("/")[0]
+                    key_name = "/".join(config_s3_path.replace("s3://", "").split("/")[1:])
+                    s3_client = self.state_manager.s3_client
+                    obj = s3_client.get_object(Bucket=bucket_name, Key=key_name)
+                    return json.loads(obj['Body'].read().decode('utf-8'))
+
+                if RETRY_UTILS_AVAILABLE:
+                    # Exponential Backoff: 0.5s, 1.0s, 2.0s
+                    loaded_config = retry_call(
+                        _download_config,
+                        max_retries=3,
+                        base_delay=0.5,
+                        max_delay=3.0,
+                        exceptions=(Exception,)
+                    )
+                else:
+                    loaded_config = _download_config()
+
+                event['test_workflow_config'] = loaded_config
+                logger.info(f"✅ [Hydration] Config restored ({len(json.dumps(loaded_config))} bytes)")
+                
+            except Exception as e:
+                logger.error(f"❌ [Hydration] Failed to download config from S3: {e}")
+                # Critical Fail: Config is required
+                return _finalize_response({
+                    "status": "FAILED",
+                    "error_info": {
+                        "error": f"Config Hydration Failed: {str(e)}",
+                        "error_type": "HydrationError"
+                    }
+                })
+
         # 4. Resolve Segment Config
         # [Critical Fix] Support both test_workflow_config (E2E tests) and workflow_config
         workflow_config = event.get('test_workflow_config') or event.get('workflow_config')
@@ -1800,6 +1844,34 @@ class SegmentRunnerService:
             branches = segment_config.get('branches', [])
             logger.info(f"[Parallel] Parallel group detected with {len(branches)} branches")
             
+            # [Guard] [Critical Fix] Define helper for offloading within parallel block
+            def _finalize_with_offload(response_payload: Dict[str, Any]) -> Dict[str, Any]:
+                """Helper to ensure S3 offloading is checked before finalizing response."""
+                # Extract state to potentially offload
+                # Note: mask_pii_in_state might have been applied already
+                current_final_state = response_payload.get('final_state')
+                if current_final_state:
+                    # [Guard] Double check threshold compliance
+                    # Parallel groups can be large, so we strictly enforce offloading
+                    offloaded_state, s3_path = self.state_manager.handle_state_storage(
+                        state=current_final_state,
+                        auth_user_id=auth_user_id,
+                        workflow_id=workflow_id,
+                        segment_id=segment_id,
+                        bucket=s3_bucket,
+                        threshold=self.threshold
+                    )
+                    
+                    # Update response with offloaded result
+                    response_payload['final_state'] = offloaded_state
+                    response_payload['final_state_s3_path'] = s3_path
+                    response_payload['state_s3_path'] = s3_path # Alias for ASL
+                    
+                    if s3_path:
+                        logger.info(f"[Parallel] Offloaded state to S3: {s3_path}")
+                
+                return _finalize_response(response_payload)
+
             # [Guard] [Critical Fix] 단일 브랜치 + 내부 partition_map 케이스 처리
             # 이 경우 실제 병렬 실행이 필요 없으므로 브랜치 내부의 첫 번째 세그먼트 직접 실행
             if len(branches) == 1:
@@ -1816,7 +1888,7 @@ class SegmentRunnerService:
                     if first_inner_segment:
                         # [System] 내부 partition_map을 새로운 실행 컨텍스트로 변환
                         # 상태를 유지하면서 내부 세그먼트 체인 순차 실행
-                        return _finalize_response({
+                        return _finalize_with_offload({
                             "status": "SEQUENTIAL_BRANCH",
                             "final_state": mask_pii_in_state(initial_state),
                             "final_state_s3_path": None,
@@ -1851,7 +1923,7 @@ class SegmentRunnerService:
             # [Guard] 유효한 브랜치가 없으면 SUCCEEDED로 진행
             if not valid_branches:
                 logger.info(f"[Kernel] ⏭️ No valid branches to execute, skipping parallel group")
-                return _finalize_response({
+                return _finalize_with_offload({
                     "status": "CONTINUE",  # [Guard] [Fix] Use CONTINUE for ASL routing
                     "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
@@ -1886,7 +1958,7 @@ class SegmentRunnerService:
                 logger.info(f"[Scheduler] [System] Scheduled {meta.get('total_branches', len(valid_branches))} branches into "
                            f"{meta.get('batch_count', 1)} batches (strategy: {meta.get('strategy', 'UNKNOWN')})")
                 
-                return _finalize_response({
+                return _finalize_with_offload({
                     "status": "SCHEDULED_PARALLEL",
                     "final_state": mask_pii_in_state(initial_state),
                     "final_state_s3_path": None,
@@ -1905,7 +1977,7 @@ class SegmentRunnerService:
             initial_state['scheduling_metadata'] = meta
             initial_state['batch_count_actual'] = meta.get('batch_count', 1)
             
-            return _finalize_response({
+            return _finalize_with_offload({
                 "status": "PARALLEL_GROUP",
                 "final_state": mask_pii_in_state(initial_state),
                 "final_state_s3_path": None,

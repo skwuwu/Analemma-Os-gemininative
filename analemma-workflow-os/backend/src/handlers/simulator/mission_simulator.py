@@ -720,8 +720,44 @@ def trigger_step_functions(scenario_key: str, scenario_config: dict, orchestrato
     # [FIX] 테스트 워크플로우 설정 직접 로드 및 주입
     test_workflow_config = _load_test_workflow_config(test_keyword)
     if test_workflow_config:
-        payload['test_workflow_config'] = test_workflow_config
-        logger.info(f"✅ Injected test_workflow_config for {test_keyword}")
+        # [Critical] Config Offloading for Hyper Stress or Large Payload
+        # Step Functions Payload Limit (256KB) 우회 전략
+        config_json = json.dumps(test_workflow_config)
+        config_size = len(config_json.encode('utf-8'))
+        
+        # Trigger Offloading:
+        # 1. TIME_MACHINE_HYPER_STRESS scenario (always offload)
+        # 2. Config size > 30KB (prevent overhead)
+        should_offload = (
+            scenario_key == 'TIME_MACHINE_HYPER_STRESS' or 
+            config_size > 30 * 1024  # 30KB
+        )
+        
+        if should_offload and STATE_BUCKET:
+            try:
+                s3 = get_s3_client()
+                # Temp path for test config
+                config_s3_key = f"temp/test_configs/{execution_id}.json"
+                
+                logger.info(f"⬆️ Offloading test config to S3: {config_s3_key} ({config_size/1024:.1f}KB)")
+                s3.put_object(
+                    Bucket=STATE_BUCKET,
+                    Key=config_s3_key,
+                    Body=config_json,
+                    ContentType='application/json'
+                )
+                
+                # Update payload with S3 pointer (remove inline config)
+                payload['test_workflow_config_s3_path'] = f"s3://{STATE_BUCKET}/{config_s3_key}"
+                logger.info(f"✅ Injected test_workflow_config_s3_path")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to offload config to S3: {e}")
+                # Fallback to inline (might fail SFN limit)
+                payload['test_workflow_config'] = test_workflow_config
+        else:
+            payload['test_workflow_config'] = test_workflow_config
+            logger.info(f"✅ Injected inline test_workflow_config ({config_size/1024:.1f}KB)")
     else:
         # 테스트 워크플로우 config가 없으면 에러 발생
         error_msg = f"❌ Test workflow config not found for {test_keyword} -> {TEST_WORKFLOW_MAPPINGS.get(test_keyword)}"
@@ -1567,6 +1603,20 @@ def run_scenario(scenario_key: str) -> Dict[str, Any]:
         if execution_arn:
             cleanup_result = _cleanup_e2e_data(execution_arn, scenario_key)
             logger.debug(f"Cleanup result: {cleanup_result}")
+            
+            # [Cleanup] S3 Temp Config Deletion
+            # execution_arn: arn:aws:states:...:execution:...:e2e-scenario-uuid
+            try:
+                execution_id = execution_arn.split(':')[-1]
+                if STATE_BUCKET:
+                    s3 = get_s3_client()
+                    config_s3_key = f"temp/test_configs/{execution_id}.json"
+                    
+                    # Delete quietly (it might not exist if not offloaded)
+                    s3.delete_object(Bucket=STATE_BUCKET, Key=config_s3_key)
+                    logger.debug(f"🗑️ Cleaned up temp S3 config: {config_s3_key}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp S3 config: {e}")
 
 
 
