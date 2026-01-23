@@ -17,7 +17,6 @@ sys.path.append('/opt/python')
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
 
 from src.common.logging_utils import get_logger
-from src.common.error_handlers import handle_lambda_error
 
 logger = get_logger(__name__)
 
@@ -343,25 +342,29 @@ def _send_cloudwatch_metrics(
         logger.warning(f"Failed to send CloudWatch metrics: {e}")
 
 
-@handle_lambda_error
 def lambda_handler(event, context):
     """Lambda handler for state data management"""
-    logger.info(f"Processing state data management request: {event.get('action')}")
-    
-    action = event.get('action')
-    
-    if action == 'update_and_compress':
-        result = update_and_compress_state_data(event)
-        return result
-    
-    elif action == 'decompress':
-        # Handle decompression requests
-        compressed_data = event.get('compressed_data')
-        if not compressed_data:
-            raise ValueError("compressed_data is required for decompress action")
+    try:
+        logger.info(f"Processing state data management request: {event.get('action')}")
         
-        decompressed = decompress_data(compressed_data)
-        return decompressed
+        action = event.get('action')
+        
+        if action == 'update_and_compress':
+            result = update_and_compress_state_data(event)
+            return result
+        
+        elif action == 'decompress':
+            # Handle decompression requests
+            compressed_data = event.get('compressed_data')
+            if not compressed_data:
+                raise ValueError("compressed_data is required for decompress action")
+            
+            decompressed = decompress_data(compressed_data)
+            return decompressed
+        
+        else:
+            raise ValueError(f"Unknown action: {action}")
     
-    else:
-        raise ValueError(f"Unknown action: {action}")
+    except Exception as e:
+        logger.error(f"Error in state_data_manager: {e}", exc_info=True)
+        raise

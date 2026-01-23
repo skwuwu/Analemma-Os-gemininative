@@ -773,20 +773,32 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
         is_success = status in ('SUCCEEDED', 'COMPLETE')
         checks.append(_check("Status Succeeded", is_success, expected="SUCCEEDED or COMPLETE", actual=status))
         out_str = json.dumps(output)
+        
+        # [Fix] Check in both output and final_state (execution result structure varies)
+        final_state = output.get('final_state', {})
+        
         # [v3.9] Structured Multimodal Verification
         # 단순 문자열 매칭이 아닌 구조적 필드 확인 (False Positive 방지)
-        # [Fix] video_analysis_output 키도 확인
-        video_analysis = output.get('video_analysis') or output.get('video_result') or output.get('video_analysis_output')
+        # [Fix] video_analysis_output 키도 확인 - output과 final_state 양쪽 확인
+        video_analysis = (
+            output.get('video_analysis') or output.get('video_result') or output.get('video_analysis_output') or
+            final_state.get('video_analysis') or final_state.get('video_result') or final_state.get('video_analysis_output')
+        )
         has_video_struct = isinstance(video_analysis, dict) or isinstance(video_analysis, list) or isinstance(video_analysis, str)
         
         # Fallback to loose match ONLY if structure missing and loose match is strong
         has_video_loose = (
             'video_chunks' in output or
             'video_track' in out_str.lower() or
-            'video_analysis_output' in output
+            'video_analysis_output' in output or
+            'video_analysis_output' in final_state
         )
         
-        image_analysis = output.get('image_analysis') or output.get('spec_sheet_analysis')
+        image_analysis = (
+            output.get('image_analysis') or output.get('spec_sheet_analysis') or
+            final_state.get('image_analysis') or final_state.get('spec_sheet_analysis') or
+            final_state.get('image_batch_results')
+        )
         has_image_struct = isinstance(image_analysis, dict) or isinstance(image_analysis, list)
         
         # 복합 분석 완료 확인 (conflict resolution 또는 multimodal summary)
