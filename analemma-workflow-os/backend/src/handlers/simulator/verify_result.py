@@ -126,7 +126,23 @@ def _analyze_error_handling_flow(execution_arn: str, expected_error_marker: str 
             result["execution_segment_failed"] = True
     
     logger.info(f"Error handling flow analysis: {json.dumps(result, default=str)}")
+    logger.info(f"Error handling flow analysis: {json.dumps(result, default=str)}")
     return result
+
+def _load_s3_content(s3_path: str) -> Dict[str, Any]:
+    """Helper to load JSON content from S3 path (s3://bucket/key)"""
+    try:
+        bucket = s3_path.split('/')[2]
+        key = '/'.join(s3_path.split('/')[3:])
+        
+        s3 = boto3.client('s3')
+        response = s3.get_object(Bucket=bucket, Key=key)
+        content = json.loads(response['Body'].read().decode('utf-8'))
+        logger.info(f"Successfully loaded {len(str(content))} bytes from {s3_path}")
+        return content
+    except Exception as e:
+        logger.warning(f"Failed to load S3 content from {s3_path}: {e}")
+        return {}
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -198,6 +214,27 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if error_type:
         output['execution_error'] = error_type
         output['execution_failed'] = True
+
+    # [Fix] Handle S3 Offloaded State (Strict Offloading Support)
+    # If the state was offloaded to S3, we must fetch it to perform verification.
+    final_state = output.get('final_state', {})
+    if final_state.get('__s3_offloaded') or output.get('__s3_offloaded'):
+        s3_path = final_state.get('__s3_path') or output.get('__s3_path') or output.get('final_state_s3_path')
+        if s3_path:
+            logger.info(f"Offloaded state detected. Fetching from {s3_path}...")
+            full_state = _load_s3_content(s3_path)
+            
+            # Merge loaded state into output to allow verification checks to pass
+            if full_state:
+                # 1. Update final_state with actual content
+                if 'final_state' in output:
+                    output['final_state'].update(full_state)
+                
+                # 2. Update top-level output if it was the one offloaded (less common but possible)
+                if output.get('__s3_offloaded'):
+                     output.update(full_state)
+                
+                logger.info("Successfully expanded offloaded state for verification")
     
     # [Enhancement] Extract ExecutionArn for detailed history analysis
     # [Fix] None defense: event['prep_result']가 None일 수 있음
