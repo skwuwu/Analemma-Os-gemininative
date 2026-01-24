@@ -40,6 +40,8 @@ class DistributedStateConfig:
         default_factory=lambda: os.getenv("KERNEL_STATE_TABLE", "analemma-kernel-state")
     )
     state_key: str = "global-concurrency-state"
+    # [Critical] DynamoDB 테이블이 composite key (pk + sk)를 사용하는 경우 sk 추가
+    sort_key: str = "CONCURRENCY_STATE"  # Sort key for composite key tables
     ttl_seconds: int = 3600  # 1시간
     enable_distributed: bool = True  # False면 로컬 모드
     sync_interval_ms: int = 500  # 동기화 주기
@@ -116,8 +118,13 @@ class DistributedStateManager:
                 return self._local_cache['active_executions']
             
             try:
+                # [Critical] Composite key support
+                key = {'pk': self.config.state_key}
+                if hasattr(self.config, 'sort_key') and self.config.sort_key:
+                    key['sk'] = self.config.sort_key
+                
                 response = self._table.update_item(
-                    Key={'pk': self.config.state_key},
+                    Key=key,
                     UpdateExpression='SET active_executions = if_not_exists(active_executions, :zero) + :delta, '
                                      'last_updated = :now',
                     ExpressionAttributeValues={
@@ -155,8 +162,13 @@ class DistributedStateManager:
                 return self._local_cache['accumulated_cost']
             
             try:
+                # [Critical] Composite key support
+                key = {'pk': self.config.state_key}
+                if hasattr(self.config, 'sort_key') and self.config.sort_key:
+                    key['sk'] = self.config.sort_key
+                
                 response = self._table.update_item(
-                    Key={'pk': self.config.state_key},
+                    Key=key,
                     UpdateExpression='SET accumulated_cost = if_not_exists(accumulated_cost, :zero) + :cost, '
                                      'last_updated = :now, '
                                      'last_workflow = :wf',
@@ -197,9 +209,13 @@ class DistributedStateManager:
             }
         
         try:
-            response = self._table.get_item(
-                Key={'pk': self.config.state_key}
-            )
+            # [Critical] Composite key support (pk + sk)
+            # Try with sort key first, fallback to pk-only
+            key = {'pk': self.config.state_key}
+            if hasattr(self.config, 'sort_key') and self.config.sort_key:
+                key['sk'] = self.config.sort_key
+            
+            response = self._table.get_item(Key=key)
             item = response.get('Item', {})
             
             global_state = {
@@ -217,7 +233,14 @@ class DistributedStateManager:
             return global_state
             
         except Exception as e:
-            logger.warning(f"[DistributedState] Get state failed: {e}")
+            # [Debug] Log actual error for schema mismatch diagnosis
+            error_type = type(e).__name__
+            if 'ValidationException' in str(e):
+                logger.error(f"[DistributedState] DynamoDB key schema mismatch: {e}. "
+                           f"Table may use composite key (pk+sk). Key used: {key}")
+            else:
+                logger.warning(f"[DistributedState] Get state failed ({error_type}): {e}")
+            
             return {
                 'active_executions': self._local_cache['active_executions'],
                 'accumulated_cost': self._local_cache['accumulated_cost'],
@@ -240,14 +263,18 @@ class DistributedStateManager:
                 return True
             
             try:
-                self._table.put_item(
-                    Item={
-                        'pk': self.config.state_key,
-                        'active_executions': 0,
-                        'accumulated_cost': Decimal('0'),
-                        'last_updated': Decimal(str(time.time())),
-                        'reset_at': Decimal(str(time.time()))
-                    }
+                # [Critical] Composite key support
+                item = {
+                    'pk': self.config.state_key,
+                    'active_executions': 0,
+                    'accumulated_cost': Decimal('0'),
+                    'last_updated': Decimal(str(time.time())),
+                    'reset_at': Decimal(str(time.time()))
+                }
+                if hasattr(self.config, 'sort_key') and self.config.sort_key:
+                    item['sk'] = self.config.sort_key
+                
+                self._table.put_item(Item=item)
                 )
                 return True
             except Exception as e:

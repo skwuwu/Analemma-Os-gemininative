@@ -1319,6 +1319,17 @@ def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
         (config.get("foreach_config") or {}).get("item_processor")
     )
     
+    # [Critical Fix] Support sub_workflow structure (used in test configs)
+    # sub_workflow contains nodes array - extract first node as sub_node_config
+    if not sub_node_config:
+        sub_workflow = inner_config.get("sub_workflow") or config.get("sub_workflow")
+        if sub_workflow and isinstance(sub_workflow, dict):
+            workflow_nodes = sub_workflow.get("nodes", [])
+            if workflow_nodes and len(workflow_nodes) > 0:
+                # Use first node as the iteration processor
+                sub_node_config = workflow_nodes[0]
+                logger.info(f"[ForEach] Extracted sub_node_config from sub_workflow.nodes[0]")
+    
     # [Fix v2] If body_nodes is specified but no sub_node_config, create a passthrough operator
     if body_nodes and not sub_node_config:
         # Create a simple operator that just logs the item
@@ -1347,10 +1358,18 @@ def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     if "." in input_list_key:
         input_list_key = input_list_key.split(".")[-1] # Simple extraction for now
         
-    if not all([input_list_key, sub_node_config, output_key]):
-        # Fallback for alternative config structure
-        logger.warning(f"for_each config incomplete: {config.keys()}")
-        # Check if we can proceed with minimal config for tests
+    # [Critical Guard] Validate essential config before proceeding
+    if not input_list_key:
+        logger.error(f"[ForEach] Missing input_list_key. Config keys: {config.keys()}")
+        return {output_key: []}
+    
+    if not sub_node_config:
+        logger.error(f"[ForEach] Missing sub_node_config. Config keys: {config.keys()}")
+        return {output_key: []}
+    
+    if not isinstance(sub_node_config, dict):
+        logger.error(f"[ForEach] sub_node_config must be dict, got {type(sub_node_config)}")
+        return {output_key: []}
         
     input_list = _get_nested_value(state, input_list_key, [])
     if not isinstance(input_list, list):

@@ -630,14 +630,25 @@ class SegmentRunnerService:
         first_nodes = nodes[:mid]
         second_nodes = nodes[mid:]
         
-        first_node_ids = {n.get('id') for n in first_nodes}
-        second_node_ids = {n.get('id') for n in second_nodes}
+        # [Critical Guard] None 필터링 (nodes 배열에 None이 섞여있을 수 있음)
+        first_nodes = [n for n in first_nodes if n is not None]
+        second_nodes = [n for n in second_nodes if n is not None]
+        
+        if not first_nodes or not second_nodes:
+            logger.warning(f"[Kernel] Node filtering resulted in empty segment, returning original")
+            return [segment_config]
+        
+        first_node_ids = {n.get('id') for n in first_nodes if isinstance(n, dict)}
+        second_node_ids = {n.get('id') for n in second_nodes if isinstance(n, dict)}
         
         # 엣지 분리: 각 서브 세그먼트 내부 엣지만 유지
+        # [Critical Guard] edges도 None일 수 있고, 각 edge도 None이거나 dict가 아닐 수 있음
         first_edges = [e for e in edges 
-                      if e.get('source') in first_node_ids and e.get('target') in first_node_ids]
+                      if e is not None and isinstance(e, dict) 
+                      and e.get('source') in first_node_ids and e.get('target') in first_node_ids]
         second_edges = [e for e in edges 
-                       if e.get('source') in second_node_ids and e.get('target') in second_node_ids]
+                       if e is not None and isinstance(e, dict)
+                       and e.get('source') in second_node_ids and e.get('target') in second_node_ids]
         
         # 서브 세그먼트 생성
         original_id = segment_config.get('id', 'segment')
@@ -2562,6 +2573,36 @@ class SegmentRunnerService:
             threshold=effective_threshold,
             loop_counter=loop_counter
         )
+        
+        # [Critical] Map 브랜치 응답 페이로드 최소화
+        # Map State는 모든 브랜치 결과를 수집하므로 응답 크기가 중요
+        # S3에 전체 상태를 저장했으면 응답은 작은 레퍼런스만 포함
+        if is_map_branch and output_s3_path:
+            # [Emergency Payload Pruning] 대용량 필드 제거
+            # documents, queries 같은 큰 배열은 S3에 있으므로 응답에서 제외
+            if isinstance(final_state, dict):
+                # 보존할 필드만 선택 (step_history, 메타데이터는 유지)
+                pruned_state = {
+                    'step_history': final_state.get('step_history', []),
+                    '__new_history_logs': final_state.get('__new_history_logs', []),
+                    'execution_logs': final_state.get('execution_logs', []),
+                    'guardrail_verified': final_state.get('guardrail_verified'),
+                    'batch_count_actual': final_state.get('batch_count_actual'),
+                    'scheduling_metadata': final_state.get('scheduling_metadata', {}),
+                    'state_size_threshold': final_state.get('state_size_threshold'),
+                    '__scheduling_metadata': final_state.get('__scheduling_metadata', {}),
+                    '__guardrail_verified': final_state.get('__guardrail_verified'),
+                    '__batch_count_actual': final_state.get('__batch_count_actual'),
+                }
+                # None 값 제거 (응답 크기 추가 절감)
+                pruned_state = {k: v for k, v in pruned_state.items() if v is not None}
+                
+                pruned_size = len(json.dumps(pruned_state, ensure_ascii=False).encode('utf-8'))
+                original_size = len(json.dumps(final_state, ensure_ascii=False).encode('utf-8'))
+                logger.info(f"[Map Branch Pruning] Reduced payload from {original_size/1024:.1f}KB to {pruned_size/1024:.1f}KB "
+                           f"({100*(1-pruned_size/original_size):.1f}% reduction). Full state in S3: {output_s3_path}")
+                
+                final_state = pruned_state
         
         # [Critical] Log the actual return payload size
         return_payload_size = len(json.dumps(final_state, ensure_ascii=False).encode('utf-8')) if final_state else 0
