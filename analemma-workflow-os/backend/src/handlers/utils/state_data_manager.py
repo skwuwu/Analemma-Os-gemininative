@@ -25,7 +25,12 @@ s3_client = boto3.client('s3')
 cloudwatch_client = boto3.client('cloudwatch')
 
 # Environment variables
+# Environment variables
 S3_BUCKET = os.environ.get('STATE_STORAGE_BUCKET')
+if not S3_BUCKET:
+    logger.error("[CRITICAL] STATE_STORAGE_BUCKET env var is NOT set! Offloading will fail.")
+
+MAX_PAYLOAD_SIZE_KB = int(os.environ.get('MAX_PAYLOAD_SIZE_KB', '200'))
 MAX_PAYLOAD_SIZE_KB = int(os.environ.get('MAX_PAYLOAD_SIZE_KB', '200'))
 
 
@@ -81,7 +86,9 @@ def store_to_s3(data: Any, key: str) -> str:
         return s3_path
         
     except Exception as e:
+    except Exception as e:
         logger.error(f"Failed to store data to S3: {e}")
+        # Re-raise to allow caller to handle fallback
         raise
 
 
@@ -174,7 +181,16 @@ def optimize_current_state(current_state: Dict[str, Any], idempotency_key: str) 
                 logger.info(f"Moved {field} ({field_size}KB) to S3: {s3_path}")
                 
             except Exception as e:
-                logger.warning(f"Failed to move {field} to S3: {e}")
+            except Exception as e:
+                logger.error(f"[CRITICAL] Failed to move {field} to S3: {e}. Truncating field to prevent catastrophic failure.")
+                # 🛡️ [Fail-Safe] If offload fails, WE MUST NOT return the huge field.
+                # Returning it guarantees a crash (States.DataLimitExceeded).
+                # Truncating it causes data loss but keeps the workflow alive for debugging.
+                optimized_state[field] = {
+                    "type": "error_truncated",
+                    "error": f"S3 Offload Failed: {str(e)}",
+                    "original_size_kb": field_size
+                }
 
     # Strategy 2: Full State Offloading (Fallback)
     # If state is still too large (> 100KB) after individual field optimization,
