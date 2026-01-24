@@ -1933,6 +1933,77 @@ class SegmentRunnerService:
             res.setdefault('next_segment_to_run', None)  # [Critical Fix] ASL requires this field
             res.setdefault('new_history_logs', [])  # 🛡️ [P0 Critical Fix] ASL JSONPath requires this field
             
+            # 🛡️ [P0 Critical] Step Functions 256KB Payload Limit Guard
+            # AWS Step Functions rejects state transitions > 256KB
+            # Check BEFORE returning to ensure response fits within limits
+            try:
+                response_size = len(json.dumps(res, default=str))
+                # 200KB threshold (safety margin below 256KB limit)
+                SFN_SIZE_LIMIT = 200 * 1024
+                
+                if response_size > SFN_SIZE_LIMIT:
+                    logger.warning(
+                        f"[Kernel] ⚠️ Response size {response_size/1024:.1f}KB exceeds Step Functions limit. "
+                        f"Force offloading final_state to S3..."
+                    )
+                    
+                    # Force S3 offload for final_state
+                    final_state = res.get('final_state', {})
+                    if final_state and not final_state.get('__s3_offloaded'):
+                        # Generate S3 path for offloaded state
+                        owner_id = event.get('ownerId') or event.get('owner_id', 'unknown')
+                        workflow_id = event.get('workflowId') or event.get('workflow_id', 'unknown')
+                        segment_id = res.get('segment_id', 0)
+                        timestamp = int(time.time())
+                        
+                        s3_key = f"workflow-states/{owner_id}/{workflow_id}/segments/{segment_id}/{timestamp}/output.json"
+                        
+                        try:
+                            # Upload full state to S3
+                            s3_client = boto3.client('s3')
+                            s3_client.put_object(
+                                Bucket=self.state_bucket,
+                                Key=s3_key,
+                                Body=json.dumps(final_state, default=str),
+                                ContentType='application/json'
+                            )
+                            
+                            s3_path = f"s3://{self.state_bucket}/{s3_key}"
+                            logger.info(f"[Kernel] [S3 Offload] Uploaded {len(json.dumps(final_state))/1024:.1f}KB to {s3_path}")
+                            
+                            # Replace final_state with S3 reference
+                            res['final_state'] = {
+                                "__s3_offloaded": True,
+                                "__s3_path": s3_path,
+                                "__original_size_kb": len(json.dumps(final_state)) / 1024,
+                                # Preserve critical metadata for Step Functions JSONPath
+                                "guardrail_verified": final_state.get('guardrail_verified', False),
+                                "batch_count_actual": final_state.get('batch_count_actual', 1),
+                                "scheduling_metadata": final_state.get('scheduling_metadata', {}),
+                                "state_size_threshold": self.threshold,
+                                # Preserve passthrough fields with double underscore (legacy compatibility)
+                                "__scheduling_metadata": final_state.get('scheduling_metadata', {}),
+                                "__guardrail_verified": final_state.get('guardrail_verified', False),
+                                "__batch_count_actual": final_state.get('batch_count_actual', 1),
+                            }
+                            res['final_state_s3_path'] = s3_path
+                            res['state_s3_path'] = s3_path  # ASL passthrough field
+                            
+                            # Verify new size
+                            new_size = len(json.dumps(res, default=str))
+                            logger.info(
+                                f"[Kernel] [S3 Offload] Response size reduced: "
+                                f"{response_size/1024:.1f}KB → {new_size/1024:.1f}KB "
+                                f"(saved {(response_size-new_size)/1024:.1f}KB)"
+                            )
+                            
+                        except Exception as s3_err:
+                            logger.error(f"[Kernel] ❌ S3 offload failed: {s3_err}. Keeping original response (may fail in SFN)")
+                            # Keep original response but log the issue
+                            
+            except Exception as size_check_err:
+                logger.error(f"[Kernel] ⚠️ Failed to check response size: {size_check_err}. Proceeding without offload.")
+            
             # [Guard] [v3.9] ASL Passthrough Fields - 입력 이벤트의 메타데이터를 응답에 주입
             # ASL JSONPath는 Lambda 응답을 직접 파싱하므로 필드가 없으면 오류 발생
             # StateBag은 Python 레벨에서만 동작하고 ASL에는 영향 없음
