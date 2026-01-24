@@ -1631,13 +1631,24 @@ class SegmentRunnerService:
                 'segment_manifest', 'segment_manifest_s3_path',
                 'distributed_mode', 'max_concurrency',
                 'max_loop_iterations', 'max_branch_iterations',
-                'loop_counter', 'llm_segments', 'hitp_segments', 'state_durations'
+                'loop_counter', 'llm_segments', 'hitp_segments', 'state_durations',
+                # [New] Pass through S3 config paths
+                'test_workflow_config_s3_path', 'config_s3_ref'
             ]
             for field in asl_passthrough_fields:
                 if field not in res:
                     # 이벤트에서 값 가져오기 (test_workflow_config -> workflow_config 별칭 처리)
                     if field == 'workflow_config':
-                        res[field] = event.get('test_workflow_config') or event.get('workflow_config')
+                        # [Optimization] If config is offloaded, do NOT pass huge inline config back
+                        # unless it's small or we absolutely have to.
+                        s3_path = event.get('test_workflow_config_s3_path') or event.get('config_s3_ref')
+                        should_skip_inline = s3_path is not None
+                        
+                        if should_skip_inline:
+                             # Skip re-injecting huge config (it's available via S3 path)
+                             pass
+                        else:
+                             res[field] = event.get('test_workflow_config') or event.get('workflow_config')
                     elif field == 'ownerId':
                         res[field] = event.get('ownerId') or event.get('owner_id')
                     elif field == 'workflowId':
@@ -1709,7 +1720,9 @@ class SegmentRunnerService:
                     return child_result
 
         # 1. State Bag Normalization
-        normalize_inplace(event, remove_state_data=True)
+        # [Moved] executed AFTER loading state to prevent data loss
+        # normalize_inplace(event, remove_state_data=True) 
+
         
         # 2. Extract Context
         auth_user_id = event.get('ownerId') or event.get('owner_id') or event.get('user_id')
@@ -1745,6 +1758,11 @@ class SegmentRunnerService:
         # StateBag guarantees Safe Access (get(key) != None)
         from src.common.statebag import ensure_state_bag
         initial_state = ensure_state_bag(initial_state)
+
+        # [Fix] [v3.10] Normalize Event AFTER loading state
+        # Remove potentially huge state_data from event to save memory for child processes
+        # But ONLY after we have safely loaded it into initial_state
+        normalize_inplace(event, remove_state_data=True)
 
         # ====================================================================
         # [Hydration] [v3.9] Early Config Hydration from S3

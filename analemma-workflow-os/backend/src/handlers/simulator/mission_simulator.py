@@ -734,6 +734,7 @@ def trigger_step_functions(scenario_key: str, scenario_config: dict, orchestrato
             scenario_key == 'PARALLEL_SCHEDULER_TEST' or
             scenario_key == 'HYPER_REPORT' or
             scenario_key == 'MULTIMODAL_COMPLEX' or
+            scenario_key == 'COST_OPTIMIZED_PARALLEL_TEST' or
             config_size > 30 * 1024  # 30KB
         )
         
