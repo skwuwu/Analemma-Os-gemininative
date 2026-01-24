@@ -2115,6 +2115,33 @@ class SegmentRunnerService:
             
 
                 
+            # 🛡️ [P0 Critical] Aggressive Pruning for Parallel Branches
+            # Map State collects ALL branch results. If every branch returns huge metadata (workflow_config),
+            # the aggregated payload explodes (N * ConfigSize).
+            # The Aggregator (AggregateParallelResults) gets these from 'state_data', so branches DON'T need them.
+            if is_parallel_branch:
+                # List of fields to STRIP from branch response
+                prune_fields = [
+                    'workflow_config', 
+                    'partition_map', 'partition_map_s3_path',
+                    'segment_manifest', 'segment_manifest_s3_path',
+                    'test_workflow_config_s3_path', 'config_s3_ref',
+                    'distributed_mode', 'max_concurrency',
+                    'total_segments', 'segment_to_run', # Aggregator knows this
+                    'state_history', 'state_durations'  # Aggregator manages history
+                ]
+                
+                # Keep only essential fields:
+                # - status, final_state (or pointers), error_info, branch_id
+                
+                pruned_count = 0
+                for field in prune_fields:
+                    if field in res:
+                        del res[field]
+                        pruned_count += 1
+                        
+                logger.debug(f"[Parallel Pruning] Stripped {pruned_count} heavy metadata fields from branch response to save space.")
+
             return res
         
         # ====================================================================
