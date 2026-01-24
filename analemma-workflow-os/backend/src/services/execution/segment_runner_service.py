@@ -1223,6 +1223,22 @@ class SegmentRunnerService:
         from src.common.statebag import ensure_state_bag
         # current_state가 null이어도 StateBag({})으로 승격
         current_state = ensure_state_bag(event.get('current_state', {}))
+        
+        # [Critical Fix] current_state가 S3 offload되었을 경우 복원
+        if isinstance(current_state, dict) and current_state.get('__s3_offloaded') is True:
+            offloaded_s3_path = current_state.get('__s3_path')
+            if offloaded_s3_path:
+                logger.info(f"[Aggregator] current_state is S3 offloaded. Restoring from: {offloaded_s3_path}")
+                try:
+                    current_state = self.state_manager.download_state_from_s3(offloaded_s3_path)
+                    current_state = ensure_state_bag(current_state)
+                    logger.info(f"[Aggregator] Successfully restored current_state from S3 "
+                               f"({len(json.dumps(current_state, ensure_ascii=False).encode('utf-8'))/1024:.1f}KB)")
+                except Exception as e:
+                    logger.error(f"[Aggregator] Failed to restore current_state from S3: {e}")
+                    # Fallback to empty state
+                    current_state = ensure_state_bag({})
+        
         # 이벤트 원본도 갱신하여 하위 참조(merge 등)에서 안전 보장
         event['current_state'] = current_state
         
@@ -1245,9 +1261,18 @@ class SegmentRunnerService:
                 continue
             branch_s3_path = result.get('final_state_s3_path') or result.get('state_s3_path')
             branch_state = result.get('final_state') or result.get('state') or {}
+            
+            # [Critical Fix] __s3_offloaded 플래그 확인 추가
+            is_offloaded = isinstance(branch_state, dict) and branch_state.get('__s3_offloaded') is True
+            if is_offloaded:
+                # S3 offload된 상태: __s3_path에서 실제 경로 가져오기
+                branch_s3_path = branch_state.get('__s3_path')
+                logger.info(f"[Aggregator] Branch {i} has __s3_offloaded flag. S3 path: {branch_s3_path}")
+            
             is_empty = isinstance(branch_state, dict) and len(branch_state) <= 1  # {} or {"__state_truncated": true}
             
-            if is_empty and branch_s3_path:
+            # S3 복원이 필요한 경우: 빈 상태 OR offloaded 플래그
+            if (is_empty or is_offloaded) and branch_s3_path:
                 branches_needing_s3.append((i, branch_s3_path, result))
         
         # 병렬 S3 fetch 실행
@@ -1435,12 +1460,22 @@ class SegmentRunnerService:
         # 병합 완료 후에는 더 이상 필요 없음 (비용 & 관리 부하 감소)
         self._cleanup_branch_intermediate_s3(parallel_results, workflow_id, segment_to_run)
         
+        # [Critical Fix] S3 offload 시 final_state 비우기 (256KB 제한 회피)
+        response_final_state = final_state
+        if output_s3_path:
+            response_final_state = {
+                "__s3_offloaded": True,
+                "__s3_path": output_s3_path,
+                "__original_size_kb": len(json.dumps(final_state, ensure_ascii=False).encode('utf-8')) / 1024 if final_state else 0
+            }
+            logger.info(f"[Aggregator] [S3 Offload] Replaced final_state with metadata reference. Original: {response_final_state['__original_size_kb']:.1f}KB → Response: ~0.2KB")
+        
         # [Guard] [v3.9] Core aggregator response
         # ASL passthrough 필드는 _finalize_response에서 자동 주입됨
         return {
             # Core execution result
             "status": "COMPLETE" if is_complete else "CONTINUE",
-            "final_state": final_state,
+            "final_state": response_final_state,
             "final_state_s3_path": output_s3_path,
             "current_state": final_state,  # ASL 호환용 별칭
             "state_s3_path": output_s3_path,  # ASL 호환용 별칭
@@ -1991,6 +2026,30 @@ class SegmentRunnerService:
         state_s3_path = event.get('state_s3_path')
         initial_state = event.get('current_state') or event.get('state', {})
         
+        # [Critical Fix] S3 Offload 복원: __s3_offloaded 플래그 확인
+        # 이전 세그먼트가 S3 offload를 수행한 경우 메타데이터만 포함됨
+        # → S3에서 전체 상태 복원 필요
+        if isinstance(initial_state, dict) and initial_state.get('__s3_offloaded') is True:
+            offloaded_s3_path = initial_state.get('__s3_path')
+            if offloaded_s3_path:
+                logger.info(f"[S3 Offload Recovery] Detected offloaded state. Restoring from S3: {offloaded_s3_path}")
+                try:
+                    initial_state = self.state_manager.download_state_from_s3(offloaded_s3_path)
+                    logger.info(f"[S3 Offload Recovery] Successfully restored state from S3 "
+                               f"({len(json.dumps(initial_state, ensure_ascii=False).encode('utf-8'))/1024:.1f}KB)")
+                except Exception as e:
+                    logger.error(f"[S3 Offload Recovery] Failed to restore state from S3: {e}")
+                    return _finalize_response({
+                        "status": "FAILED",
+                        "error_info": {
+                            "error": f"S3 State Recovery Failed: {str(e)}",
+                            "error_type": "S3RecoveryError",
+                            "s3_path": offloaded_s3_path
+                        }
+                    })
+            else:
+                logger.warning("[S3 Offload Recovery] __s3_offloaded=True but no __s3_path found!")
+        
         if state_s3_path:
             initial_state = self.state_manager.download_state_from_s3(state_s3_path)
         
@@ -2194,13 +2253,19 @@ class SegmentRunnerService:
                             threshold=0 # Force offload
                         )
                         
+                        # [Critical Fix] S3 offload 시 final_state 비우기
+                        if s3_path:
+                            offloaded_state = {
+                                "__s3_offloaded": True,
+                                "__s3_path": s3_path,
+                                "__original_size_kb": len(json.dumps(current_final_state, ensure_ascii=False).encode('utf-8')) / 1024 if current_final_state else 0
+                            }
+                            logger.info(f"[Parallel] Offloaded state to S3: {s3_path}. Response: ~0.2KB")
+                        
                         # Update response with offloaded result
                         response_payload['final_state'] = offloaded_state
                         response_payload['final_state_s3_path'] = s3_path
                         response_payload['state_s3_path'] = s3_path # Alias for ASL
-                        
-                        if s3_path:
-                            logger.info(f"[Parallel] Offloaded state to S3: {s3_path}")
                 
                 # 4. Secondary Pruning: If still too large, prune non-essential metadata
                 # Recalculate size
@@ -2469,6 +2534,16 @@ class SegmentRunnerService:
                 threshold=self.threshold
             )
             
+            # [Critical Fix] S3 offload 시 final_state 비우기 (256KB 제한 회피)
+            response_final_state = final_state
+            if output_s3_path:
+                response_final_state = {
+                    "__s3_offloaded": True,
+                    "__s3_path": output_s3_path,
+                    "__original_size_kb": len(json.dumps(final_state, ensure_ascii=False).encode('utf-8')) / 1024 if final_state else 0
+                }
+                logger.info(f"[Partial Failure] [S3 Offload] Replaced final_state with metadata. Original: {response_final_state['__original_size_kb']:.1f}KB → Response: ~0.2KB")
+            
             total_segments = _safe_get_total_segments(event)
             next_segment = segment_id + 1
             has_more_segments = next_segment < total_segments
@@ -2476,7 +2551,7 @@ class SegmentRunnerService:
             return _finalize_response({
                 # [Guard] [Fix] Use CONTINUE/COMPLETE instead of SUCCEEDED for ASL routing
                 "status": "CONTINUE" if has_more_segments else "COMPLETE",
-                "final_state": final_state,
+                "final_state": response_final_state,
                 "final_state_s3_path": output_s3_path,
                 "next_segment_to_run": next_segment if has_more_segments else None,
                 "new_history_logs": [],
@@ -2624,9 +2699,19 @@ class SegmentRunnerService:
         
         if is_e2e_test or not has_partition_map:
             # E2E 테스트 또는 파티션 없는 단일 실행: 워크플로우 완료
+            # [Critical Fix] S3 offload 시 final_state 비우기 (256KB 제한 회피)
+            response_final_state = final_state
+            if output_s3_path:
+                response_final_state = {
+                    "__s3_offloaded": True,
+                    "__s3_path": output_s3_path,
+                    "__original_size_kb": len(json.dumps(final_state, ensure_ascii=False).encode('utf-8')) / 1024 if final_state else 0
+                }
+                logger.info(f"[S3 Offload] Replaced final_state with metadata reference (E2E). Original: {response_final_state['__original_size_kb']:.1f}KB → Response: ~0.2KB")
+            
             return _finalize_response({
                 "status": "COMPLETE",  # ASL이 기대하는 상태값
-                "final_state": final_state,
+                "final_state": response_final_state,
                 "final_state_s3_path": output_s3_path,
                 "next_segment_to_run": None,  # 다음 세그먼트 없음
                 "new_history_logs": new_history_logs,
@@ -2646,9 +2731,19 @@ class SegmentRunnerService:
         
         if next_segment >= total_segments:
             # 마지막 세그먼트 완료
+            # [Critical Fix] S3 offload 시 final_state 비우기 (256KB 제한 회피)
+            response_final_state = final_state
+            if output_s3_path:
+                response_final_state = {
+                    "__s3_offloaded": True,
+                    "__s3_path": output_s3_path,
+                    "__original_size_kb": len(json.dumps(final_state, ensure_ascii=False).encode('utf-8')) / 1024 if final_state else 0
+                }
+                logger.info(f"[S3 Offload] Replaced final_state with metadata reference (Final). Original: {response_final_state['__original_size_kb']:.1f}KB → Response: ~0.2KB")
+            
             return _finalize_response({
                 "status": "COMPLETE",
-                "final_state": final_state,
+                "final_state": response_final_state,
                 "final_state_s3_path": output_s3_path,
                 "next_segment_to_run": None,
                 "new_history_logs": new_history_logs,
@@ -2662,9 +2757,20 @@ class SegmentRunnerService:
             })
         
         # 아직 실행할 세그먼트가 남아있음
+        # [Critical Fix] S3 offload 시 final_state 비우기 (256KB 제한 회피)
+        response_final_state = final_state
+        if output_s3_path:
+            # S3에 전체 상태 저장됨 → 응답은 메타데이터만
+            response_final_state = {
+                "__s3_offloaded": True,
+                "__s3_path": output_s3_path,
+                "__original_size_kb": len(json.dumps(final_state, ensure_ascii=False).encode('utf-8')) / 1024 if final_state else 0
+            }
+            logger.info(f"[S3 Offload] Replaced final_state with metadata reference. Original: {response_final_state['__original_size_kb']:.1f}KB → Response: ~0.2KB")
+        
         return _finalize_response({
             "status": "CONTINUE",  # [Guard] [Fix] Explicit status for loop continuation (was 'SUCCEEDED')
-            "final_state": final_state,
+            "final_state": response_final_state,
             "final_state_s3_path": output_s3_path,
             "next_segment_to_run": next_segment,
             "new_history_logs": new_history_logs,
