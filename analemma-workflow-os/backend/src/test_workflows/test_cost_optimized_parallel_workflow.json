@@ -108,6 +108,9 @@
     }
   ],
   "start_node": "setup",
+  "initial_state": {
+    "distributed_mode": true
+  },
   "metadata": {
     "test_features": [
       "cost_optimized_strategy",

@@ -2624,6 +2624,27 @@ class SegmentRunnerService:
         # branch_item 존재 = Map Iterator에서 실행 중 (각 브랜치는 작은 레퍼런스만 반환해야 함)
         is_map_branch = event.get('branch_item') is not None
 
+        # [Critical Fix] 다음 세그먼트 존재 여부 확인
+        # 세그먼트가 더 있으면 상태가 누적될 수 있으므로 낮은 threshold 적용
+        total_segments = _safe_get_total_segments(event)
+        has_next_segment = (segment_id + 1) < total_segments
+        
+        # [Critical Fix] ForEach/Map 같은 반복 구조 감지
+        # 현재 또는 다음 세그먼트에 for_each 타입이 있으면 강제 offload
+        has_loop_structure = False
+        if isinstance(segment_config, dict):
+            # 현재 세그먼트의 노드들 확인
+            nodes = segment_config.get('nodes', [])
+            logger.info(f"[Loop Detection] Checking {len(nodes)} nodes in segment {segment_id} for loop structures")
+            for node in nodes:
+                if isinstance(node, dict):
+                    node_type = node.get('type')
+                    node_id = node.get('id', 'unknown')
+                    if node_type in ('for_each', 'nested_for_each'):
+                        has_loop_structure = True
+                        logger.info(f"[Loop Detection] Found loop structure: node_id={node_id}, type={node_type}")
+                        break
+
         if is_distributed_mode:
             # Distributed Map: threshold=0으로 강제 오프로딩
             effective_threshold = 0
@@ -2636,6 +2657,13 @@ class SegmentRunnerService:
             # Map은 작은 S3 레퍼런스만 수집 (N개 × 2KB = 2N KB << 256KB)
             effective_threshold = 0  # 강제 오프로드
             logger.info(f"[Map Branch] Forcing S3 offload for ALL branch results (variable fan-out protection)")
+        elif has_loop_structure or (has_next_segment and result_state_size > 20000):
+            # [Critical Fix] ForEach/반복 구조가 있거나, 다음 세그먼트가 있고 20KB 이상이면 강제 offload
+            # 이유: 반복 중 상태 누적으로 256KB 초과 방지
+            # 예: 40번 반복 × 52KB/iteration = 2080KB >> 256KB
+            effective_threshold = 20000  # 20KB - 매우 낮은 threshold
+            logger.info(f"[State Accumulation Prevention] Forcing S3 offload: "
+                       f"has_loop={has_loop_structure}, has_next={has_next_segment}, size={result_state_size/1024:.1f}KB")
         else:
             effective_threshold = self.threshold
 
