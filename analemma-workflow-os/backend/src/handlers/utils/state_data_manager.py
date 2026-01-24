@@ -130,37 +130,84 @@ def optimize_current_state(current_state: Dict[str, Any], idempotency_key: str) 
     if not current_state:
         return current_state, False
     
+    # 🛡️ [P0 Critical] Calculate total state size first
+    try:
+        total_size_kb = calculate_payload_size(current_state)
+    except:
+        total_size_kb = 0
+        
     optimized_state = current_state.copy()
     s3_offloaded = False
     
-    # Fields that can be large and moved to S3
-    large_fields = ['context', 'llm_responses', 'generated_content', 'analysis_results']
-    
-    for field in large_fields:
-        if field in optimized_state:
-            field_data = optimized_state[field]
-            field_size = calculate_payload_size({field: field_data})
+    # Strategy 1: Individual Field Offloading
+    # Iterate over ALL fields, not just a hardcoded list
+    for field, field_data in list(optimized_state.items()):
+        # Skip small primitive types to save calculation time
+        if field_data is None or isinstance(field_data, (bool, int, float)):
+            continue
             
-            # Move to S3 if field is larger than 50KB
-            if field_size > 50:
-                try:
-                    s3_key = generate_s3_key(idempotency_key, f"state_{field}")
-                    s3_path = store_to_s3(field_data, s3_key)
-                    
-                    # Replace with S3 reference
-                    optimized_state[field] = {
-                        "type": "s3_reference",
-                        "s3_path": s3_path,
-                        "size_kb": field_size,
-                        "stored_at": datetime.now(timezone.utc).isoformat()
-                    }
-                    
-                    s3_offloaded = True
-                    logger.info(f"Moved {field} ({field_size}KB) to S3: {s3_path}")
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to move {field} to S3: {e}")
+        # Skip already offloaded fields
+        if isinstance(field_data, dict) and field_data.get('__s3_offloaded'):
+            continue
+            
+        # Helper to check field size
+        try:
+            field_size = calculate_payload_size({field: field_data})
+        except:
+            continue
+            
+        # Move to S3 if field is larger than 30KB (Lowered from 50KB for safety)
+        if field_size > 30:
+            try:
+                s3_key = generate_s3_key(idempotency_key, f"state_{field}")
+                s3_path = store_to_s3(field_data, s3_key)
+                
+                # Replace with S3 reference
+                optimized_state[field] = {
+                    "type": "s3_reference",
+                    "s3_path": s3_path,
+                    "size_kb": field_size,
+                    "stored_at": datetime.now(timezone.utc).isoformat()
+                }
+                
+                s3_offloaded = True
+                logger.info(f"Moved {field} ({field_size}KB) to S3: {s3_path}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to move {field} to S3: {e}")
+
+    # Strategy 2: Full State Offloading (Fallback)
+    # If state is still too large (> 100KB) after individual field optimization,
+    # offload the ENTIRE state object.
+    final_size_kb = calculate_payload_size(optimized_state)
     
+    if final_size_kb > 100:
+        logger.info(f"State still too large ({final_size_kb}KB > 100KB) after field optimization. Offloading ENTIRE state.")
+        try:
+            s3_key = generate_s3_key(idempotency_key, "full_state")
+            s3_path = store_to_s3(optimized_state, s3_key)
+            
+            # Return a pointer to the full state
+            # Preserve minimal metadata for Step Functions routing if needed
+            wrapper = {
+                "__s3_offloaded": True,
+                "__s3_path": s3_path,
+                "__original_size_kb": final_size_kb,
+                # Preserve critical scheduling/guardrail metadata for router
+                "guardrail_verified": optimized_state.get('guardrail_verified', False),
+                "batch_count_actual": optimized_state.get('batch_count_actual', 1),
+                "scheduling_metadata": optimized_state.get('scheduling_metadata', {}),
+                "__scheduling_metadata": optimized_state.get('scheduling_metadata', {}),
+                "__guardrail_verified": optimized_state.get('guardrail_verified', False),
+                "__batch_count_actual": optimized_state.get('batch_count_actual', 1),
+            }
+            return wrapper, True
+            
+        except Exception as e:
+            logger.error(f"Failed to offload full state: {e}")
+            # Return partially optimized state as best effort
+            return optimized_state, s3_offloaded
+
     return optimized_state, s3_offloaded
 
 
