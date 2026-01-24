@@ -330,6 +330,28 @@ class SegmentRunnerService:
             )
         return self._concurrency_controller
     
+    def _safe_json_load(self, content: str) -> Dict[str, Any]:
+        """
+        🛡️ [Critical] Safe JSON loading to prevent UnboundLocalError
+        
+        Problem: Using 'json' as variable name shadows the module reference,
+                 causing UnboundLocalError in nested scopes (ThreadPoolExecutor)
+        
+        Solution: Explicit import with alias to avoid shadowing
+        
+        Args:
+            content: JSON string to parse
+            
+        Returns:
+            Parsed JSON object (dict) or empty dict on error
+        """
+        import json as _json_module  # 🛡️ Alias prevents variable shadowing
+        try:
+            return _json_module.loads(content)
+        except Exception as e:
+            logger.error(f"[S3 Recovery] JSON parsing failed: {e}")
+            return {}  # 🛡️ Return empty dict to prevent AttributeError cascade
+    
     @property
     def s3_client(self):
         """Lazy S3 client initialization"""
@@ -761,7 +783,8 @@ class SegmentRunnerService:
             key = parts[1] if len(parts) > 1 else ''
             
             response = self.s3_client.get_object(Bucket=bucket, Key=key)
-            manifest = json.loads(response['Body'].read().decode('utf-8'))
+            content = response['Body'].read().decode('utf-8')
+            manifest = self._safe_json_load(content)
             
             logger.info(f"[Kernel] Loaded manifest from S3: {len(manifest)} segments")
             return manifest
@@ -1285,11 +1308,12 @@ class SegmentRunnerService:
                     bucket = s3_path.replace("s3://", "").split("/")[0]
                     key = "/".join(s3_path.replace("s3://", "").split("/")[1:])
                     obj = self.state_manager.s3_client.get_object(Bucket=bucket, Key=key)
-                    state = json.loads(obj['Body'].read().decode('utf-8'))
+                    content = obj['Body'].read().decode('utf-8')
+                    state = self._safe_json_load(content)  # 🛡️ Use safe loader
                     return (idx, state)
                 except Exception as e:
-                    logger.error(f"[Aggregator] Failed to fetch branch {idx} from S3: {e}")
-                    return (idx, None)
+                    logger.error(f"[Aggregator] S3 recovery failed for branch {idx}: {e}")
+                    return (idx, {})  # 🛡️ Return empty dict instead of None
             
             # 병렬 실행 (최대 10개 동시)
             with ThreadPoolExecutor(max_workers=10) as executor:
@@ -1351,7 +1375,8 @@ class SegmentRunnerService:
                         bucket = branch_s3_path.replace("s3://", "").split("/")[0]
                         key = "/".join(branch_s3_path.replace("s3://", "").split("/")[1:])
                         obj = self.state_manager.s3_client.get_object(Bucket=bucket, Key=key)
-                        branch_state = json.loads(obj['Body'].read().decode('utf-8'))
+                        content = obj['Body'].read().decode('utf-8')
+                        branch_state = self._safe_json_load(content)  # 🛡️ Use safe loader
                     except Exception as e:
                         logger.error(f"[Aggregator] Fallback failed for branch {branch_id}: {e}")
                         branch_errors.append({
@@ -1824,7 +1849,7 @@ class SegmentRunnerService:
         
         def _finalize_response(res: Dict[str, Any]) -> Dict[str, Any]:
             """
-            [Guard] [v3.3 Standard Envelope] Universal Response Wrapper
+            🛡️ [Guard] [v3.3 Standard Envelope] Universal Response Wrapper
             Ensures ALL return paths conform to Step Functions contract with guaranteed metadata.
             
             1. Extract metadata from final_state (or defaults).
@@ -1832,19 +1857,32 @@ class SegmentRunnerService:
             3. Inject into top-level response (ResultSelector access).
             4. [v3.9] ASL passthrough fields - 입력 이벤트의 메타데이터를 그대로 전달
             """
-            # [Guard] [v3.5] Hardened Response Wrapper - Check BEFORE access
-            if res is None:
-                logger.error("[Alert] [Kernel] _finalize_response received None! Creating emergency error response.")
+            # 🛡️ [P0 Critical] Step 1: Null Guard & Emergency Response Creation
+            if not isinstance(res, dict):
+                logger.error(f"[Alert] [Kernel] _finalize_response received invalid type: {type(res)}! Creating emergency response.")
                 res = {
                     "status": "FAILED",
                     "error_info": {
-                        "error": "Kernel Internal Error: Result yielded None",
-                        "error_type": "KernelNullPanic"
+                        "error": f"Kernel Internal Error: Result is {type(res).__name__}, expected dict",
+                        "error_type": "KernelTypeMismatch"
                     }
                 }
             
+            # 🛡️ [P0 Critical] Step 2: Ensure ASL JSONPath Required Fields FIRST
+            # These fields MUST exist before any other processing to prevent Step Functions crashes
+            res.setdefault('status', 'FAILED')  # Always have a status
+            res.setdefault('new_history_logs', [])  # 👉 This was causing JSONPath errors!
+            res.setdefault('final_state', {})
             res.setdefault('total_segments', _total_segments)
             res.setdefault('segment_id', _segment_id)
+            
+            # [Guard] [v3.5] Original Null Guard - Check AFTER basic fields set
+            if res.get('status') == 'FAILED' and not res.get('error_info'):
+                # If status is FAILED but no error_info, add generic one
+                res.setdefault('error_info', {
+                    "error": "Unknown Error",
+                    "error_type": "UnknownError"
+                })
             
             # [Guard] Extract standard metadata with fallback defaults
             final_state = res.get('final_state')
@@ -1893,6 +1931,7 @@ class SegmentRunnerService:
             res.setdefault('branch_id', None)
             res.setdefault('final_state_s3_path', None)  # [Critical Fix] ASL requires this field
             res.setdefault('next_segment_to_run', None)  # [Critical Fix] ASL requires this field
+            res.setdefault('new_history_logs', [])  # 🛡️ [P0 Critical Fix] ASL JSONPath requires this field
             
             # [Guard] [v3.9] ASL Passthrough Fields - 입력 이벤트의 메타데이터를 응답에 주입
             # ASL JSONPath는 Lambda 응답을 직접 파싱하므로 필드가 없으면 오류 발생
@@ -2080,7 +2119,8 @@ class SegmentRunnerService:
                     key_name = "/".join(config_s3_path.replace("s3://", "").split("/")[1:])
                     s3_client = self.state_manager.s3_client
                     obj = s3_client.get_object(Bucket=bucket_name, Key=key_name)
-                    return json.loads(obj['Body'].read().decode('utf-8'))
+                    content = obj['Body'].read().decode('utf-8')
+                    return self._safe_json_load(content)  # 🛡️ Use safe loader
 
                 if RETRY_UTILS_AVAILABLE:
                     # Exponential Backoff: 0.5s, 1.0s, 2.0s
@@ -2148,7 +2188,8 @@ class SegmentRunnerService:
                     # [v2.1] S3 get_object에 재시도 적용
                     def _get_partition_map():
                         obj = s3.get_object(Bucket=bucket_name, Key=key_name)
-                        return json.loads(obj['Body'].read().decode('utf-8'))
+                        content = obj['Body'].read().decode('utf-8')
+                        return self._safe_json_load(content)  # 🛡️ Use safe loader
                     
                     if RETRY_UTILS_AVAILABLE:
                         partition_map = retry_call(

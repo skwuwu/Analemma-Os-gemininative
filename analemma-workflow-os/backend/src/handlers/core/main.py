@@ -93,6 +93,19 @@ def get_bedrock_model_map() -> Dict[str, str]:
 # If remaining Lambda execution time < this value, trigger AsyncLLMRequiredException
 LAMBDA_EARLY_EXIT_THRESHOLD_MS = int(os.environ.get('LAMBDA_EARLY_EXIT_MS', '10000'))  # 10 seconds default
 
+# LLM default configuration values (environment variable overrides)
+DEFAULT_LLM_MODEL = os.environ.get('DEFAULT_LLM_MODEL', 'gpt-3.5-turbo')
+DEFAULT_MAX_TOKENS = int(os.environ.get('DEFAULT_MAX_TOKENS', '1024'))
+DEFAULT_TEMPERATURE = float(os.environ.get('DEFAULT_TEMPERATURE', '0.7'))
+
+# Retry configuration defaults
+DEFAULT_RETRY_BASE_DELAY = float(os.environ.get('DEFAULT_RETRY_BASE_DELAY', '1.0'))  # seconds
+DEFAULT_RETRY_MAX_DELAY = float(os.environ.get('DEFAULT_RETRY_MAX_DELAY', '30.0'))  # seconds
+
+# Bedrock timeout configuration
+DEFAULT_BEDROCK_TIMEOUT = int(os.environ.get('DEFAULT_BEDROCK_TIMEOUT', '90'))  # seconds
+LAMBDA_TIMEOUT_BUFFER_MS = int(os.environ.get('LAMBDA_TIMEOUT_BUFFER_MS', '5000'))  # milliseconds
+
 # -----------------------------------------------------------------------------
 
 
@@ -586,11 +599,11 @@ def normalize_llm_usage(usage: Dict[str, Any], provider: str) -> Dict[str, Any]:
             normalized["total_tokens"] = raw_total if raw_total > 0 else calculated_total
             normalized["estimated_cost_usd"] = usage.get("estimated_cost_usd", 0.0)
             
-            # Calculate cost savings from caching (75% reduction for cached tokens)
+            # Calculate cost savings from caching (configurable reduction for cached tokens)
             cached = normalized["cached_tokens"]
             if cached > 0:
-                # Gemini cached tokens cost 75% less
-                normalized["cost_saved_usd"] = round(cached * 0.75 * 0.000001, 6)  # Approximate
+                # Gemini cached tokens cost reduction (default 75% less)
+                normalized["cost_saved_usd"] = round(cached * CACHE_COST_REDUCTION * APPROXIMATE_TOKEN_COST_USD, 6)
                 
         elif provider == "bedrock":
             # Bedrock structure: {inputTokens, outputTokens} or {input_tokens, output_tokens}
@@ -714,6 +727,15 @@ def prepare_multimodal_content(prompt: str, state: Dict[str, Any]) -> Tuple[str,
 
 # Async processing threshold (configurable via environment variable)
 ASYNC_TOKEN_THRESHOLD = int(os.getenv('ASYNC_TOKEN_THRESHOLD', '2000'))
+ASYNC_HEAVY_MODELS = os.getenv('ASYNC_HEAVY_MODELS', 'claude-3-opus,gpt-4').split(',')
+
+# HTTP request timeout configuration
+DEFAULT_HTTP_TIMEOUT = float(os.environ.get('DEFAULT_HTTP_TIMEOUT', '10.0'))  # seconds
+MAX_HTTP_TIMEOUT = float(os.environ.get('MAX_HTTP_TIMEOUT', '30.0'))  # seconds
+
+# Token cost estimation (USD per million tokens)
+CACHE_COST_REDUCTION = float(os.environ.get('CACHE_COST_REDUCTION', '0.75'))  # 75% savings
+APPROXIMATE_TOKEN_COST_USD = float(os.environ.get('APPROXIMATE_TOKEN_COST_USD', '0.000001'))  # $1 per 1M tokens
 
 def should_use_async_llm(config: Dict[str, Any]) -> bool:
     """Heuristic to check if async processing is needed."""
@@ -722,7 +744,7 @@ def should_use_async_llm(config: Dict[str, Any]) -> bool:
     force_async = config.get("force_async", False)
     
     high_token_count = max_tokens > ASYNC_TOKEN_THRESHOLD
-    heavy_model = "claude-3-opus" in model
+    heavy_model = any(heavy in model for heavy in ASYNC_HEAVY_MODELS)
     
     if high_token_count or heavy_model or force_async:
         logger.info(f"Async required: tokens={max_tokens}, model={model}, force={force_async}")
@@ -790,7 +812,7 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     # [Fix] None defense: config['retry_config']가 None일 수 있음
     retry_config = config.get("retry_config") or {}
     max_retries = retry_config.get("max_retries", 0)  # Default 0 means single attempt
-    base_delay = retry_config.get("base_delay", 1.0)
+    base_delay = retry_config.get("base_delay", DEFAULT_RETRY_BASE_DELAY)
     
     # Initialize retry loop variables
     attempt = 0
@@ -845,9 +867,9 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             # 2. Check Async Conditions
             # node_id already defined above check async
             # [Fix] None defense: config['llm_config']가 None일 수 있음
-            model = config.get("model") or (config.get("llm_config") or {}).get("model_id") or "gpt-3.5-turbo"
-            max_tokens = config.get("max_tokens") or (config.get("llm_config") or {}).get("max_tokens", 1024)
-            temperature = config.get("temperature") or (config.get("llm_config") or {}).get("temperature", 0.7)
+            model = config.get("model") or (config.get("llm_config") or {}).get("model_id") or DEFAULT_LLM_MODEL
+            max_tokens = config.get("max_tokens") or (config.get("llm_config") or {}).get("max_tokens", DEFAULT_MAX_TOKENS)
+            temperature = config.get("temperature") or (config.get("llm_config") or {}).get("temperature", DEFAULT_TEMPERATURE)
             
             if should_use_async_llm(config):
                 logger.warning(f"🚨 Async required by heuristic for node {node_id}")
@@ -975,11 +997,11 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                     logger.info(f"Model mapped for Bedrock: {model} -> {bedrock_model_id}")
                 
                 # [Critical] Calculate safe timeout: remaining Lambda time - safety buffer
-                read_timeout = 90  # Default Bedrock timeout
+                read_timeout = DEFAULT_BEDROCK_TIMEOUT
                 if lambda_context and hasattr(lambda_context, 'get_remaining_time_in_millis'):
                     remaining_ms = lambda_context.get_remaining_time_in_millis()
-                    # Set timeout to remaining time minus 5 second buffer (in seconds)
-                    max_safe_timeout = max(10, (remaining_ms - 5000) / 1000)
+                    # Set timeout to remaining time minus buffer (in seconds)
+                    max_safe_timeout = max(10, (remaining_ms - LAMBDA_TIMEOUT_BUFFER_MS) / 1000)
                     read_timeout = min(read_timeout, max_safe_timeout)
                     logger.info(f"Adjusted Bedrock timeout: {read_timeout}s (Lambda remaining: {remaining_ms}ms)")
                 
@@ -1052,7 +1074,7 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             # Retry logic
             if attempt < max_retries:
                 # Calculate backoff with jitter
-                delay = min(30.0, base_delay * (2 ** attempt)) * (0.5 + random.random())
+                delay = min(DEFAULT_RETRY_MAX_DELAY, base_delay * (2 ** attempt)) * (0.5 + random.random())
                 time.sleep(delay)
                 attempt += 1
                 continue
@@ -1262,10 +1284,10 @@ def api_call_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
 
     # Clamp timeout to a safe upper bound
     try:
-        timeout_val = float(timeout) if timeout is not None else 10.0
+        timeout_val = float(timeout) if timeout is not None else DEFAULT_HTTP_TIMEOUT
     except Exception:
-        timeout_val = 10.0
-    timeout_val = max(1.0, min(timeout_val, 30.0))
+        timeout_val = DEFAULT_HTTP_TIMEOUT
+    timeout_val = max(1.0, min(timeout_val, MAX_HTTP_TIMEOUT))
 
     try:
         import requests
@@ -1914,8 +1936,8 @@ def vision_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, An
     system_prompt = _render_template(system_prompt_tmpl, exec_state) if system_prompt_tmpl else None
     
     # 4. Get model config
-    max_tokens = vision_config.get("max_tokens", 4096)
-    temperature = vision_config.get("temperature", 0.7)
+    max_tokens = vision_config.get("max_tokens", DEFAULT_MAX_TOKENS)
+    temperature = vision_config.get("temperature", DEFAULT_TEMPERATURE)
     
     # 5. Invoke Gemini Vision (Multimodal)
     try:
