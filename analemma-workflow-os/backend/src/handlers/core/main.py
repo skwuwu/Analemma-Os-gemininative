@@ -213,7 +213,7 @@ class NodeModel(BaseModel):
 class WorkflowConfigModel(BaseModel):
     workflow_name: Optional[constr(min_length=0, max_length=256)] = None
     description: Optional[constr(min_length=0, max_length=512)] = None
-    nodes: conlist(NodeModel, min_length=1, max_length=500)
+    nodes: conlist(NodeModel, min_length=0, max_length=500)
     edges: conlist(EdgeModel, min_length=0, max_length=1000)
     start_node: Optional[constr(min_length=1, max_length=128)] = None
 

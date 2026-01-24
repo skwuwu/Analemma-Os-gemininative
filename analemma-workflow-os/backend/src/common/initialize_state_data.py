@@ -321,6 +321,9 @@ def lambda_handler(event, context):
     
     # 2. Refine config determination priority
     workflow_config = raw_input.get('test_workflow_config') or raw_input.get('workflow_config')
+    # [Hydration] Check for S3 offloaded config
+    config_s3_path = raw_input.get('test_workflow_config_s3_path') or raw_input.get('workflow_config_s3_path')
+    
     owner_id = raw_input.get('ownerId', "")
     workflow_id = raw_input.get('workflowId', "")
     idempotency_key = raw_input.get('idempotency_key', "")
@@ -328,6 +331,22 @@ def lambda_handler(event, context):
     
     # [Fix] Extract MOCK_MODE - for simulator E2E testing
     mock_mode = raw_input.get('MOCK_MODE', 'false')
+
+    # [Hydration] Download config from S3 if offloaded
+    if not workflow_config and config_s3_path:
+        try:
+            logger.info(f"⬇️ [Hydration] Downloading workflow_config from S3: {config_s3_path}")
+            # Parse s3://bucket/key
+            bucket_name = config_s3_path.replace("s3://", "").split("/")[0]
+            key_name = "/".join(config_s3_path.replace("s3://", "").split("/")[1:])
+            
+            s3_client = boto3.client('s3')
+            obj = s3_client.get_object(Bucket=bucket_name, Key=key_name)
+            workflow_config = json.loads(obj['Body'].read().decode('utf-8'))
+            logger.info(f"✅ [Hydration] Config restored ({len(json.dumps(workflow_config))} bytes)")
+        except Exception as e:
+            logger.error(f"❌ [Hydration] Failed to download config from S3: {e}")
+            # If failed, proceed (will try DB or fallback)
     
     # [Robustness Fix] Load from DB if workflow_config missing (when test_config absent)
     if not workflow_config and workflow_id and owner_id:
@@ -501,14 +520,21 @@ def lambda_handler(event, context):
 
     # 2. Partition Map Offloading (distributed mode)
     # 🚨 [Critical Fix] Optimize partition_map size in distributed mode
-    if is_distributed_mode:
-        partition_map_json = json.dumps(partition_map, ensure_ascii=False)
-        partition_map_size_kb = len(partition_map_json.encode('utf-8')) / 1024
+    # Check size FIRST to determine if we need to enter distributed/offloaded mode
+    partition_map_json = json.dumps(partition_map, ensure_ascii=False)
+    partition_map_size_kb = len(partition_map_json.encode('utf-8')) / 1024
+    
+    # Offload if segments > 300 OR payload > 100KB (Safety margin for 256KB limit)
+    should_offload_map = is_distributed_mode or partition_map_size_kb > 100
+    
+    if should_offload_map:
+        # Force distributed flag if offloading due to size
+        is_distributed_mode = True
         
-        logger.info(f"Distributed mode detected: {total_segments} segments, partition_map size: {partition_map_size_kb:.1f}KB")
+        logger.info(f"Large payload detected: {total_segments} segments, map size: {partition_map_size_kb:.1f}KB. Forcing offload.")
         
         # Offload partition_map larger than 100KB to S3
-        if partition_map_size_kb > 100 and s3_client:
+        if s3_client:
             try:
                 partition_map_key = f"workflow-partitions/{owner_id}/{workflow_id}/partition_map.json"
                 s3_client.put_object(

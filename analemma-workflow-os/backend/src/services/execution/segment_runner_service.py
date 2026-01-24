@@ -1890,6 +1890,14 @@ class SegmentRunnerService:
         # ASL의 ProcessParallelSegments가 branches를 받아서 Map으로 병렬 실행함
         # [Parallel] [Pattern 3] 병렬 스케줄러 적용
         segment_type = segment_config.get('type') if isinstance(segment_config, dict) else None
+        
+        # [Fix] Aggregator Interception (Delayed Check)
+        # execute_segment 시작 시점에는 segment_type 파라미터가 없을 수 있음 (partition_map에서 resolve된 경우)
+        # 따라서 여기서 resolve된 segment_config를 기반으로 한 번 더 체크해야 함
+        if segment_type == 'aggregator':
+            logger.info(f"[Kernel] 🧩 Aggregator segment {segment_id} detected (Resolved). Delegating to _handle_aggregator.")
+            return _finalize_response(self._handle_aggregator(event))
+
         if segment_type == 'parallel_group':
             branches = segment_config.get('branches', [])
             logger.info(f"[Parallel] Parallel group detected with {len(branches)} branches")
