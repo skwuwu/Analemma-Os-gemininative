@@ -275,7 +275,6 @@ class DistributedStateManager:
                     item['sk'] = self.config.sort_key
                 
                 self._table.put_item(Item=item)
-                )
                 return True
             except Exception as e:
                 logger.error(f"[DistributedState] Reset failed: {e}")
