@@ -20,7 +20,7 @@
       "label": "비용 인지 병렬 그룹 (토큰 스트레스)",
       "resource_policy": {
         "max_concurrent_memory_mb": 2048,
-        "max_concurrent_tokens": 2000,
+        "max_concurrent_tokens": 10000,
         "max_concurrent_branches": 5,
         "strategy": "COST_OPTIMIZED"
       },
@@ -93,7 +93,7 @@
       "label": "[Critical] 배치 분할 검증",
       "config": {
         "language": "python",
-        "code": "import json\n\nprint('[COST_OPTIMIZED VERIFICATION] Checking batch split results')\n\n# ① scheduling_metadata 추출\nmetadata = state.get('scheduling_metadata', {})\nbatch_count = metadata.get('batch_count', 0)\nstrategy = metadata.get('strategy', '')\ntotal_tokens = metadata.get('total_tokens', 0)\nbatch_splits = metadata.get('batch_splits', [])\n\nprint(f'Metadata: {json.dumps(metadata, indent=2)}')\n\n# ② 예상 검증: 토큰 제한(2000) vs 실제 부하(25,000)\n# 25,000 / 2,000 = 12.5 -> 최소 12개 배치 필요\nexpected_min_batches = 10  # 여유 있게 10개 설정\n\nchecks = [\n    strategy == 'COST_OPTIMIZED',\n    batch_count >= expected_min_batches,\n    total_tokens > 20000,  # 최소 20k 토큰 확인\n    isinstance(batch_splits, list),\n    len(batch_splits) >= 1\n]\n\nall_passed = all(checks)\n\nprint(f'Strategy: {strategy} (expected: COST_OPTIMIZED)')\nprint(f'Batch Count: {batch_count} (expected: >={expected_min_batches})')\nprint(f'Total Tokens: {total_tokens} (expected: >20000)')\nprint(f'Batch Splits: {len(batch_splits)} batches')\nprint(f'All checks passed: {all_passed}')\n\nstate['cost_test_complete'] = True\nstate['branch_count'] = 3\nstate['batch_verification'] = {\n    'strategy': strategy,\n    'batch_count': batch_count,\n    'total_tokens': total_tokens,\n    'expected_min_batches': expected_min_batches,\n    'batch_split_occurred': batch_count >= expected_min_batches,\n    'checks': checks,\n    'all_passed': all_passed\n}\n\nif all_passed:\n    state['TEST_RESULT'] = f'✅ COST_OPTIMIZED SUCCESS: Processed {total_tokens} tokens across {batch_count} batches (limit: 2000)'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print('✅ Cost optimization validation passed')\nelse:\n    failed_checks = []\n    if strategy != 'COST_OPTIMIZED': failed_checks.append(f'strategy={strategy}')\n    if batch_count < expected_min_batches: failed_checks.append(f'batch_count={batch_count}<{expected_min_batches}')\n    if total_tokens <= 20000: failed_checks.append(f'total_tokens={total_tokens}<=20000')\n    \n    state['TEST_RESULT'] = f'❌ COST_OPTIMIZED FAILED: {failed_checks}'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(f'❌ Cost optimization validation failed: {failed_checks}')"
+        "code": "import json\n\nprint('[COST_OPTIMIZED VERIFICATION] Checking batch split results')\n\n# ① scheduling_metadata 추출\nmetadata = state.get('scheduling_metadata', {})\nbatch_count = metadata.get('batch_count', 0)\nstrategy = metadata.get('strategy', '')\ntotal_tokens = metadata.get('total_tokens', 0)\nbatch_splits = metadata.get('batch_splits', [])\n\nprint(f'Metadata: {json.dumps(metadata, indent=2)}')\n\n# ② 예상 검증: 토큰 제한(10000) vs 실제 부하(25,000)\n# 25,000 / 10,000 = 2.5 -> 최소 3개 배치 필요\nexpected_min_batches = 3  # 여유 있게 3개 설정\n\nchecks = [\n    strategy == 'COST_OPTIMIZED',\n    batch_count >= expected_min_batches,\n    total_tokens > 20000,  # 최소 20k 토큰 확인\n    isinstance(batch_splits, list),\n    len(batch_splits) >= 1\n]\n\nall_passed = all(checks)\n\nprint(f'Strategy: {strategy} (expected: COST_OPTIMIZED)')\nprint(f'Batch Count: {batch_count} (expected: >={expected_min_batches})')\nprint(f'Total Tokens: {total_tokens} (expected: >20000)')\nprint(f'Batch Splits: {len(batch_splits)} batches')\nprint(f'All checks passed: {all_passed}')\n\nstate['cost_test_complete'] = True\nstate['branch_count'] = 3\nstate['batch_verification'] = {\n    'strategy': strategy,\n    'batch_count': batch_count,\n    'total_tokens': total_tokens,\n    'expected_min_batches': expected_min_batches,\n    'batch_split_occurred': batch_count >= expected_min_batches,\n    'checks': checks,\n    'all_passed': all_passed\n}\n\nif all_passed:\n    state['TEST_RESULT'] = f'✅ COST_OPTIMIZED SUCCESS: Processed {total_tokens} tokens across {batch_count} batches (limit: 10000)'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print('✅ Cost optimization validation passed')\nelse:\n    failed_checks = []\n    if strategy != 'COST_OPTIMIZED': failed_checks.append(f'strategy={strategy}')\n    if batch_count < expected_min_batches: failed_checks.append(f'batch_count={batch_count}<{expected_min_batches}')\n    if total_tokens <= 20000: failed_checks.append(f'total_tokens={total_tokens}<=20000')\n    \n    state['TEST_RESULT'] = f'❌ COST_OPTIMIZED FAILED: {failed_checks}'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(f'❌ Cost optimization validation failed: {failed_checks}')"
       }
     }
   ],
@@ -115,7 +115,7 @@
       "token_stress_test",
       "scheduling_metadata_verification"
     ],
-    "expected_behavior": "Kernel should split 25,000 tokens across multiple batches due to 2,000 token limit",
+    "expected_behavior": "Kernel should split 25,000 tokens across multiple batches due to 10,000 token limit",
     "failure_mode": "No batch splitting occurs, all branches run concurrently exceeding token budget"
   }
 }

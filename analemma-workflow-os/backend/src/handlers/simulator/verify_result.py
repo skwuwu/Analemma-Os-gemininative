@@ -911,7 +911,8 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
         is_success = status in ('SUCCEEDED', 'COMPLETE')
         checks.append(_check("Status Succeeded", is_success, expected="SUCCEEDED or COMPLETE", actual=status))
         
-        batch_verification = output.get('batch_verification', {})
+        final_state = output.get('final_state', {})
+        batch_verification = final_state.get('batch_verification', {})
         
         # ① 전략 검증
         strategy = batch_verification.get('strategy', '')
@@ -940,7 +941,7 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
         
         # ④ 최종 검증
         all_passed = batch_verification.get('all_passed', False)
-        test_result_msg = output.get('TEST_RESULT', '')
+        test_result_msg = final_state.get('TEST_RESULT', '')
         
         checks.append(_check("Cost Optimization All Checks Passed", 
                             all_passed,
@@ -956,18 +957,19 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
         is_success = status in ('SUCCEEDED', 'COMPLETE')
         checks.append(_check("Status Succeeded", is_success, expected="SUCCEEDED or COMPLETE", actual=status))
         
-        out_str = json.dumps(output)
+        final_state = output.get('final_state', {})
+        out_str = json.dumps(final_state)
         
         # ① 가드레일 발동 검증 (test_passed 또는 guardrail_verified)
-        test_passed = output.get('test_passed', False)
-        guardrail_verified = output.get('guardrail_verified', False)
+        test_passed = final_state.get('test_passed', False)
+        guardrail_verified = final_state.get('guardrail_verified', False)
         checks.append(_check("Guardrail Activated", 
                             test_passed or guardrail_verified, 
                             expected="test_passed=True or guardrail_verified=True",
                             actual=f"test_passed={test_passed}, guardrail_verified={guardrail_verified}"))
         
         # ② 배치 분할 검증 (batch_count >= 2)
-        batch_count = output.get('batch_count_actual', 0)
+        batch_count = final_state.get('batch_count_actual', 0)
         has_batch_split = batch_count >= 2
         checks.append(_check("Batch Split Applied", 
                             has_batch_split, 
@@ -976,7 +978,7 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
         
         # ③ scheduling_metadata 캡처 확인
         has_scheduling_meta = (
-            'scheduling_metadata_captured' in output or
+            'scheduling_metadata_captured' in final_state or
             'scheduling_meta' in out_str.lower() or
             'guardrail_applied' in out_str.lower()
         )
@@ -985,7 +987,7 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
                             details="Should capture kernel scheduling decisions"))
         
         # ④ 120개 브랜치 실행 확인
-        branch_count_expected = output.get('branch_count_expected', 0)
+        branch_count_expected = final_state.get('branch_count_expected', 0)
         has_120_branches = branch_count_expected == 120
         checks.append(_check("120 Branches Defined", 
                             has_120_branches,
@@ -993,7 +995,7 @@ def _verify_scenario(scenario: str, status: str, output: Dict[str, Any], executi
                             actual=f"{branch_count_expected} branches"))
         
         # ⑤ TEST_RESULT 메시지 확인
-        test_result = output.get('TEST_RESULT', '')
+        test_result = final_state.get('TEST_RESULT', '')
         has_success_message = '✅ GUARDRAIL SUCCESS' in test_result
         checks.append(_check("Test Result Message", 
                             has_success_message or test_passed,

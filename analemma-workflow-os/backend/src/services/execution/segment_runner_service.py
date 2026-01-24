@@ -808,6 +808,16 @@ class SegmentRunnerService:
                 'has_shared_resource': 공유 자원 접근 여부
             }
         """
+        # 🛡️ [P0 Fix] None 또는 dict가 아닌 브랜치 방어
+        if not branch or not isinstance(branch, dict):
+            logger.warning(f"[Scheduler] [Warning] Invalid branch object in resource estimation: {type(branch)}")
+            return {
+                'memory_mb': DEFAULT_BRANCH_MEMORY_MB,
+                'tokens': 0,
+                'llm_calls': 0,
+                'has_shared_resource': False
+            }
+        
         nodes = branch.get('nodes', [])
         if not nodes:
             return {
@@ -2102,6 +2112,11 @@ class SegmentRunnerService:
             # [System] 빈 브랜치 또는 노드가 없는 브랜치 필터링
             valid_branches = []
             for branch in branches:
+                # 🛡️ [P0 Fix] None 또는 dict가 아닌 브랜치 객체 방어
+                if not branch or not isinstance(branch, dict):
+                    logger.warning(f"[Kernel] [Warning] Found invalid branch object (None or not dict): {type(branch)}")
+                    continue
+                
                 branch_nodes = branch.get('nodes', [])
                 branch_partition = branch.get('partition_map', [])
                 
