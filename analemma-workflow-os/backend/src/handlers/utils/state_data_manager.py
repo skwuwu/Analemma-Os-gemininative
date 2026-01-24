@@ -86,7 +86,6 @@ def store_to_s3(data: Any, key: str) -> str:
         return s3_path
         
     except Exception as e:
-    except Exception as e:
         logger.error(f"Failed to store data to S3: {e}")
         # Re-raise to allow caller to handle fallback
         raise
