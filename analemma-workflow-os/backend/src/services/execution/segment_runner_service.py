@@ -1902,28 +1902,64 @@ class SegmentRunnerService:
             # [Guard] [Critical Fix] Define helper for offloading within parallel block
             def _finalize_with_offload(response_payload: Dict[str, Any]) -> Dict[str, Any]:
                 """Helper to ensure S3 offloading is checked before finalizing response."""
-                # Extract state to potentially offload
-                # Note: mask_pii_in_state might have been applied already
+                
+                # 1. Calculate approximate size
+                try:
+                    payload_json = json.dumps(response_payload, ensure_ascii=False)
+                    payload_size = len(payload_json.encode('utf-8'))
+                except:
+                    payload_size = 0 # Fallback
+                
+                # 2. Extract state to potentially offload
                 current_final_state = response_payload.get('final_state')
-                if current_final_state:
-                    # [Guard] Double check threshold compliance
-                    # Parallel groups can be large, so we strictly enforce offloading
-                    offloaded_state, s3_path = self.state_manager.handle_state_storage(
-                        state=current_final_state,
-                        auth_user_id=auth_user_id,
-                        workflow_id=workflow_id,
-                        segment_id=segment_id,
-                        bucket=s3_bucket,
-                        threshold=self.threshold
-                    )
+                
+                # 3. Offload Logic: If state exists AND (forced offload OR payload > 128KB safe limit)
+                # Note: We use 128KB as a safety margin for the 256KB Step Functions limit,
+                # considering overhead from packaging and encoding.
+                should_offload = current_final_state and (payload_size > 128 * 1024)
+                
+                if should_offload:
+                    if not s3_bucket:
+                        logger.error("[Parallel] [Critical] S3 Bucket not defined! Cannot offload large payload.")
+                        # Proceeding might fail, but we try pruning metadata next
+                    else:
+                        logger.info(f"[Parallel] Payload size {payload_size} bytes exceeds safety limit. Offloading final_state.")
+                        offloaded_state, s3_path = self.state_manager.handle_state_storage(
+                            state=current_final_state,
+                            auth_user_id=auth_user_id,
+                            workflow_id=workflow_id,
+                            segment_id=segment_id,
+                            bucket=s3_bucket,
+                            threshold=0 # Force offload
+                        )
+                        
+                        # Update response with offloaded result
+                        response_payload['final_state'] = offloaded_state
+                        response_payload['final_state_s3_path'] = s3_path
+                        response_payload['state_s3_path'] = s3_path # Alias for ASL
+                        
+                        if s3_path:
+                            logger.info(f"[Parallel] Offloaded state to S3: {s3_path}")
+                
+                # 4. Secondary Pruning: If still too large, prune non-essential metadata
+                # Recalculate size
+                try:
+                    payload_json = json.dumps(response_payload, ensure_ascii=False)
+                    payload_size = len(payload_json.encode('utf-8'))
+                except:
+                    pass
                     
-                    # Update response with offloaded result
-                    response_payload['final_state'] = offloaded_state
-                    response_payload['final_state_s3_path'] = s3_path
-                    response_payload['state_s3_path'] = s3_path # Alias for ASL
-                    
-                    if s3_path:
-                        logger.info(f"[Parallel] Offloaded state to S3: {s3_path}")
+                if payload_size > 200 * 1024: # Still > 200KB
+                    logger.warning(f"[Parallel] [Alert] Payload still huge ({payload_size} bytes) after offload. Pruning metadata.")
+                    # Prune history logs
+                    response_payload['new_history_logs'] = []
+                    # Prune metadata details if scheduling is present
+                    if 'scheduling_metadata' in response_payload:
+                        response_payload['scheduling_metadata'] = {
+                            'note': 'Pruned due to size limit',
+                            'batch_count': response_payload['scheduling_metadata'].get('batch_count'),
+                            'strategy': response_payload['scheduling_metadata'].get('strategy')
+                        }
                 
                 return _finalize_response(response_payload)
 
