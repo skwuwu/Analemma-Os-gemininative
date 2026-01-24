@@ -1071,100 +1071,97 @@ class SegmentRunnerService:
             logger.warning(f"[Aggregator] [Warning] Map execution failed: {map_error}")
         
         for i, branch_result in enumerate(parallel_results):
-            # [Guard] [v3.5] Aggregator Null Safety: Filter null results
-            if branch_result is None:
-                logger.error(f"[Aggregator] [Alert] Branch {i} returned None! Marking as failed.")
-                branch_errors.append({
-                    'branch_id': f'branch_{i}',
-                    'error': 'Branch Execution Yielded None'
-                })
+            # 1. Null Guard (루프 시작하자마자 체크)
+            if branch_result is None or not isinstance(branch_result, dict):
+                logger.error(f"[Aggregator] Branch {i} is None or invalid.")
+                branch_errors.append({'branch_id': f'branch_{i}', 'error': 'Null Result'})
                 continue
 
-            if not isinstance(branch_result, dict):
-                logger.warning(f"[Aggregator] Branch {i} result is not a dict: {type(branch_result)}")
-                continue
-            
+            # 2. 컨텍스트 추출 (루프 내부)
             branch_id = branch_result.get('branch_id', f'branch_{i}')
             branch_status = branch_result.get('branch_status', 'UNKNOWN')
-            branch_state = branch_result.get('final_state', {})
-            # [Fix] Also check 'state' alias (some workflows might use it)
-            if not branch_state:
-                branch_state = branch_result.get('state', {})
-                
+            
+            # 🛡️ [Fix] branch_state를 루프 내부에서 안전하게 획득 (Chained Get)
+            branch_state = branch_result.get('final_state') or branch_result.get('state') or {}
+            
             branch_logs = branch_result.get('new_history_logs', [])
             error_info = branch_result.get('error_info')
             
-            # ================================================================
-            # [Guard] [v3.9] Branch Result Hydration (S3 Offloading Support)
-            # 브랜치 실행 결과가 S3로 오프로딩된 경우 Aggregation 전에 복원해야 함
-            # ================================================================
+            # 3. S3 하이드레이션 및 병합 로직 (모두 루프 내부로 이동)
             branch_s3_path = branch_result.get('final_state_s3_path') or branch_result.get('state_s3_path')
             
-            # 상태가 비어있거나 Truncated 상태인데 S3 경로가 있다면 다운로드 시도
-            is_truncated = branch_state.get('__state_truncated') is True if isinstance(branch_state, dict) else False
-            
-            if (not branch_state or is_truncated) and branch_s3_path:
-                try:
-                    logger.info(f"[Aggregator] ⬇️ Hydrating branch {branch_id} result from S3: {branch_s3_path}")
-                    
-                    def _download_branch_state():
-                        bucket_name = branch_s3_path.replace("s3://", "").split("/")[0]
-                        key_name = "/".join(branch_s3_path.replace("s3://", "").split("/")[1:])
-                        s3_client = self.state_manager.s3_client
-                        obj = s3_client.get_object(Bucket=bucket_name, Key=key_name)
-                        return json.loads(obj['Body'].read().decode('utf-8'))
-
-                    if RETRY_UTILS_AVAILABLE:
-                        branch_state = retry_call(
-                            _download_branch_state,
-                            max_retries=3,
-                            base_delay=0.5,
-                            max_delay=3.0,
-                            exceptions=(Exception,)
-                        )
-                    else:
-                        branch_state = _download_branch_state()
+            if isinstance(branch_state, dict):
+                # S3 데이터 복원 로직 실행
+                is_truncated = branch_state.get('__state_truncated') is True
+                if (not branch_state or is_truncated) and branch_s3_path:
+                    try:
+                        logger.info(f"[Aggregator] ⬇️ Hydrating branch {branch_id} result from S3: {branch_s3_path}")
                         
-                    logger.info(f"[Aggregator] ✅ Hydrated branch {branch_id} ({len(json.dumps(branch_state))} bytes)")
-                    
-                except Exception as e:
-                    logger.error(f"[Aggregator] ❌ Failed to hydrate branch {branch_id} from S3: {e}")
-                    # 실패 시 에러 기록하고 Truncated 상태 유지 (또는 빈 상태)
-                    branch_errors.append({
-                        'branch_id': branch_id,
-                        'error': f"Aggregation Hydration Failed: {str(e)}"
-                    })
+                        def _download_branch_state():
+                            bucket_name = branch_s3_path.replace("s3://", "").split("/")[0]
+                            key_name = "/".join(branch_s3_path.replace("s3://", "").split("/")[1:])
+                            s3_client = self.state_manager.s3_client
+                            obj = s3_client.get_object(Bucket=bucket_name, Key=key_name)
+                            return json.loads(obj['Body'].read().decode('utf-8'))
+
+                        if RETRY_UTILS_AVAILABLE:
+                            branch_state = retry_call(
+                                _download_branch_state,
+                                max_retries=3,
+                                base_delay=0.5,
+                                max_delay=3.0,
+                                exceptions=(Exception,)
+                            )
+                        else:
+                            branch_state = _download_branch_state()
+                            
+                        logger.info(f"[Aggregator] ✅ Hydrated branch {branch_id} ({len(json.dumps(branch_state))} bytes)")
+                        
+                    except Exception as e:
+                        logger.error(f"[Aggregator] ❌ Failed to hydrate branch {branch_id} from S3: {e}")
+                        branch_errors.append({
+                            'branch_id': branch_id,
+                            'error': f"Aggregation Hydration Failed: {str(e)}"
+                        })
+
+                # 4. 실제 상태 병합 실행 (이게 루프 안에 있어야 모든 브랜치가 합쳐집니다!)
+                aggregated_state = self._merge_states(
+                    aggregated_state,
+                    branch_state,
+                    merge_policy=MERGE_POLICY_APPEND_LIST
+                )
+                
+                if branch_status in ('COMPLETE', 'SUCCEEDED'):
+                    successful_branches += 1
             
-            logger.info(f"[Aggregator] Branch {branch_id}: status={branch_status}")
-            
-            # 에러 수집 (부분 실패 지원)
+            # 에러 수집
             if error_info:
                 branch_errors.append({
                     'branch_id': branch_id,
                     'error': error_info
                 })
             
-            if branch_status in ('COMPLETE', 'SUCCEEDED'):
-                successful_branches += 1
-            
-            # 상태 병합 (리스트 키는 합침)
-            if isinstance(branch_state, dict):
-                aggregated_state = self._merge_states(
-                    aggregated_state,
-                    branch_state,
-                    merge_policy=MERGE_POLICY_APPEND_LIST
-                )
-            
-            # 히스토리 로그 수집
+            # 히스토리 로그 수집 (Memory Safe Truncation)
             if isinstance(branch_logs, list):
-                all_history_logs.extend(branch_logs)
+                # 🛡️ [Guard] Prevent unlimited log growth from thousands of branches
+                MAX_AGGREGATED_LOGS = 100
+                current_log_count = len(all_history_logs)
+                
+                if current_log_count < MAX_AGGREGATED_LOGS:
+                    remaining_slots = MAX_AGGREGATED_LOGS - current_log_count
+                    if len(branch_logs) > remaining_slots:
+                        all_history_logs.extend(branch_logs[:remaining_slots])
+                        all_history_logs.append(f"[Aggregator] Logs truncated: exceeded limit of {MAX_AGGREGATED_LOGS} entries")
+                    else:
+                        all_history_logs.extend(branch_logs)
         
         # 2. 집계 메타데이터 추가
         aggregated_state['__aggregator_metadata'] = {
             'total_branches': len(parallel_results),
             'successful_branches': successful_branches,
             'failed_branches': len(branch_errors),
-            'aggregated_at': time.time()
+            'aggregated_at': time.time(),
+            'logs_truncated': len(all_history_logs) >= 100 
         }
         
         if branch_errors:

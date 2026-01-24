@@ -492,6 +492,15 @@ def lambda_handler(event, context):
     # 🚀 [Hybrid Mode Compatibility] MAP_REDUCE/BATCHED 모드에서는 segment_manifest 인라인 유지
     uses_inline_manifest = distributed_strategy["strategy"] in ("MAP_REDUCE", "BATCHED")
     
+    # [Payload Safety] Calculate manifest size to prevent inline explosion
+    manifest_json = json.dumps(segment_manifest, ensure_ascii=False)
+    manifest_size_kb = len(manifest_json.encode('utf-8')) / 1024
+    
+    # If manifest is too large (> 50KB), force offload regardless of strategy
+    if manifest_size_kb > 50:
+        logger.warning(f"Manifest size {manifest_size_kb:.1f}KB exceeds limit. Forcing offload (Override strategy {distributed_strategy['strategy']})")
+        uses_inline_manifest = False
+
     # AWS Clients
     s3_client = None
     bucket = os.environ.get('WORKFLOW_STATE_BUCKET')
@@ -502,15 +511,15 @@ def lambda_handler(event, context):
             import boto3
             s3_client = boto3.client('s3')
 
-    # 1. Manifest Offloading (when exceeding 50 items AND not using inline manifest for hybrid mode)
-    if len(segment_manifest) > 50 and s3_client and not uses_inline_manifest:
+    # 1. Manifest Offloading (when exceeding 50 items OR forced by size)
+    if (len(segment_manifest) > 50 or manifest_size_kb > 50) and s3_client and not uses_inline_manifest:
         try:
             manifest_key = f"workflow-manifests/{owner_id}/{workflow_id}/segment_manifest.json"
-            manifest_data = json.dumps(segment_manifest, ensure_ascii=False)
+            # Use pre-calculated json
             s3_client.put_object(
                 Bucket=bucket,
                 Key=manifest_key,
-                Body=manifest_data.encode('utf-8')
+                Body=manifest_json.encode('utf-8')
             )
             manifest_s3_path = f"s3://{bucket}/{manifest_key}"
             logger.info(f"Segment manifest uploaded to S3: {manifest_s3_path}")
@@ -592,10 +601,13 @@ def lambda_handler(event, context):
     
     logger.info(f"[FIXED_ROBUST] Returning state data. partition_map_s3_path: '{partition_map_s3_path}'")
 
-    # 🛡️ [Critical Fix] Ensure total_segments is always int (never None)
-    # 조기 초기화된 _safe_total_segments와 계산된 total_segments 중 큰 값 사용
-    safe_total_segments = max(1, int(total_segments or _safe_total_segments))
-
+    # 🛡️ [Critical Fix] Ensure total_segments uses Top-Level Count
+    # Step Functions Loop (0..N-1) relies on this value matching partition_map length.
+    # Recursive count from partition_result might be higher, causing index out of bounds.
+    safe_total_segments = len(partition_map)
+    if safe_total_segments < 1:
+        safe_total_segments = 1
+        
     return {
         "workflow_config": workflow_config,
         "current_state": current_state,
@@ -609,7 +621,7 @@ def lambda_handler(event, context):
         "quota_reservation_id": quota_reservation_id,
         
         # 🚨 [Critical Fix] Conditional partition_map return in distributed mode
-        "total_segments": safe_total_segments,  # 🛡️ Always int, never None
+        "total_segments": safe_total_segments,  # 🛡️ Always Top-Level Count
         "partition_map": partition_map_for_return,
         "partition_map_s3_path": partition_map_s3_path,  # Always exists (minimum "")
         

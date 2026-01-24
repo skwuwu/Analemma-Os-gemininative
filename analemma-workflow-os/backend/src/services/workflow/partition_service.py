@@ -766,17 +766,22 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
                     total += count_segments_recursive(branch.get("partition_map", []))
         return total
     
-    total_segments = count_segments_recursive(segments)
+    total_segments_recursive = count_segments_recursive(segments)
     
-    # 🛡️ [P2 Fix] total_segments가 0이면 최소 1로 보장 (빈 워크플로우 방어)
-    if total_segments < 1:
-        logger.warning(f"total_segments calculated as {total_segments}, forcing to 1")
-        total_segments = 1
+    # 🛡️ [Critical Fix] Step Functions Loop Control requires Top-Level Count
+    # total_segments returned here drives the main execution loop (0..N-1).
+    # It must match len(partition_map), otherwise loop will try to access non-existent indices.
+    execution_segments_count = len(segments)
+    
+    # 🛡️ [P2 Fix] execution_segments_count가 0이면 최소 1로 보장 (빈 워크플로우 방어)
+    if execution_segments_count < 1:
+        logger.warning(f"execution_segments_count calculated as {execution_segments_count}, forcing to 1")
+        execution_segments_count = 1
     
     # [Performance Optimization] Pre-indexed 메타데이터 반환
     return {
         "partition_map": segments,
-        "total_segments": total_segments, 
+        "total_segments": execution_segments_count,  # [Fix] Use top-level count for execution loop
         "llm_segments": stats["llm"],
         "hitp_segments": stats["hitp"],
         # [v2.0] 추가 통계
@@ -789,7 +794,8 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
             "max_partition_depth": MAX_PARTITION_DEPTH,
             "max_nodes_limit": MAX_NODES_LIMIT,
             "nodes_processed": len(visited_nodes),
-            "total_nodes": len(nodes)
+            "total_nodes": len(nodes),
+            "total_segments_recursive": total_segments_recursive  # [Fix] Store recursive count in metadata
         }
     }
 
