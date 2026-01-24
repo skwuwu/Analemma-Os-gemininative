@@ -932,8 +932,15 @@ class SegmentRunnerService:
                 'has_shared_resource': False
             }
         
-        nodes = branch.get('nodes', [])
-        if not nodes:
+        # [Critical Fix] 숨어있는 노드들까지 투시해서 토큰 계산
+        all_nodes = branch.get('nodes', [])
+        if not all_nodes and 'partition_map' in branch:
+            # 파티셔닝된 브랜치라면 모든 세그먼트의 노드를 합쳐서 계산 대상에 포함
+            for segment in branch.get('partition_map', []):
+                if isinstance(segment, dict):
+                    all_nodes.extend(segment.get('nodes', []))
+        
+        if not all_nodes:
             return {
                 'memory_mb': DEFAULT_BRANCH_MEMORY_MB,
                 'tokens': 0,
@@ -946,7 +953,7 @@ class SegmentRunnerService:
         llm_calls = 0
         has_shared_resource = False
         
-        for node in nodes:
+        for node in all_nodes:
             # 🛡️ [v3.8] None defense in nodes iteration
             if node is None or not isinstance(node, dict):
                 continue
@@ -1894,6 +1901,13 @@ class SegmentRunnerService:
                 logger.warning(f"[Kernel] final_state is not a dict ({type(final_state)}). Resetting.")
                 final_state = {}
                 res['final_state'] = final_state
+                
+            # 🛡️ [P0 Fix] Simulator Contract Guard
+            # 시뮬레이터가 무조건 기대하는 필드들을 None으로라도 보장하여 SFN 크래시 방지
+            SIMULATOR_REQUIRED_KEYS = ['batch_verification', 'loop_os_test_result', 'TEST_RESULT', 'VALIDATION_STATUS']
+            if isinstance(final_state, dict):
+                for sk in SIMULATOR_REQUIRED_KEYS:
+                    final_state.setdefault(sk, None)
             
             # Explicitly extract to ensure we get a value (defaulting to False/1/{})
             gv = final_state.get('guardrail_verified', False)

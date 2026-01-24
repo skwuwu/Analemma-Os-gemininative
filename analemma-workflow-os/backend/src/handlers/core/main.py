@@ -15,7 +15,7 @@ from collections import ChainMap
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, conlist, constr, ValidationError, field_validator
+from pydantic import BaseModel, Field, conlist, constr, ValidationError, field_validator, ConfigDict, model_validator
 
 import boto3
 from botocore.config import Config
@@ -274,6 +274,206 @@ PII_REGEX_PATTERNS = [
     (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "[EMAIL_REDACTED]"),
     (r"\d{3}-\d{3,4}-\d{4}", "[PHONE_REDACTED]"),
 ]
+
+# -----------------------------------------------------------------------------
+# 🛡️ State Pollution Safeguards - Kernel Protection Layer
+# -----------------------------------------------------------------------------
+RESERVED_STATE_KEYS = {
+    # System Context (Both Case Styles)
+    "workflowId", "workflow_id", "ownerId", "owner_id", 
+    "execution_id", "user_id", "idempotency_key",
+    
+    # Flow Control (가장 위험한 조작 포인트 - 루프/세그먼트 제어)
+    "loop_counter", "max_loop_iterations", "segment_id", 
+    "segment_to_run", "total_segments", "segment_type",
+    
+    # State & Infrastructure (S3 오프로딩 정합성 보호)
+    "current_state", "final_state", "state_s3_path", "final_state_s3_path",
+    "partition_map", "partition_map_s3_path", "__s3_offloaded", "__s3_path",
+    
+    # Telemetry & Logs (추적성 보호)
+    "step_history", "execution_logs", "__new_history_logs", 
+    "skill_execution_log", "__kernel_actions",
+    
+    # Scheduling & Guardrails (스케줄러/가드레일 무력화 방지)
+    "scheduling_metadata", "__scheduling_metadata", 
+    "guardrail_verified", "__guardrail_verified",
+    "batch_count_actual", "state_size_threshold",
+    
+    # Sensitive Credentials (보안 키 노출 방지)
+    "user_api_keys", "aws_credentials",
+    
+    # Response Envelope (Step Functions JSONPath 정합성 유지)
+    "status", "error_info"
+}
+
+def _validate_output_keys(output: Dict[str, Any], node_id: str) -> Dict[str, Any]:
+    """
+    🛡️ [Guard] Validate and filter output keys to prevent state pollution.
+    
+    이 함수는 사용자 정의 코드(Operator)가 커널의 영역을 침범하지 못하게 하는
+    '사용자 모드 vs 커널 모드'의 격리 계층을 완성합니다.
+    
+    특히 MOCK_MODE를 끄고 실제 LLM을 올렸을 때, 모델이 임의의 JSON 키를 생성하여
+    시스템 메타데이터를 덮어쓰는 사고를 방지하는 최후의 보루입니다.
+    
+    차단 대상:
+    - Flow Control 변수 (loop_counter, segment_id 등) → 무한 루프/잘못된 점프 방지
+    - State Infrastructure (state_s3_path, __s3_offloaded 등) → S3 정합성 보호
+    - Telemetry (step_history, execution_logs 등) → 추적성 보호
+    - Response Envelope (status, error_info) → Step Functions JSONPath 정합성 유지
+    
+    Args:
+        output: 노드가 반환한 출력 딕셔너리
+        node_id: 노드 식별자 (로깅용)
+        
+    Returns:
+        시스템 예약 키가 제거된 안전한 딕셔너리
+    """
+    if not isinstance(output, dict):
+        return output
+        
+    # 🛡️ [Guard] 커널 영역 침범 검사
+    forbidden_attempts = [k for k in output.keys() if k in RESERVED_STATE_KEYS]
+    
+    if forbidden_attempts:
+        logger.warning(
+            f"🚨 [Pollution Blocked] Node '{node_id}' tried to overwrite system keys: {forbidden_attempts}. "
+            f"이 키들은 커널 영역으로 사용자 코드의 접근이 금지됩니다."
+        )
+        
+        # 데이터 다이어트 강제: 시스템 키를 제외한 안전한 데이터만 필터링
+        safe_output = {k: v for k, v in output.items() if k not in RESERVED_STATE_KEYS}
+        
+        # [Telemetry] 위반 시도 기록 (선택적)
+        # safe_output["__safeguard_violations"] = {
+        #     "node_id": node_id,
+        #     "blocked_keys": forbidden_attempts,
+        #     "timestamp": time.time()
+        # }
+        
+        return safe_output
+            
+    return output
+
+
+
+# -----------------------------------------------------------------------------
+# 🛡️ Pydantic Schema Validation Layer - Type Safety for State
+# -----------------------------------------------------------------------------
+class SafeStateOutput(BaseModel):
+    """
+    🛡️ [Guard] Pydantic 모델 기반 스키마 검증 레이어
+    
+    노드 출력값의 타입 안전성을 보장하고, 예약 키 침범을 이중으로 차단합니다.
+    이 레이어는 _validate_output_keys의 "백업 가드"로 작동합니다.
+    
+    장점:
+    1. 타입 안전성: 잘못된 타입의 값이 state에 유입되는 것을 방지
+    2. 스키마 강제: 시스템 필수 필드의 구조 검증
+    3. 자동 변환: Pydantic의 coercion 기능으로 호환 가능한 타입 자동 변환
+    
+    아키텍처 개선 (2단계 방어):
+    - model_validator(mode='before'): extra 필드를 포함한 전체 입력 스캔
+    - 예약 키 발견 시 None 반환 대신 딕셔너리에서 제거 (상태 오염 방지)
+    """
+    model_config = ConfigDict(
+        extra='allow',  # 사용자 정의 키는 허용
+        validate_assignment=True,  # 할당 시마다 검증
+        arbitrary_types_allowed=True
+    )
+    
+    # 시스템 필수 필드 (읽기 전용, 노드가 설정 불가)
+    workflowId: Optional[str] = Field(None, frozen=True)
+    ownerId: Optional[str] = Field(None, frozen=True)
+    execution_id: Optional[str] = Field(None, frozen=True)
+    
+    # Flow Control (노드가 절대 변경하면 안 되는 필드)
+    loop_counter: Optional[int] = Field(None, frozen=True, ge=0)
+    max_loop_iterations: Optional[int] = Field(None, frozen=True, ge=1)
+    segment_id: Optional[int] = Field(None, frozen=True)
+    segment_to_run: Optional[int] = Field(None, frozen=True)
+    
+    @model_validator(mode='before')
+    @classmethod
+    def block_reserved_keys_globally(cls, data: Any) -> Any:
+        """
+        🛡️ [Critical Fix] 전역 예약 키 차단 (extra 필드 포함)
+        
+        field_validator('*')는 명시적으로 정의된 필드에만 적용되므로,
+        model_validator를 사용하여 extra 필드까지 포함한 전체 입력을 스캔합니다.
+        
+        중요: return None이 아닌 키 삭제(pop)를 통해 상태 오염 방지
+        - None 반환 시: loop_counter=5 → None으로 덮어씀 (오염 발생)
+        - 키 삭제 시: loop_counter는 아예 출력에서 제외 (기존 값 유지)
+        """
+        if not isinstance(data, dict):
+            return data
+            
+        # 예약 키 탐지
+        forbidden_keys = [k for k in data.keys() if k in RESERVED_STATE_KEYS]
+        
+        if forbidden_keys:
+            logger.warning(
+                f"🚨 [Pydantic Model Guard] Detected reserved keys in extra fields: {forbidden_keys}. "
+                f"이 키들은 딕셔너리에서 제거되어 커널 상태를 보호합니다."
+            )
+            
+            # 🛡️ [Critical Fix] None 반환이 아닌 키 삭제 (상태 오염 방지)
+            # 예약 키를 딕셔너리에서 제거하여 상태 병합 시 기존 값이 유지되도록 함
+            cleaned_data = {k: v for k, v in data.items() if k not in RESERVED_STATE_KEYS}
+            return cleaned_data
+            
+        return data
+
+
+def validate_state_with_schema(output: Dict[str, Any], node_id: str) -> Dict[str, Any]:
+    """
+    🛡️ [Guard] Pydantic 스키마를 사용한 추가 검증 레이어
+    
+    _validate_output_keys 이후 실행되어 타입 안전성과 스키마 정합성을 보장합니다.
+    
+    2단계 방어 시스템:
+    1. Layer 1 (_validate_output_keys): 예약 키 필터링 (기본 방어선)
+    2. Layer 2 (validate_state_with_schema): Pydantic 타입 검증 + extra 필드 스캔 (백업 방어선)
+    
+    Args:
+        output: 노드가 반환한 출력 딕셔너리 (Layer 1 통과 후)
+        node_id: 노드 식별자
+        
+    Returns:
+        스키마 검증을 통과한 안전한 딕셔너리
+    """
+    try:
+        # Pydantic 모델로 변환하여 검증
+        # model_validator에서 예약 키가 제거되고 타입 검증이 수행됨
+        validated = SafeStateOutput(**output)
+        
+        # 검증된 데이터만 추출 (exclude_none으로 None 필드는 제외)
+        safe_dict = validated.model_dump(
+            exclude_none=True,  # None 값 제외 (상태 오염 방지)
+            exclude_unset=True,  # 설정되지 않은 필드 제외
+            mode='python'  # Python 네이티브 타입으로 변환
+        )
+        
+        # 원본 output에 있던 사용자 정의 키는 보존 (예약 키가 아닌 경우만)
+        for key, value in output.items():
+            if key not in RESERVED_STATE_KEYS and key not in safe_dict:
+                safe_dict[key] = value
+                
+        return safe_dict
+        
+    except ValidationError as e:
+        logger.error(
+            f"🚨 [Schema Validation Failed] Node '{node_id}' output failed Pydantic validation: {e}"
+        )
+        # 검증 실패 시 원본 반환 (이미 _validate_output_keys를 통과했으므로)
+        return output
+    except Exception as e:
+        logger.error(
+            f"🚨 [Schema Validation Error] Unexpected error in Pydantic validation for node '{node_id}': {e}"
+        )
+        return output
 
 
 def mask_pii(text: Any) -> Any:
@@ -1051,7 +1251,11 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                     logger.warning(f"[LLM Response] JSON parsing failed, using raw text")
             
             out_key = config.get("writes_state_key") or config.get("output_key") or f"{node_id}_output"
-            return {out_key: output_value, f"{node_id}_meta": meta, "step_history": new_history, "usage": usage}
+            # 🛡️ [Guard] Layer 1: Validate output keys (Reserved key check)
+            raw_output = {out_key: output_value, f"{node_id}_meta": meta, "step_history": new_history, "usage": usage}
+            validated_output = _validate_output_keys(raw_output, node_id)
+            # 🛡️ [Guard] Layer 2: Schema validation (Type safety)
+            return validate_state_with_schema(validated_output, node_id)
             
         except Exception as e:
             last_error = e
@@ -1471,7 +1675,10 @@ def skill_executor_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict
     current_history = exec_state.get("step_history", [])
     output["step_history"] = current_history + [f"{node_id}:skill_executor:{skill_ref}.{tool_call}"]
     
-    return output
+    # 🛡️ [Guard] Layer 1: Validate output keys (Reserved key check)
+    validated_output = _validate_output_keys(output, node_id)
+    # 🛡️ [Guard] Layer 2: Schema validation (Type safety)
+    return validate_state_with_schema(validated_output, node_id)
 
 def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Executes sub-node for each item in list concurrently."""
@@ -1989,7 +2196,7 @@ def vision_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, An
         
         out_key = vision_config.get("output_key", f"{node_id}_output")
         
-        return {
+        raw_output = {
             out_key: text,
             f"{node_id}_meta": {
                 "model": model_name,
@@ -2001,6 +2208,11 @@ def vision_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, An
             },
             "step_history": new_history
         }
+        
+        # 🛡️ [Guard] Layer 1: Validate output keys (Reserved key check)
+        validated_output = _validate_output_keys(raw_output, node_id)
+        # 🛡️ [Guard] Layer 2: Schema validation (Type safety)
+        return validate_state_with_schema(validated_output, node_id)
         
     except Exception as e:
         logger.exception(f"Vision runner failed for node {node_id}: {e}")
@@ -2142,7 +2354,10 @@ def operator_official_runner(state: Dict[str, Any], config: Dict[str, Any]) -> D
     current_history = state.get("step_history", [])
     output["step_history"] = current_history + [f"{node_id}:operator_official:{strategy}"]
     
-    return output
+    # 🛡️ [Guard] Layer 1: Validate output keys (Reserved key check)
+    validated_output = _validate_output_keys(output, node_id)
+    # 🛡️ [Guard] Layer 2: Schema validation (Type safety)
+    return validate_state_with_schema(validated_output, node_id)
 
 register_node("operator_official", operator_official_runner)
 register_node("safe_operator", operator_official_runner)  # Alias for operator_official
