@@ -368,11 +368,25 @@ def lambda_handler(event, context):
         workflow_config = {}
         logger.warning("Proceeding with empty workflow_config (risk of later failure)")
 
-    # [Fix] Merge top-level initial_state into workflow_config for test mode
-    # When using test_workflow_config, initial_state may be at top level, not inside workflow_config
-    if raw_input.get('initial_state') and not workflow_config.get('initial_state'):
-        workflow_config['initial_state'] = raw_input.get('initial_state')
-        logger.info(f"Merged top-level initial_state into workflow_config: {list(raw_input.get('initial_state', {}).keys())}")
+    # [Fix v2] Merge initial_state bidirectionally for test mode
+    # When using test_workflow_config:
+    # - workflow_config.initial_state may have workflow-defined variables (e.g., input_text)
+    # - raw_input.initial_state may have test metadata (e.g., e2e_test_scenario)
+    # Both must be merged, with workflow definition taking precedence for variable values
+    top_level_initial_state = raw_input.get('initial_state', {})
+    workflow_initial_state = workflow_config.get('initial_state', {})
+    
+    if top_level_initial_state or workflow_initial_state:
+        # Merge: workflow definition first, then overlay test metadata (test metadata can't override workflow vars)
+        merged_initial_state = {**workflow_initial_state, **top_level_initial_state}
+        # But if workflow has explicit variables, those should win (e.g., input_text from workflow definition)
+        # Re-overlay workflow vars to ensure they're not overwritten by empty test metadata
+        for key, value in workflow_initial_state.items():
+            if value is not None and value != "":
+                merged_initial_state[key] = value
+        
+        workflow_config['initial_state'] = merged_initial_state
+        logger.info(f"Merged initial_state (workflow + test metadata): {list(merged_initial_state.keys())}")
 
     # 3. MOCK_MODE: Force partitioning (prepare for no DB data)
     if raw_input.get('test_workflow_config'):

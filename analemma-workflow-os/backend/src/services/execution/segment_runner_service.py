@@ -1470,11 +1470,18 @@ class SegmentRunnerService:
             branch_id = branch_result.get('branch_id', 'unknown')
             branch_state = branch_result.get('final_state') or branch_result.get('state') or {}
             
+            # [DEBUG] 브랜치 상태에서 토큰 관련 키 로깅
+            token_keys = [k for k in branch_state.keys() if 'token' in k.lower() or k == 'usage']
+            logger.info(f"[Aggregator] [DEBUG] Branch {branch_id} token-related keys: {token_keys}")
+            if 'usage' in branch_state:
+                logger.info(f"[Aggregator] [DEBUG] Branch {branch_id} usage: {branch_state.get('usage')}")
+            
             # 브랜치의 토큰 사용량 추출
             usage = extract_token_usage(branch_state)
             input_tokens = usage['input_tokens']
             output_tokens = usage['output_tokens']
             branch_total = usage['total_tokens']
+            logger.info(f"[Aggregator] [DEBUG] Branch {branch_id} extracted: {usage}")
             
             total_input_tokens += input_tokens
             total_output_tokens += output_tokens

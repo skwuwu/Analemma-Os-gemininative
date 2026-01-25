@@ -226,7 +226,8 @@ class GeminiConfig:
     enable_grounding: bool = False
     grounding_source: Optional[str] = None  # "google_search" or corpus ID
     # Safety Settings (content safety threshold)
-    safety_threshold: str = "BLOCK_MEDIUM_AND_ABOVE"  # BLOCK_NONE, BLOCK_LOW_AND_ABOVE, etc.
+    # BLOCK_NONE for workflow design content (technical text that may trigger false positives)
+    safety_threshold: str = "BLOCK_NONE"  # BLOCK_NONE, BLOCK_LOW_AND_ABOVE, BLOCK_MEDIUM_AND_ABOVE, etc.
     # Presence/Frequency Penalty (repetition prevention)
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
@@ -234,6 +235,40 @@ class GeminiConfig:
 
 # Singleton client
 _gemini_client = None
+
+
+def _get_safety_settings():
+    """
+    Generate safety settings for Gemini API.
+    Uses BLOCK_NONE to prevent false positives on technical workflow content.
+    
+    Returns:
+        List of safety setting dictionaries for all harm categories
+    """
+    try:
+        from vertexai.generative_models import HarmCategory, HarmBlockThreshold
+        
+        return [
+            {
+                "category": HarmCategory.HARM_CATEGORY_HARASSMENT,
+                "threshold": HarmBlockThreshold.BLOCK_NONE,
+            },
+            {
+                "category": HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                "threshold": HarmBlockThreshold.BLOCK_NONE,
+            },
+            {
+                "category": HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                "threshold": HarmBlockThreshold.BLOCK_NONE,
+            },
+            {
+                "category": HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                "threshold": HarmBlockThreshold.BLOCK_NONE,
+            },
+        ]
+    except ImportError:
+        logger.warning("Could not import HarmCategory/HarmBlockThreshold, using default safety settings")
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -697,10 +732,14 @@ class GeminiService:
             generation_config["response_mime_type"] = "application/json"
             generation_config["response_schema"] = response_schema
         
+        # Get safety settings to prevent false positives on technical content
+        safety_settings = _get_safety_settings()
+        
         model = client.GenerativeModel(
             model_name=self.config.model.value,
             generation_config=generation_config,
-            system_instruction=system_instruction or self.config.system_instruction
+            system_instruction=system_instruction or self.config.system_instruction,
+            safety_settings=safety_settings
         )
         
         # Compose input text (for token counting)
@@ -905,10 +944,14 @@ class GeminiService:
             }
             logger.info(f"Thinking Mode enabled with budget: {thinking_budget} tokens")
         
+        # Get safety settings to prevent false positives on technical content
+        safety_settings = _get_safety_settings()
+        
         model = client.GenerativeModel(
             model_name=self.config.model.value,
             generation_config=generation_config,
-            system_instruction=system_instruction or self.config.system_instruction
+            system_instruction=system_instruction or self.config.system_instruction,
+            safety_settings=safety_settings
         )
         
         # Input text (for token counting)
@@ -1387,10 +1430,14 @@ Refer to all past conversations and changes to generate consistent responses.
             "top_k": self.config.top_k,
         }
         
+        # Get safety settings to prevent false positives on technical content
+        safety_settings = _get_safety_settings()
+        
         model = client.GenerativeModel(
             model_name=self.config.model.value,
             generation_config=generation_config,
-            system_instruction=system_instruction or self.config.system_instruction
+            system_instruction=system_instruction or self.config.system_instruction,
+            safety_settings=safety_settings
         )
         
         # Compose content: [text prompt, image1, image2, ...]
@@ -1601,10 +1648,14 @@ Refer to all past conversations and changes to generate consistent responses.
                 "top_k": self.config.top_k,
             }
             
+            # Get safety settings to prevent false positives on technical content
+            safety_settings = _get_safety_settings()
+            
             model = self.client.GenerativeModel(
                 model_name=self.config.model.value,
                 generation_config=generation_config,
-                system_instruction=system_instruction or self.config.system_instruction
+                system_instruction=system_instruction or self.config.system_instruction,
+                safety_settings=safety_settings
             )
             
             start_time = time.time()
@@ -1758,10 +1809,14 @@ Refer to all past conversations and changes to generate consistent responses.
             "temperature": temperature or self.config.temperature,
         }
         
+        # Get safety settings to prevent false positives on technical content
+        safety_settings = _get_safety_settings()
+        
         model = client.GenerativeModel(
             model_name=self.config.model.value,
             generation_config=generation_config,
-            system_instruction=system_instruction or self.config.system_instruction
+            system_instruction=system_instruction or self.config.system_instruction,
+            safety_settings=safety_settings
         )
         
         contents = [user_prompt] + image_parts

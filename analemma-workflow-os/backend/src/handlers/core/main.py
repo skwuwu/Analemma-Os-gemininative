@@ -1348,7 +1348,13 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                         error_category = "TIMEOUT"
                         log_level = logger.warning
                         fallback_reason = "Timeout/network error"
-                    elif any(keyword in error_msg for keyword in ["blocked", "safety", "content"]):
+                    elif any(keyword in error_msg for keyword in ["empty", "must not be empty", "required"]):
+                        # Input validation error - distinct from content safety
+                        error_category = "VALIDATION_ERROR"
+                        log_level = logger.error
+                        fallback_reason = "Empty or invalid input"
+                    elif any(keyword in error_msg for keyword in ["blocked", "safety", "content filter", "harm"]):
+                        # More specific patterns for actual content safety issues
                         error_category = "CONTENT_SAFETY"
                         log_level = logger.warning
                         fallback_reason = "Content safety filter"
