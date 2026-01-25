@@ -1978,6 +1978,9 @@ class SegmentRunnerService:
         
         execution_start_time = time.time()
         
+        # Check if this is a parallel branch execution (used for token aggregation and payload optimization)
+        is_parallel_branch = event.get('branch_config') is not None
+        
         # ====================================================================
         # [Guard] [v2.6 P0 Fix] 모든 return 경로에서 사용할 메타데이터 사전 계산
         # Step Functions Choice 상태에서 null 참조를 방지하기 위해 반드시 포함되어야 함
