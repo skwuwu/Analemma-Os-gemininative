@@ -1136,8 +1136,16 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     # [FIX] Override MOCK_MODE from state if present (payload takes precedence over Lambda env var)
     # This allows LLM Simulator to force MOCK_MODE=false even when Lambda default is true
     if "MOCK_MODE" in exec_state:
-        os.environ["MOCK_MODE"] = str(exec_state["MOCK_MODE"])
-        logger.info(f"🔄 MOCK_MODE overridden from state: {exec_state['MOCK_MODE']}")
+        # [CRITICAL] Convert boolean False to lowercase "false" string
+        # Python's str(False) -> "False" which is truthy, need "false" for is_mock_mode()
+        mock_mode_value = exec_state["MOCK_MODE"]
+        if isinstance(mock_mode_value, bool):
+            mock_mode_str = "true" if mock_mode_value else "false"
+        else:
+            mock_mode_str = str(mock_mode_value).lower()
+        
+        os.environ["MOCK_MODE"] = mock_mode_str
+        logger.info(f"🔄 MOCK_MODE overridden from state: {exec_state['MOCK_MODE']} -> {mock_mode_str}")
     
     # [Cancellation] Check if execution has been cancelled before starting LLM call
     execution_arn = exec_state.get("execution_arn") or exec_state.get("ExecutionArn")
@@ -1310,7 +1318,9 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                     elif "text" in resp:
                         text = resp["text"]
                     else:
-                        text = str(resp)
+                        # [FIX] JSON Serialization: Convert Python dict to proper JSON string
+                        # This ensures json_parse operator can process the output
+                        text = json.dumps(resp, default=str)
                     
                     # Normalize usage statistics
                     # [Fix] None defense: resp['metadata']가 None일 수 있음
@@ -1440,7 +1450,10 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                 else:
                     logger.warning(f"[LLM Response] JSON parsing failed, using raw text")
             
-            out_key = config.get("writes_state_key") or config.get("output_key") or f"{node_id}_output"
+            # [FIX] Output Key Priority: Use user-specified output_key first, fall back to node_id pattern
+            # This ensures test workflows can verify results using exact key names
+            out_key = config.get("output_key") or config.get("writes_state_key") or f"{node_id}_output"
+            logger.debug(f"[LLM Response] Output key resolved: {out_key} (from config: {config.get('output_key')})")
             # 🛡️ [Guard] Layer 1: Validate output keys (Reserved key check)
             raw_output = {out_key: output_value, f"{node_id}_meta": meta, "step_history": new_history, "usage": usage}
             validated_output = _validate_output_keys(raw_output, node_id)

@@ -2209,6 +2209,21 @@ class SegmentRunnerService:
                                 # Replace field with S3 reference
                                 # For dict fields, preserve critical metadata
                                 if isinstance(field_value, dict):
+                                    # [FIX] Preserve dynamic node outputs (*_output, *_meta patterns)
+                                    # Extract all dynamic output fields from the dict
+                                    dynamic_outputs = {}
+                                    for key, value in field_value.items():
+                                        # Preserve node outputs, metadata, and verification data
+                                        if any([
+                                            key.endswith('_output'),
+                                            key.endswith('_meta'),
+                                            key.endswith('_result'),
+                                            key.endswith('_data'),
+                                            key.startswith('llm_'),
+                                            key.startswith('vision_')
+                                        ]):
+                                            dynamic_outputs[key] = value
+                                    
                                     res[field_name] = {
                                         "__s3_offloaded": True,
                                         "__s3_path": s3_path,
@@ -2218,10 +2233,18 @@ class SegmentRunnerService:
                                         "batch_count_actual": field_value.get('batch_count_actual', 1),
                                         "scheduling_metadata": field_value.get('scheduling_metadata', {}),
                                         "state_size_threshold": self.threshold,
+                                        # [FIX] Preserve token fields (critical for aggregator and verification)
+                                        "total_tokens": field_value.get('total_tokens', 0),
+                                        "total_input_tokens": field_value.get('total_input_tokens', 0),
+                                        "total_output_tokens": field_value.get('total_output_tokens', 0),
+                                        "usage": field_value.get('usage', {}),
+                                        "branch_token_details": field_value.get('branch_token_details', []),
                                         # Preserve passthrough fields with double underscore (legacy compatibility)
                                         "__scheduling_metadata": field_value.get('scheduling_metadata', {}),
                                         "__guardrail_verified": field_value.get('guardrail_verified', False),
                                         "__batch_count_actual": field_value.get('batch_count_actual', 1),
+                                        # [FIX] Include dynamic outputs for simulator verification
+                                        **dynamic_outputs,
                                     }
                                 else:
                                     # For list/array fields (branches, execution_batches)
@@ -2254,6 +2277,17 @@ class SegmentRunnerService:
                                 f"{response_size/1024:.1f}KB → {new_size/1024:.1f}KB "
                                 f"(saved {(response_size-new_size)/1024:.1f}KB)"
                             )
+                        
+                        # [FIX] After offloading, copy token fields from final_state wrapper to root level
+                        # This ensures Step Functions JSONPath can access token data even after S3 offload
+                        final_state_ref = res.get('final_state')
+                        if isinstance(final_state_ref, dict) and final_state_ref.get('__s3_offloaded'):
+                            # Copy preserved token fields to root level for SFN ResultSelector access
+                            token_fields = ['total_tokens', 'total_input_tokens', 'total_output_tokens', 'usage', 'branch_token_details']
+                            for tf in token_fields:
+                                if tf in final_state_ref and tf not in res:
+                                    res[tf] = final_state_ref[tf]
+                                    logger.debug(f"[S3 Offload] Copied {tf} to root level for SFN access")
                         
                         # If still too large, log warning but continue (Step Functions will reject)
                         if new_size > SFN_SIZE_LIMIT:
