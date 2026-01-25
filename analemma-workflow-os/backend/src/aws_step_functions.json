@@ -1486,8 +1486,8 @@
             "Detail": {
               "execution_id.$": "$$.Execution.Id",
               "conversation_id.$": "$$.Execution.Id",
-              "ownerId.$": "$.ownerId",
-              "workflowId.$": "$.workflowId",
+              "ownerId.$": "$.state_data.ownerId",
+              "workflowId.$": "$.state_data.workflowId",
               "status": "COMPLETED",
               "notification_type": "execution_progress",
               "message": "Workflow completed successfully",

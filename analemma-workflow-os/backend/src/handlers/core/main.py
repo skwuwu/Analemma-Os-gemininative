@@ -21,6 +21,14 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ReadTimeoutError
 from src.langchain_core_custom.outputs import LLMResult, Generation
+from .token_utils import (
+    extract_token_usage,
+    aggregate_tokens_from_branches,
+    aggregate_tokens_from_iterations,
+    aggregate_tokens_from_nested,
+    accumulate_tokens_in_state,
+    calculate_cost_usd
+)
 
 # -----------------------------------------------------------------------------
 # 1. Imports & Constants
@@ -312,8 +320,8 @@ PII_REGEX_PATTERNS = [
 # 🛡️ State Pollution Safeguards - Kernel Protection Layer
 # -----------------------------------------------------------------------------
 RESERVED_STATE_KEYS = {
-    # System Context (Both Case Styles)
-    "workflowId", "workflow_id", "ownerId", "owner_id", 
+    # System Context (Both Case Styles) - ownerId 제외 (Step Functions JSONPath 호환성)
+    "workflowId", "workflow_id", "owner_id", 
     "execution_id", "user_id", "idempotency_key",
     
     # Flow Control (Most dangerous manipulation points - Loop/Segment control)
@@ -727,7 +735,16 @@ def _build_mock_llm_text(model_id: str, prompt: str) -> str:
 def invoke_bedrock_model(model_id: str, system_prompt: str | None, user_prompt: str, max_tokens: int | None = None, temperature: float | None = None, read_timeout_seconds: int | None = None) -> Any:
     if _is_mock_mode():
         logger.info(f"MOCK_MODE: Skipping Bedrock call for {model_id}")
-        return {"content": [{"text": _build_mock_llm_text(model_id, user_prompt)}]}
+        # Mock realistic token usage for testing cost guardrails
+        mock_input_tokens = min(500, len(user_prompt) // 4)  # Rough estimate: ~4 chars per token
+        mock_output_tokens = 200  # Typical response length
+        return {
+            "content": [{"text": _build_mock_llm_text(model_id, user_prompt)}],
+            "usage": {
+                "input_tokens": mock_input_tokens,
+                "output_tokens": mock_output_tokens
+            }
+        }
 
     try:
         # Prefer shared client; only create ad-hoc client when caller explicitly needs longer timeout
@@ -1475,6 +1492,114 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     # Should not reach here
     raise last_error if last_error else RuntimeError("LLM execution failed unexpectedly")
 
+
+def aggregator_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
+    """Aggregates results from parallel branches or iterations, with special token usage aggregation."""
+    node_id = config.get("id", "aggregator")
+    
+    # [Token Aggregation] 여러 소스의 토큰 사용량 합산
+    total_input_tokens = 0
+    total_output_tokens = 0
+    aggregation_sources = []
+    
+    # 1. 병렬 그룹 결과 합산
+    parallel_result = state.get('parallel_group_result') or state.get('parallel_result')
+    if parallel_result and isinstance(parallel_result, dict):
+        branches = parallel_result.get('branches', {})
+        for branch_id, branch_data in branches.items():
+            if isinstance(branch_data, dict):
+                usage = extract_token_usage(branch_data)
+                input_tokens = usage['input_tokens']
+                output_tokens = usage['output_tokens']
+                
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
+                
+                aggregation_sources.append({
+                    'source': 'parallel_branch',
+                    'branch_id': branch_id,
+                    'input_tokens': input_tokens,
+                    'output_tokens': output_tokens,
+                    'total_tokens': input_tokens + output_tokens
+                })
+    
+    # 2. ForEach/Map 결과 합산
+    foreach_result = state.get('for_each_result') or state.get('map_result')
+    if foreach_result and isinstance(foreach_result, list):
+        for i, item_result in enumerate(foreach_result):
+            if isinstance(item_result, dict):
+                usage = extract_token_usage(item_result)
+                input_tokens = usage['input_tokens']
+                output_tokens = usage['output_tokens']
+                
+                total_input_tokens += input_tokens
+                total_output_tokens += output_tokens
+                
+                aggregation_sources.append({
+                    'source': 'iteration',
+                    'iteration': i,
+                    'input_tokens': input_tokens,
+                    'output_tokens': output_tokens,
+                    'total_tokens': input_tokens + output_tokens
+                })
+    
+    # 3. 중첩 ForEach 결과 합산
+    nested_result = state.get('nested_for_each_result')
+    if nested_result and isinstance(nested_result, list):
+        usage = aggregate_tokens_from_nested(nested_result)
+        total_input_tokens += usage['input_tokens']
+        total_output_tokens += usage['output_tokens']
+        
+        # Add aggregation sources for nested results
+        for outer_result in nested_result:
+            if isinstance(outer_result, dict):
+                outer_id = outer_result.get('outer_id', 'unknown')
+                inner_results = outer_result.get('inner_results', [])
+                
+                for inner_result in inner_results:
+                    if isinstance(inner_result, dict):
+                        inner_usage = extract_token_usage(inner_result)
+                        
+                        aggregation_sources.append({
+                            'source': 'nested_iteration',
+                            'outer_id': outer_id,
+                            'input_tokens': inner_usage['input_tokens'],
+                            'output_tokens': inner_usage['output_tokens'],
+                            'total_tokens': inner_usage['total_tokens']
+                        })
+    
+    # 4. 직접적인 토큰 사용량 필드 합산 제거 (token_utils.accumulate_tokens_in_state로 대체)
+    # accumulate_tokens_in_state가 이전 상태의 토큰을 자동으로 누적하므로 수동 합산 불필요
+    
+    total_tokens = total_input_tokens + total_output_tokens
+    
+    # 결과 업데이트
+    result = {
+        'total_input_tokens': total_input_tokens,
+        'total_output_tokens': total_output_tokens,
+        'total_tokens': total_tokens,
+        'aggregation_sources': aggregation_sources,
+        'aggregated_at': node_id
+    }
+    
+    # [Accumulation] 이전 상태의 토큰 값과 누적
+    result = accumulate_tokens_in_state(result, state)
+    
+    # 비용 계산 추가
+    estimated_cost = calculate_cost_usd({
+        'input_tokens': result['total_input_tokens'],
+        'output_tokens': result['total_output_tokens']
+    })
+    result['estimated_cost_usd'] = estimated_cost
+    
+    logger.info(f"Aggregator {node_id}: Aggregated {len(aggregation_sources)} sources, "
+                f"total tokens: {result['total_tokens']} "
+                f"({result['total_input_tokens']} input + {result['total_output_tokens']} output), "
+                f"cost: ${estimated_cost:.6f}")
+    
+    return result
+
+
 def operator_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Runs arbitrary python code (sandboxed)."""
     # 🛡️ [Guard] Input Validation
@@ -2021,7 +2146,57 @@ def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(worker, input_list))
     
-    return {output_key: results}
+    # [Token Aggregation] for_each iteration들의 토큰 사용량 합산
+    total_input_tokens = 0
+    total_output_tokens = 0
+    iteration_token_details = []
+    
+    for i, result in enumerate(results):
+        # 각 iteration 결과에서 토큰 사용량 추출 (usage 또는 token_usage 키 지원)
+        if isinstance(result, dict):
+            usage = extract_token_usage(result)
+            input_tokens = usage['input_tokens']
+            output_tokens = usage['output_tokens']
+            
+            total_input_tokens += input_tokens
+            total_output_tokens += output_tokens
+            
+            iteration_token_details.append({
+                'iteration': i,
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+                'total_tokens': input_tokens + output_tokens
+            })
+    
+    # 합산된 토큰 정보를 결과에 추가
+    result_updates = {output_key: results}
+    result_updates['total_input_tokens'] = total_input_tokens
+    result_updates['total_output_tokens'] = total_output_tokens
+    result_updates['total_tokens'] = total_input_tokens + total_output_tokens
+    result_updates['iteration_token_details'] = iteration_token_details
+    
+    # [Accumulation] 이전 상태의 토큰 값과 누적
+    temp_result = {
+        'total_input_tokens': result_updates['total_input_tokens'],
+        'total_output_tokens': result_updates['total_output_tokens'],
+        'total_tokens': result_updates['total_tokens']
+    }
+    accumulated_result = accumulate_tokens_in_state(temp_result, state)
+    result_updates.update(accumulated_result)
+    
+    # 비용 계산 추가
+    estimated_cost = calculate_cost_usd({
+        'input_tokens': result_updates['total_input_tokens'],
+        'output_tokens': result_updates['total_output_tokens']
+    })
+    result_updates['estimated_cost_usd'] = estimated_cost
+    
+    logger.info(f"ForEach {config.get('id', 'for_each')}: Processed {len(results)} iterations, "
+                f"total tokens: {result_updates['total_tokens']} "
+                f"({total_input_tokens} input + {total_output_tokens} output), "
+                f"cost: ${estimated_cost:.6f}")
+    
+    return result_updates
 
 
 def nested_for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
@@ -2174,7 +2349,32 @@ def nested_for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dic
     total_inner_processed = sum(r.get("inner_count", 0) for r in all_results)
     logger.info(f"✅ Nested ForEach complete: {len(all_results)} outer × {total_inner_processed} inner tasks")
     
-    return {
+    # [Token Aggregation] 중첩 for_each의 토큰 사용량 합산 (재귀적 처리)
+    usage = aggregate_tokens_from_nested(all_results)
+    total_input_tokens = usage['input_tokens']
+    total_output_tokens = usage['output_tokens']
+    total_tokens = usage['total_tokens']
+    
+    # 상세 토큰 정보 수집 (디버깅용, 합산과 별도)
+    nested_token_details = []
+    for outer_result in all_results:
+        if isinstance(outer_result, dict):
+            outer_id = outer_result.get('outer_id', 'unknown')
+            inner_results = outer_result.get('inner_results', [])
+            
+            for inner_result in inner_results:
+                if isinstance(inner_result, dict):
+                    inner_usage = extract_token_usage(inner_result)
+                    
+                    nested_token_details.append({
+                        'outer_id': outer_id,
+                        'input_tokens': inner_usage['input_tokens'],
+                        'output_tokens': inner_usage['output_tokens'],
+                        'total_tokens': inner_usage['total_tokens']
+                    })
+    
+    # 합산된 토큰 정보를 결과에 추가
+    result_updates = {
         output_key: all_results,
         f"{output_key}_summary": {
             "outer_count": len(all_results),
@@ -2182,6 +2382,33 @@ def nested_for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dic
             "node_id": node_id
         }
     }
+    result_updates['total_input_tokens'] = total_input_tokens
+    result_updates['total_output_tokens'] = total_output_tokens
+    result_updates['total_tokens'] = total_tokens
+    result_updates['nested_token_details'] = nested_token_details
+    
+    # [Accumulation] 이전 상태의 토큰 값과 누적
+    temp_result = {
+        'total_input_tokens': result_updates['total_input_tokens'],
+        'total_output_tokens': result_updates['total_output_tokens'],
+        'total_tokens': result_updates['total_tokens']
+    }
+    accumulated_result = accumulate_tokens_in_state(temp_result, state)
+    result_updates.update(accumulated_result)
+    
+    # 비용 계산 추가
+    estimated_cost = calculate_cost_usd({
+        'input_tokens': result_updates['total_input_tokens'],
+        'output_tokens': result_updates['total_output_tokens']
+    })
+    result_updates['estimated_cost_usd'] = estimated_cost
+    
+    logger.info(f"Nested ForEach {node_id}: Processed {len(nested_token_details)} nested iterations, "
+                f"total tokens: {result_updates['total_tokens']} "
+                f"({total_input_tokens} input + {total_output_tokens} output), "
+                f"cost: ${estimated_cost:.6f}")
+    
+    return result_updates
 
 
 def route_draft_quality(state: Dict[str, Any]) -> str:
@@ -2253,6 +2480,54 @@ def parallel_group_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict
     # [Fix] Add explicit branch execution markers for test verification
     for branch_id in branch_results.keys():
         combined_updates[f"{branch_id}_executed"] = True
+    
+    # [Token Aggregation] 병렬 브랜치들의 토큰 사용량 합산
+    total_input_tokens = 0
+    total_output_tokens = 0
+    branch_token_details = []
+    
+    for branch_id, updates in branch_results.items():
+        # 각 브랜치의 토큰 사용량 추출 (usage 또는 token_usage 키 지원)
+        usage = extract_token_usage(updates)
+        input_tokens = usage['input_tokens']
+        output_tokens = usage['output_tokens']
+        
+        total_input_tokens += input_tokens
+        total_output_tokens += output_tokens
+        
+        branch_token_details.append({
+            'branch_id': branch_id,
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'total_tokens': input_tokens + output_tokens
+        })
+    
+    # 합산된 토큰 정보를 state에 기록
+    combined_updates['total_input_tokens'] = total_input_tokens
+    combined_updates['total_output_tokens'] = total_output_tokens
+    combined_updates['total_tokens'] = total_input_tokens + total_output_tokens
+    combined_updates['branch_token_details'] = branch_token_details
+    
+    # [Accumulation] 이전 상태의 토큰 값과 누적
+    temp_result = {
+        'total_input_tokens': combined_updates['total_input_tokens'],
+        'total_output_tokens': combined_updates['total_output_tokens'],
+        'total_tokens': combined_updates['total_tokens']
+    }
+    accumulated_result = accumulate_tokens_in_state(temp_result, state)
+    combined_updates.update(accumulated_result)
+    
+    # 비용 계산 추가
+    estimated_cost = calculate_cost_usd({
+        'input_tokens': combined_updates['total_input_tokens'],
+        'output_tokens': combined_updates['total_output_tokens']
+    })
+    combined_updates['estimated_cost_usd'] = estimated_cost
+    
+    logger.info(f"Parallel group {node_id}: Aggregated {len(branch_results)} branches, "
+                f"total tokens: {combined_updates['total_tokens']} "
+                f"({total_input_tokens} input + {total_output_tokens} output), "
+                f"cost: ${estimated_cost:.6f}")
                 
     return combined_updates
 
@@ -2567,7 +2842,8 @@ register_node("db_query", db_query_runner)
 register_node("for_each", for_each_runner)
 register_node("route_draft_quality", route_draft_quality)
 register_node("parallel_group", parallel_group_runner)
-register_node("aggregator", operator_runner) # Aggregator uses same logic as operator
+register_node("aggregator", aggregator_runner)
+register_node("aiModel", llm_chat_runner)  # aiModel은 llm_chat과 동일하게 처리
 register_node("skill_executor", skill_executor_runner)  # Skills integration
 register_node("nested_for_each", nested_for_each_runner)  # V3 Hyper-Stress: Nested Map-in-Map support
 register_node("vision", vision_runner)  # Gemini Vision multimodal analysis

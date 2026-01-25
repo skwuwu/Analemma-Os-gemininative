@@ -95,6 +95,24 @@
         "language": "python",
         "code": "import json\n\nprint('[COST_OPTIMIZED VERIFICATION] Checking batch split results')\n\n# ① scheduling_metadata 추출\nmetadata = state.get('scheduling_metadata', {})\nbatch_count = metadata.get('batch_count', 0)\nstrategy = metadata.get('strategy', '')\ntotal_tokens = metadata.get('total_tokens', 0)\nbatch_splits = metadata.get('batch_splits', [])\n\nprint(f'Metadata: {json.dumps(metadata, indent=2)}')\n\n# ② 예상 검증: 토큰 제한(10000) vs 실제 부하(25,000)\n# 25,000 / 10,000 = 2.5 -> 최소 3개 배치 필요\nexpected_min_batches = 3  # 여유 있게 3개 설정\n\nchecks = [\n    strategy == 'COST_OPTIMIZED',\n    batch_count >= expected_min_batches,\n    total_tokens > 20000,  # 최소 20k 토큰 확인\n    isinstance(batch_splits, list),\n    len(batch_splits) >= 1\n]\n\nall_passed = all(checks)\n\nprint(f'Strategy: {strategy} (expected: COST_OPTIMIZED)')\nprint(f'Batch Count: {batch_count} (expected: >={expected_min_batches})')\nprint(f'Total Tokens: {total_tokens} (expected: >20000)')\nprint(f'Batch Splits: {len(batch_splits)} batches')\nprint(f'All checks passed: {all_passed}')\n\nstate['cost_test_complete'] = True\nstate['branch_count'] = 3\nstate['batch_verification'] = {\n    'strategy': strategy,\n    'batch_count': batch_count,\n    'total_tokens': total_tokens,\n    'expected_min_batches': expected_min_batches,\n    'batch_split_occurred': batch_count >= expected_min_batches,\n    'checks': checks,\n    'all_passed': all_passed\n}\n\nif all_passed:\n    state['TEST_RESULT'] = f'✅ COST_OPTIMIZED SUCCESS: Processed {total_tokens} tokens across {batch_count} batches (limit: 10000)'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print('✅ Cost optimization validation passed')\nelse:\n    failed_checks = []\n    if strategy != 'COST_OPTIMIZED': failed_checks.append(f'strategy={strategy}')\n    if batch_count < expected_min_batches: failed_checks.append(f'batch_count={batch_count}<{expected_min_batches}')\n    if total_tokens <= 20000: failed_checks.append(f'total_tokens={total_tokens}<=20000')\n    \n    state['TEST_RESULT'] = f'❌ COST_OPTIMIZED FAILED: {failed_checks}'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(f'❌ Cost optimization validation failed: {failed_checks}')"
       }
+    },
+    {
+      "id": "aggregator",
+      "type": "operator",
+      "label": "토큰 사용량 집계",
+      "config": {
+        "language": "python",
+        "code": "# 병렬 브랜치들의 토큰 사용량 합산\nimport json\n\n# 각 브랜치의 토큰 사용량 수집\ntotal_input_tokens = 0\ntotal_output_tokens = 0\ntotal_tokens = 0\nbranch_token_details = []\n\n# 병렬 그룹 결과에서 토큰 정보 추출\nparallel_result = state.get('cost_aware_parallel', {})\nif isinstance(parallel_result, dict) and 'branches' in parallel_result:\n    for branch_id, branch_data in parallel_result['branches'].items():\n        if isinstance(branch_data, dict):\n            # 브랜치별 토큰 사용량 추출\n            branch_input = branch_data.get('token_usage', {}).get('input_tokens', 0)\n            branch_output = branch_data.get('token_usage', {}).get('output_tokens', 0)\n            branch_total = branch_input + branch_output\n            \n            total_input_tokens += branch_input\n            total_output_tokens += branch_output\n            total_tokens += branch_total\n            \n            branch_token_details.append({\n                'branch_id': branch_id,\n                'input_tokens': branch_input,\n                'output_tokens': branch_output,\n                'total_tokens': branch_total\n            })\n\n# 스케줄링 메타데이터에서 배치 정보 추출\nscheduling_metadata = state.get('scheduling_metadata', {})\nbatch_count = scheduling_metadata.get('batch_count', 1)\n\n# 총 토큰량을 state에 기록\nstate['total_tokens'] = total_tokens\nstate['total_input_tokens'] = total_input_tokens\nstate['total_output_tokens'] = total_output_tokens\nstate['branch_token_details'] = branch_token_details\nstate['batch_count_actual'] = batch_count\n\nprint(f'Aggregated tokens: {total_tokens} total ({total_input_tokens} input + {total_output_tokens} output) across {len(branch_token_details)} branches')\nprint(f'Batch count: {batch_count}')\n\nstate['aggregation_complete'] = True"
+      }
+    },
+    {
+      "id": "verify",
+      "type": "operator",
+      "label": "비용 최적화 검증",
+      "config": {
+        "language": "python",
+        "code": "import json\n\nprint('[COST_OPTIMIZED VERIFICATION] Checking batch split results')\n\n# ① scheduling_metadata 추출\nmetadata = state.get('scheduling_metadata', {})\nbatch_count = metadata.get('batch_count', 0)\nstrategy = metadata.get('strategy', '')\ntotal_tokens = state.get('total_tokens', 0)  # Aggregator에서 계산된 값 사용\nbatch_splits = metadata.get('batch_splits', [])\n\nprint(f'Metadata: {json.dumps(metadata, indent=2)}')\nprint(f'Aggregated total tokens: {total_tokens}')\n\n# ② 예상 검증: 토큰 제한(10000) vs 실제 부하(25,000)\n# 25,000 / 10,000 = 2.5 -> 최소 3개 배치 필요\nexpected_min_batches = 3  # 여유 있게 3개 설정\n\nchecks = [\n    strategy == 'COST_OPTIMIZED',\n    batch_count >= expected_min_batches,\n    total_tokens > 20000,  # 최소 20k 토큰 확인\n    isinstance(batch_splits, list),\n    len(batch_splits) >= 1\n]\n\nall_passed = all(checks)\n\nprint(f'Strategy: {strategy} (expected: COST_OPTIMIZED)')\nprint(f'Batch Count: {batch_count} (expected: >={expected_min_batches})')\nprint(f'Total Tokens: {total_tokens} (expected: >20000)')\nprint(f'Batch Splits: {len(batch_splits)} batches')\nprint(f'All checks passed: {all_passed}')\n\nstate['cost_test_complete'] = True\nstate['branch_count'] = 3\nstate['batch_verification'] = {\n    'strategy': strategy,\n    'batch_count': batch_count,\n    'total_tokens': total_tokens,\n    'expected_min_batches': expected_min_batches,\n    'batch_split_occurred': batch_count >= expected_min_batches,\n    'checks': checks,\n    'all_passed': all_passed\n}\n\nif all_passed:\n    state['TEST_RESULT'] = f'✅ COST_OPTIMIZED SUCCESS: Processed {total_tokens} tokens across {batch_count} batches (limit: 10000)'\n    state['VALIDATION_STATUS'] = 'PASSED'\n    print('✅ Cost optimization validation passed')\nelse:\n    failed_checks = []\n    if strategy != 'COST_OPTIMIZED': failed_checks.append(f'strategy={strategy}')\n    if batch_count < expected_min_batches: failed_checks.append(f'batch_count={batch_count}<{expected_min_batches}')\n    if total_tokens <= 20000: failed_checks.append(f'total_tokens={total_tokens}<=20000')\n    \n    state['TEST_RESULT'] = f'❌ COST_OPTIMIZED FAILED: {failed_checks}'\n    state['VALIDATION_STATUS'] = 'FAILED'\n    print(f'❌ Cost optimization validation failed: {failed_checks}')"
+      }
     }
   ],
   "edges": [
@@ -104,6 +122,10 @@
     },
     {
       "source": "cost_aware_parallel",
+      "target": "aggregator"
+    },
+    {
+      "source": "aggregator",
       "target": "verify"
     }
   ],
