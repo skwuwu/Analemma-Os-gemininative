@@ -44,5 +44,6 @@
     {"source": "setup_attack_vectors", "target": "attack_llm_node"},
     {"source": "attack_llm_node", "target": "dangerous_tool_access"},
     {"source": "dangerous_tool_access", "target": "verify_protection"}
-  ]
+  ],
+  "start_node": "setup_attack_vectors"
 }

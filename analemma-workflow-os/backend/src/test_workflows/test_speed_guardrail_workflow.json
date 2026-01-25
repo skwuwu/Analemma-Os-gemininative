@@ -156,5 +156,6 @@
   "edges": [
     {"source": "massive_setup", "target": "speed_parallel_group"},
     {"source": "speed_parallel_group", "target": "guardrail_verify"}
-  ]
+  ],
+  "start_node": "massive_setup"
 }

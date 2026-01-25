@@ -205,5 +205,6 @@
     {"source": "parallel_heavy_branches", "target": "aggregator"},
     {"source": "aggregator", "target": "dynamic_split_test"},
     {"source": "dynamic_split_test", "target": "final_summary"}
-  ]
+  ],
+  "start_node": "input_generator"
 }

@@ -72,5 +72,6 @@
     {"source": "quality_gate_evaluation", "target": "generate_llm_response"},
     {"source": "generate_llm_response", "target": "verify_generated_response"},
     {"source": "verify_generated_response", "target": "final_test_report"}
-  ]
+  ],
+  "start_node": "setup_test_samples"
 }

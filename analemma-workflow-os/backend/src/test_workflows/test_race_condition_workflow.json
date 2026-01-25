@@ -116,5 +116,6 @@
     "test_features": ["race_condition_detection", "parallel_write_isolation", "merge_policy"],
     "expected_behavior": "Kernel should either serialize writes or use namespace isolation to prevent data loss",
     "failure_mode": "If race condition occurs, shared_counter < 5"
-  }
+  },
+  "start_node": "setup_shared_state"
 }

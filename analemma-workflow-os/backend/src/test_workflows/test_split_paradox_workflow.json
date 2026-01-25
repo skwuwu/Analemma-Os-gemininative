@@ -89,5 +89,6 @@
     ],
     "expected_behavior": "Kernel should stop splitting at MAX_SPLIT_DEPTH, raise SIGKILL with Resource Exhaustion Error if data still too large, and ensure partition integrity (no fragmentation, no data loss)",
     "failure_mode": "Infinite Lambda invocations, account concurrency limit exhaustion, data fragmentation, or silent failure without error signal"
-  }
+  },
+  "start_node": "setup_split_test"
 }

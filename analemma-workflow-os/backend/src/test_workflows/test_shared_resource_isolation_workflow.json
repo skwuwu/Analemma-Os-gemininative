@@ -150,5 +150,6 @@
   "edges": [
     {"source": "init_shared_resource", "target": "shared_resource_parallel"},
     {"source": "shared_resource_parallel", "target": "verify_isolation"}
-  ]
+  ],
+  "start_node": "init_shared_resource"
 }

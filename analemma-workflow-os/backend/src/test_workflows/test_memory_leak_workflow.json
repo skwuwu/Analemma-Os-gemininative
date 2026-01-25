@@ -85,5 +85,6 @@
     "test_features": ["state_size_monitoring", "auto_summarization", "gc_cleanup", "orphan_detection"],
     "expected_behavior": "StateManager should detect bloat and trigger offloading/cleanup",
     "failure_mode": "State grows unbounded or temp S3 files remain after execution"
-  }
+  },
+  "start_node": "setup_memory_test"
 }

@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "nodes": [
     {
+      "id": "cost_simulation_setup",
       "scenario_id": "retry_guard_test",
       "name": "Retry Guard - 재생성 쿼터 제한 테스트",
       "description": "MAX_REGENERATION_ATTEMPTS(3회) 초과 시 FORCE_BEST_EFFORT 반환 확인",
