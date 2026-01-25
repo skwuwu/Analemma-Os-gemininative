@@ -209,3 +209,40 @@ class QuotaExceededError(BaseAnalemmaError):
             msg = f"{msg} - {message}"
         super().__init__(msg, status_code=402)
         self.quota_type = quota_type
+
+
+# ============================================================
+# LLM 서비스 관련 예외
+# ============================================================
+
+class LLMServiceError(BaseAnalemmaError):
+    """LLM 서비스 호출 중 오류가 발생했습니다"""
+    
+    def __init__(
+        self, 
+        message: str = None, 
+        original_error: Exception = None,
+        provider: str = None,
+        node_id: str = None,
+        attempts: int = None,
+        error_category: str = None
+    ):
+        msg = message or "LLM service error occurred"
+        super().__init__(msg, status_code=502)  # Bad Gateway
+        
+        self.original_error = original_error
+        self.provider = provider
+        self.node_id = node_id
+        self.attempts = attempts
+        self.error_category = error_category
+    
+    def to_dict(self):
+        base_dict = super().to_dict()
+        base_dict.update({
+            "provider": self.provider,
+            "nodeId": self.node_id,
+            "attempts": self.attempts,
+            "errorCategory": self.error_category,
+            "originalError": str(self.original_error) if self.original_error else None
+        })
+        return base_dict

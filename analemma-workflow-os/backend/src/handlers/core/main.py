@@ -283,24 +283,24 @@ RESERVED_STATE_KEYS = {
     "workflowId", "workflow_id", "ownerId", "owner_id", 
     "execution_id", "user_id", "idempotency_key",
     
-    # Flow Control (가장 위험한 조작 포인트 - 루프/세그먼트 제어)
+    # Flow Control (Most dangerous manipulation points - Loop/Segment control)
     "loop_counter", "max_loop_iterations", "segment_id", 
     "segment_to_run", "total_segments", "segment_type",
     
-    # State & Infrastructure (S3 오프로딩 정합성 보호)
+    # State & Infrastructure (S3 offloading integrity protection)
     "current_state", "final_state", "state_s3_path", "final_state_s3_path",
     "partition_map", "partition_map_s3_path", "__s3_offloaded", "__s3_path",
     
-    # Telemetry & Logs (추적성 보호)
+    # Telemetry & Logs (Traceability protection)
     "step_history", "execution_logs", "__new_history_logs", 
     "skill_execution_log", "__kernel_actions",
     
-    # Scheduling & Guardrails (스케줄러/가드레일 무력화 방지)
+    # Scheduling & Guardrails (Prevent scheduler/guardrail bypass)
     "scheduling_metadata", "__scheduling_metadata", 
     "guardrail_verified", "__guardrail_verified",
     "batch_count_actual", "state_size_threshold",
     
-    # Sensitive Credentials (보안 키 노출 방지)
+    # Sensitive Credentials (Prevent credential exposure)
     "user_api_keys", "aws_credentials",
     
     # Response Envelope (Step Functions JSONPath 정합성 유지)
@@ -310,39 +310,39 @@ RESERVED_STATE_KEYS = {
 def _validate_output_keys(output: Dict[str, Any], node_id: str) -> Dict[str, Any]:
     """
     🛡️ [Guard] Validate and filter output keys to prevent state pollution.
-    
-    이 함수는 사용자 정의 코드(Operator)가 커널의 영역을 침범하지 못하게 하는
-    '사용자 모드 vs 커널 모드'의 격리 계층을 완성합니다.
-    
-    특히 MOCK_MODE를 끄고 실제 LLM을 올렸을 때, 모델이 임의의 JSON 키를 생성하여
-    시스템 메타데이터를 덮어쓰는 사고를 방지하는 최후의 보루입니다.
-    
-    차단 대상:
-    - Flow Control 변수 (loop_counter, segment_id 등) → 무한 루프/잘못된 점프 방지
-    - State Infrastructure (state_s3_path, __s3_offloaded 등) → S3 정합성 보호
-    - Telemetry (step_history, execution_logs 등) → 추적성 보호
-    - Response Envelope (status, error_info) → Step Functions JSONPath 정합성 유지
-    
+
+    This function completes the isolation layer of 'user mode vs kernel mode'
+    to prevent user-defined code (Operators) from invading the kernel's domain.
+
+    Especially when MOCK_MODE is turned off and real LLM is deployed, this prevents
+    accidents where the model generates arbitrary JSON keys and overwrites system metadata.
+
+    Blocking targets:
+    - Flow Control variables (loop_counter, segment_id, etc.) → Prevent infinite loops/wrong jumps
+    - State Infrastructure (state_s3_path, __s3_offloaded, etc.) → Protect S3 integrity
+    - Telemetry (step_history, execution_logs, etc.) → Protect traceability
+    - Response Envelope (status, error_info) → Maintain Step Functions JSONPath integrity
+
     Args:
-        output: 노드가 반환한 출력 딕셔너리
-        node_id: 노드 식별자 (로깅용)
-        
+        output: Dictionary returned by the node
+        node_id: Node identifier (for logging)
+
     Returns:
-        시스템 예약 키가 제거된 안전한 딕셔너리
+        Safe dictionary with system reserved keys removed
     """
     if not isinstance(output, dict):
         return output
         
-    # 🛡️ [Guard] 커널 영역 침범 검사
+    # 🛡️ [Guard] Kernel domain intrusion check
     forbidden_attempts = [k for k in output.keys() if k in RESERVED_STATE_KEYS]
     
     if forbidden_attempts:
         logger.warning(
             f"🚨 [Pollution Blocked] Node '{node_id}' tried to overwrite system keys: {forbidden_attempts}. "
-            f"이 키들은 커널 영역으로 사용자 코드의 접근이 금지됩니다."
+            f"These keys are in the kernel domain and access by user code is prohibited."
         )
         
-        # 데이터 다이어트 강제: 시스템 키를 제외한 안전한 데이터만 필터링
+        # Force data diet: Filter only safe data excluding system keys
         safe_output = {k: v for k, v in output.items() if k not in RESERVED_STATE_KEYS}
         
         # [Telemetry] 위반 시도 기록 (선택적)
@@ -483,6 +483,81 @@ def mask_pii(text: Any) -> Any:
     for pattern, repl in PII_REGEX_PATTERNS:
         masked = re.sub(pattern, repl, masked)
     return masked
+
+
+def humanize_llm_error(error: Exception, provider: str, node_id: str) -> str:
+    """
+    🛡️ [User-Friendly Error Messages] Convert technical errors to user-friendly messages
+
+    Convert LLM API errors to messages that general users can understand.
+    Sensitive information is masked for security.
+
+    Args:
+        error: Original exception object
+        provider: "gemini" or "bedrock"
+        node_id: Node identifier
+
+    Returns:
+        User-friendly error message
+    """
+    error_msg = str(error).lower()
+    error_type = type(error).__name__
+
+    # Rate Limit 에러
+    if any(keyword in error_msg for keyword in ["429", "quota", "rate limit", "resource exhausted", "throttling"]):
+        return (
+            f"🚦 AI service is currently busy. Please try again in a moment. "
+            f"(Rate limit exceeded on {provider})"
+        )
+
+    # Authentication/Authorization 에러
+    elif any(keyword in error_msg for keyword in ["403", "forbidden", "unauthorized", "access denied", "permission"]):
+        return (
+            f"🔐 You don't have access to the AI service. Please contact your administrator. "
+            f"(Authentication error on {provider})"
+        )
+
+    # Timeout 에러
+    elif any(keyword in error_msg for keyword in ["timeout", "deadline", "read timeout"]):
+        return (
+            f"⏱️ AI service response is delayed. Please try again. "
+            f"(Timeout on {provider})"
+        )
+
+    # Content Safety 에러
+    elif any(keyword in error_msg for keyword in ["blocked", "safety", "content", "inappropriate"]):
+        return (
+            f"🚫 Your request violates AI safety policies. Please modify your content. "
+            f"(Content safety filter on {provider})"
+        )
+
+    # Model Not Found 에러
+    elif any(keyword in error_msg for keyword in ["not found", "unavailable", "model", "resource not found"]):
+        return (
+            f"🤖 The requested AI model is not available. Please select a different model. "
+            f"(Model unavailable on {provider})"
+        )
+
+    # Network/Connection 에러
+    elif any(keyword in error_msg for keyword in ["connection", "network", "dns", "unreachable"]):
+        return (
+            f"🌐 There is a network connection issue. Please check your internet connection. "
+            f"(Network error on {provider})"
+        )
+
+    # Validation 에러
+    elif any(keyword in error_msg for keyword in ["validation", "invalid", "malformed"]):
+        return (
+            f"📝 The input data format is incorrect. Please check your content. "
+            f"(Validation error on {provider})"
+        )
+
+    # 기타 에러
+    else:
+        return (
+            f"⚠️ A temporary error occurred in the AI service. Please try again in a moment. "
+            f"(Unexpected error on {provider})"
+        )
 
 
 def _get_nested_value(state: Dict[str, Any], path: str, default: Any = "") -> Any:
@@ -1168,20 +1243,53 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                     meta["multimodal"] = len(multimodal_parts) > 0
                     
                 except Exception as gemini_error:
-                    # Check if this is a retryable error (rate limit, timeout, etc.)
+                    # 🛡️ [Enhanced Fallback Logging] Gemini 실패 시 상세한 폴백 로깅
+                    error_type = type(gemini_error).__name__
                     error_msg = str(gemini_error).lower()
+                    
+                    # 에러 카테고리 분류
+                    if any(keyword in error_msg for keyword in ["429", "quota", "rate limit", "resource exhausted"]):
+                        error_category = "RATE_LIMIT"
+                        log_level = logger.warning
+                        fallback_reason = "Rate limit exceeded"
+                    elif any(keyword in error_msg for keyword in ["403", "forbidden", "permission", "unauthorized"]):
+                        error_category = "AUTHENTICATION"
+                        log_level = logger.error
+                        fallback_reason = "Authentication/permission error"
+                    elif any(keyword in error_msg for keyword in ["timeout", "deadline", "unavailable"]):
+                        error_category = "TIMEOUT"
+                        log_level = logger.warning
+                        fallback_reason = "Timeout/network error"
+                    elif any(keyword in error_msg for keyword in ["blocked", "safety", "content"]):
+                        error_category = "CONTENT_SAFETY"
+                        log_level = logger.warning
+                        fallback_reason = "Content safety filter"
+                    else:
+                        error_category = "UNKNOWN"
+                        log_level = logger.warning
+                        fallback_reason = "Unknown error"
+                    
+                    log_level(
+                        f"🚨 [Gemini Fallback Triggered] Node: {node_id}, "
+                        f"Category: {error_category}, Reason: {fallback_reason}, "
+                        f"Error: {gemini_error}, Falling back to Bedrock"
+                    )
+                    
+                    # 재시도 가능한 에러인지 확인
                     is_retryable = any(keyword in error_msg for keyword in [
                         "429", "quota", "rate limit", "resource exhausted",
                         "timeout", "deadline exceeded", "unavailable"
                     ])
                     
                     if is_retryable:
-                        # Retryable error - propagate to retry loop
-                        logger.warning(f"Retryable Gemini error: {gemini_error}")
+                        # 재시도 가능한 에러 - 재시도 루프에 전달
+                        logger.info(f"Retryable Gemini error, propagating to retry loop: {gemini_error}")
                         raise gemini_error
                     else:
-                        # Non-retryable error - fallback to Bedrock
-                        logger.warning(f"Gemini invocation failed (non-retryable), falling back to Bedrock: {gemini_error}")
+                        # 비재시도 에러 - Bedrock 폴백
+                        logger.warning(
+                            f"Non-retryable Gemini error, falling back to Bedrock: {gemini_error}"
+                        )
                         provider = "bedrock"
             
             if provider == "bedrock":
@@ -1283,8 +1391,27 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                 attempt += 1
                 continue
             else:
-                logger.exception(f"LLM execution failed after {max_retries+1} attempts for node {node_id}")
-                raise
+                # 🛡️ [Enhanced Final Error Handling] 모든 재시도 실패 시 사용자 친화적 에러
+                human_readable_error = humanize_llm_error(last_error, meta.get("provider", "unknown"), node_id)
+                
+                logger.error(
+                    f"🚨 [LLM Execution Failed] Node: {node_id}, "
+                    f"Attempts: {max_retries+1}, Final error: {last_error}, "
+                    f"Human readable: {human_readable_error}"
+                )
+                
+                # 사용자 친화적인 메시지를 포함한 새로운 예외 발생
+                from src.common.exceptions import LLMServiceError
+                raise LLMServiceError(
+                    message=human_readable_error,
+                    original_error=last_error,
+                    provider=meta.get("provider", "unknown"),
+                    node_id=node_id,
+                    attempts=max_retries+1
+                ) from last_error
+
+    # Should not reach here
+    raise last_error if last_error else RuntimeError("LLM execution failed unexpectedly")
 
     # Should not reach here
     raise last_error if last_error else RuntimeError("LLM execution failed unexpectedly")

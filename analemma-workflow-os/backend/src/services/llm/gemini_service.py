@@ -695,8 +695,47 @@ class GeminiService:
                 "model": self.config.model.value
             }
             return parsed
+            
         except Exception as e:
-            logger.exception(f"Gemini invocation failed: {e}")
+            # 🛡️ [Enhanced Error Logging] 구조화된 에러 로깅
+            error_type = type(e).__name__
+            error_msg = str(e).lower()
+            
+            # 에러 분류 및 메트릭 수집
+            if "429" in error_msg or "quota" in error_msg or "resource exhausted" in error_msg:
+                error_category = "RATE_LIMIT"
+                logger.warning(
+                    f"🚨 [Gemini Rate Limit] Model: {self.config.model.value}, "
+                    f"Error: {e}, Input tokens: {len(full_input)//4}"
+                )
+            elif "403" in error_msg or "forbidden" in error_msg or "permission" in error_msg:
+                error_category = "AUTHENTICATION"
+                logger.error(
+                    f"🚨 [Gemini Auth Error] Model: {self.config.model.value}, "
+                    f"Error: {e}, Check GCP credentials"
+                )
+            elif "timeout" in error_msg or "deadline" in error_msg:
+                error_category = "TIMEOUT"
+                logger.warning(
+                    f"🚨 [Gemini Timeout] Model: {self.config.model.value}, "
+                    f"Error: {e}, Latency: {(time.time() - start_time)*1000:.0f}ms"
+                )
+            elif "blocked" in error_msg or "safety" in error_msg:
+                error_category = "CONTENT_SAFETY"
+                logger.warning(
+                    f"🚨 [Gemini Safety Block] Model: {self.config.model.value}, "
+                    f"Content blocked by safety filter: {e}"
+                )
+            else:
+                error_category = "UNKNOWN"
+                logger.error(
+                    f"🚨 [Gemini API Error] Model: {self.config.model.value}, "
+                    f"Type: {error_type}, Error: {e}"
+                )
+            
+            # [Future] CloudWatch 메트릭 전송
+            # await self._send_error_metric(error_category, self.config.model.value)
+            
             raise
     
     def invoke_model_stream(
@@ -944,39 +983,97 @@ class GeminiService:
                     
         except Exception as e:
             error_message = str(e)
-            # Detect Gemini API specific errors
+            error_type = type(e).__name__
+            
+            # 🛡️ [Enhanced Streaming Error Handling] 구조화된 에러 분류
             if "blocked" in error_message.lower() or "safety" in error_message.lower():
+                logger.warning(
+                    f"🚨 [Gemini Streaming Safety Block] Model: {self.config.model.value}, "
+                    f"Content blocked by safety filter"
+                )
                 safety_error = {
                     "type": "audit",
                     "data": {
                         "level": "error",
                         "message": "Request has been blocked by content safety policy.",
-                        "error_code": "SAFETY_BLOCKED"
+                        "error_code": "SAFETY_BLOCKED",
+                        "error_type": error_type
                     }
                 }
                 yield json.dumps(safety_error) + "\n"
-            else:
-                # Retry logic on Rate Limit error
-                is_rate_limit = any(
-                    pattern in error_message.lower()
-                    for pattern in ["429", "rate limit", "quota", "resource_exhausted"]
-                )
                 
-                if is_rate_limit and retry_count < max_retries:
+            elif any(pattern in error_message.lower() for pattern in ["429", "rate limit", "quota", "resource_exhausted"]):
+                # Rate limit handling with retry
+                if retry_count < max_retries:
                     retry_count += 1
                     delay = min(RETRY_BASE_DELAY * (2 ** retry_count), RETRY_MAX_DELAY)
                     logger.warning(
-                        f"Rate limit hit, retry {retry_count}/{max_retries} in {delay:.1f}s"
+                        f"🚨 [Gemini Streaming Rate Limit] Model: {self.config.model.value}, "
+                        f"Retry {retry_count}/{max_retries} in {delay:.1f}s"
                     )
-                    time.sleep(delay)
-                    # Return error instead of recursive call (since it's a Generator)
                     yield json.dumps({
                         "type": "retry",
-                        "data": {"attempt": retry_count, "delay": delay}
+                        "data": {
+                            "attempt": retry_count, 
+                            "delay": delay,
+                            "error_code": "RATE_LIMIT"
+                        }
                     }) + "\n"
                 else:
-                    logger.exception(f"Gemini streaming failed: {e}")
-                    yield f'{{"type": "error", "data": "{error_message}"}}\n'
+                    logger.error(
+                        f"🚨 [Gemini Streaming Rate Limit Exhausted] Model: {self.config.model.value}, "
+                        f"All {max_retries} retries failed"
+                    )
+                    yield json.dumps({
+                        "type": "error",
+                        "data": {
+                            "message": "Rate limit exceeded. Please try again later.",
+                            "error_code": "RATE_LIMIT_EXHAUSTED",
+                            "error_type": error_type
+                        }
+                    }) + "\n"
+                    
+            elif "timeout" in error_message.lower() or "deadline" in error_message.lower():
+                logger.warning(
+                    f"🚨 [Gemini Streaming Timeout] Model: {self.config.model.value}, "
+                    f"Error: {error_message}"
+                )
+                yield json.dumps({
+                    "type": "error",
+                    "data": {
+                        "message": "Request timed out. Please try again.",
+                        "error_code": "TIMEOUT",
+                        "error_type": error_type
+                    }
+                }) + "\n"
+                
+            elif "403" in error_message.lower() or "forbidden" in error_message.lower():
+                logger.error(
+                    f"🚨 [Gemini Streaming Auth Error] Model: {self.config.model.value}, "
+                    f"Authentication failed: {error_message}"
+                )
+                yield json.dumps({
+                    "type": "error",
+                    "data": {
+                        "message": "Authentication failed. Please check credentials.",
+                        "error_code": "AUTHENTICATION_FAILED",
+                        "error_type": error_type
+                    }
+                }) + "\n"
+                
+            else:
+                logger.exception(
+                    f"🚨 [Gemini Streaming Unknown Error] Model: {self.config.model.value}, "
+                    f"Type: {error_type}, Error: {error_message}"
+                )
+                yield json.dumps({
+                    "type": "error",
+                    "data": {
+                        "message": f"Unexpected error occurred: {error_message}",
+                        "error_code": "UNKNOWN_ERROR",
+                        "error_type": error_type
+                    }
+                }) + "\n"
         
         finally:
             # Calculate and log final token usage

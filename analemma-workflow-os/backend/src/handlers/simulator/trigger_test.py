@@ -46,6 +46,7 @@ TEST_WORKFLOW_MAPPINGS = {
     'RING_PROTECTION_ATTACK_TEST': 'test_ring_protection_attack_workflow',
     'TIME_MACHINE_HYPER_STRESS': 'test_time_machine_hyper_stress_workflow',
     'SELF_HEALING_TEST': 'test_self_healing_workflow',
+    'COST_GUARDRAILS': 'test_cost_guardrails_workflow',
 }
 
 
@@ -220,7 +221,7 @@ SCENARIO_CONFIG = {
         'input_data': {'distiller_test_enabled': True, 'notify_on_complete': True}
     },
     'DLQ_RECOVERY': {'target_type': 'LOCAL'},  # [Fix] Local Runner로 변경 - 완전한 DLQ 흐름 테스트
-    'COST_GUARDRAIL': {'test_keyword': 'LOOP_LIMIT_DYNAMIC'},
+    'COST_GUARDRAIL': {'test_keyword': 'COST_GUARDRAILS'},
     'ATOMICITY': {'test_keyword': 'COMPLETE', 'input_data': {'atomicity_test': True}},
     'XRAY_TRACEABILITY': {'test_keyword': 'COMPLETE'},
     
@@ -317,7 +318,7 @@ SCENARIO_CONFIG = {
     'STANDARD_LARGE_PAYLOAD': {'test_keyword': 'E2E_S3_LARGE_DATA'},
     'STANDARD_MAP_AGGREGATOR': {'test_keyword': 'MAP_AGGREGATOR_TEST'},
     'STANDARD_LOOP_LIMIT': {'test_keyword': 'LOOP_LIMIT_DYNAMIC'},
-    'STANDARD_COST_GUARDRAIL': {'test_keyword': 'LOOP_LIMIT_DYNAMIC'},
+    'STANDARD_COST_GUARDRAIL': {'test_keyword': 'COST_GUARDRAILS'},
     'STANDARD_ATOMICITY': {'test_keyword': 'COMPLETE', 'input_data': {'atomicity_test': True}},
     'STANDARD_XRAY_TRACEABILITY': {'test_keyword': 'COMPLETE'},
     'STANDARD_IDEMPOTENCY': {

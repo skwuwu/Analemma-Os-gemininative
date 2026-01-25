@@ -1502,6 +1502,36 @@ class SegmentRunnerService:
             }
             logger.info(f"[Aggregator] [S3 Offload] Replaced final_state with metadata reference. Original: {response_final_state['__original_size_kb']:.1f}KB → Response: ~0.2KB")
         
+        
+        # [Guard] [Fix] Handle Map Error (Loop Limit Exceeded, etc.)
+        # If Map failed, we should PAUSE to allow human intervention or analysis
+        if map_error:
+            logger.warning(f"[Aggregator] Map Error detected. Forcing PAUSE status. Error: {map_error}")
+            return {
+                "status": "PAUSE",  # Force PAUSE for Map Errors
+                "final_state": response_final_state,
+                "final_state_s3_path": output_s3_path,
+                "current_state": response_final_state,
+                "state_s3_path": output_s3_path,
+                "next_segment_to_run": segment_to_run, # Retry same segment or let human decide
+                "new_history_logs": all_history_logs,
+                "error_info": {
+                    "error": "MapExecutionFailed",
+                    "cause": map_error,
+                    "branch_errors": branch_errors
+                },
+                "branches": [],
+                "segment_type": "aggregator",
+                "segment_id": segment_to_run,
+                "total_segments": total_segments,
+                "aggregator_metadata": {
+                    'total_branches': len(parallel_results),
+                    'successful_branches': successful_branches,
+                    'failed_branches': len(branch_errors),
+                    'map_error': True
+                }
+            }
+
         # [Guard] [v3.9] Core aggregator response
         # ASL passthrough 필드는 _finalize_response에서 자동 주입됨
         return {

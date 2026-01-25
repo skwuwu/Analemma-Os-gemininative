@@ -133,10 +133,64 @@ class BedrockService:
             return json.loads(resp['body'].read())
 
         except ReadTimeoutError:
-            logger.warning(f"Bedrock read timeout for {model_id}")
+            logger.warning(
+                f"🚨 [Bedrock Timeout] Model: {model_id}, "
+                f"Read timeout occurred, triggering async mode"
+            )
             raise AsyncLLMRequiredException("SDK read timeout")
         except Exception as e:
-            logger.exception(f"Bedrock invocation failed for {model_id}")
+            # 🛡️ [Enhanced Error Logging] 구조화된 Bedrock 에러 분류
+            error_type = type(e).__name__
+            error_msg = str(e).lower()
+            
+            if hasattr(e, 'response') and e.response:
+                # boto3 ClientError with response
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                error_message = e.response.get('Error', {}).get('Message', str(e))
+                
+                if error_code in ['ThrottlingException', 'TooManyRequestsException']:
+                    logger.warning(
+                        f"🚨 [Bedrock Rate Limit] Model: {model_id}, "
+                        f"Error: {error_message}"
+                    )
+                elif error_code in ['ValidationException', 'InvalidRequestException']:
+                    logger.warning(
+                        f"🚨 [Bedrock Validation Error] Model: {model_id}, "
+                        f"Error: {error_message}"
+                    )
+                elif error_code in ['AccessDeniedException', 'UnauthorizedOperation']:
+                    logger.error(
+                        f"🚨 [Bedrock Auth Error] Model: {model_id}, "
+                        f"Error: {error_message}, Check IAM permissions"
+                    )
+                elif error_code == 'ResourceNotFoundException':
+                    logger.error(
+                        f"🚨 [Bedrock Model Not Found] Model: {model_id}, "
+                        f"Error: {error_message}, Check model availability"
+                    )
+                else:
+                    logger.error(
+                        f"🚨 [Bedrock API Error] Model: {model_id}, "
+                        f"Code: {error_code}, Error: {error_message}"
+                    )
+            else:
+                # Generic exception
+                if "timeout" in error_msg or "deadline" in error_msg:
+                    logger.warning(
+                        f"🚨 [Bedrock Network Timeout] Model: {model_id}, "
+                        f"Error: {e}"
+                    )
+                elif "connection" in error_msg or "network" in error_msg:
+                    logger.warning(
+                        f"🚨 [Bedrock Network Error] Model: {model_id}, "
+                        f"Error: {e}"
+                    )
+                else:
+                    logger.exception(
+                        f"🚨 [Bedrock Unknown Error] Model: {model_id}, "
+                        f"Type: {error_type}, Error: {e}"
+                    )
+            
             raise e
 
     def extract_text(self, response: Any) -> str:

@@ -341,6 +341,11 @@ def _check_false_positive(scenario: str, output: Dict[str, Any]) -> Tuple[bool, 
             (usage.get('input_tokens', 0) + usage.get('output_tokens', 0))
         )
         
+        # [Fix] Fallback search in scheduling_metadata
+        if tokens == 0:
+            sched_meta = output.get('scheduling_metadata') or output.get('__scheduling_metadata') or {}
+            tokens = sched_meta.get('total_tokens_calculated') or sched_meta.get('total_tokens', 0)
+        
         if is_mock:
             return True, "Mock cost optimization verified"
             

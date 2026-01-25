@@ -981,6 +981,42 @@
         "new_history_logs.$": "$.Payload.new_history_logs"
       },
       "ResultPath": "$.execution_result",
+      "Next": "EnsureExecutionResult"
+    },
+    "EnsureExecutionResult": {
+      "Type": "Pass",
+      "Comment": "🛡️ [Infrastructure Guard] Ensure execution_result structure exists to prevent 'Invalid Path' errors in subsequent choices",
+      "Parameters": {
+        "status": "FAILED",
+        "final_state.$": "$.state_data.current_state",
+        "next_segment_to_run": null,
+        "new_history_logs": [],
+        "error_info": {
+          "error": "ExecutionResultMissing",
+          "message": "Aggregator failed to return a valid execution_result"
+        }
+      },
+      "ResultPath": "$.execution_result_default",
+      "Next": "MergeExecutionResult"
+    },
+    "MergeExecutionResult": {
+      "Type": "Pass",
+      "Comment": "Merge default execution_result with actual result if present",
+      "Parameters": {
+        "execution_result.$": "States.JsonMerge($.execution_result_default, $.execution_result, false)"
+      },
+      "ResultPath": "$.execution_result_wrapper",
+      "OutputPath": "$.execution_result_wrapper.execution_result",
+      "ResultSelector": {
+        "status.$": "$.status",
+        "final_state.$": "$.final_state",
+        "final_state_s3_path.$": "$.final_state_s3_path",
+        "next_segment_to_run.$": "$.next_segment_to_run",
+        "new_history_logs.$": "$.new_history_logs",
+        "error_info.$": "$.error_info",
+        "branches.$": "$.branches",
+        "segment_type.$": "$.segment_type"
+      },
       "Next": "UpdateStateData"
     },
     "AggregateParallelResults": {
@@ -1009,7 +1045,7 @@
         "new_history_logs.$": "$.Payload.new_history_logs"
       },
       "ResultPath": "$.execution_result",
-      "Next": "UpdateStateData"
+      "Next": "EnsureExecutionResult"
     },
     "UpdateStateData": {
       "Type": "Task",
@@ -1026,36 +1062,34 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "workflow_config.$": "$.Payload.workflow_config",
-          "current_state.$": "$.Payload.current_state",
-          "state_s3_path.$": "$.Payload.state_s3_path",
-          "state_history.$": "$.Payload.state_history",
-          "ownerId.$": "$.Payload.ownerId",
-          "workflowId.$": "$.Payload.workflowId",
-          "segment_to_run.$": "$.Payload.segment_to_run",
-          "idempotency_key.$": "$.Payload.idempotency_key",
-          "quota_reservation_id.$": "$.Payload.quota_reservation_id",
-          "total_segments.$": "$.Payload.total_segments",
-          "partition_map.$": "$.Payload.partition_map",
-          "partition_map_s3_path.$": "$.Payload.partition_map_s3_path",
-          "segment_manifest.$": "$.Payload.segment_manifest",
-          "segment_manifest_s3_path.$": "$.Payload.segment_manifest_s3_path",
-          "state_durations.$": "$.Payload.state_durations",
-          "last_update_time.$": "$.Payload.last_update_time",
-          "start_time.$": "$.Payload.start_time",
-          "max_loop_iterations.$": "$.Payload.max_loop_iterations",
-          "max_branch_iterations.$": "$.Payload.max_branch_iterations",
-          "loop_counter.$": "$.Payload.loop_counter",
-          "payload_size_kb.$": "$.Payload.payload_size_kb",
-          "compression_applied.$": "$.Payload.compression_applied",
-          "llm_segments.$": "$.Payload.llm_segments",
-          "hitp_segments.$": "$.Payload.hitp_segments",
-          "max_concurrency.$": "$.Payload.max_concurrency",
-          "distributed_mode.$": "$.Payload.distributed_mode"
-        }
+        "workflow_config.$": "$.Payload.workflow_config",
+        "current_state.$": "$.Payload.current_state",
+        "state_s3_path.$": "$.Payload.state_s3_path",
+        "state_history.$": "$.Payload.state_history",
+        "ownerId.$": "$.Payload.ownerId",
+        "workflowId.$": "$.Payload.workflowId",
+        "segment_to_run.$": "$.Payload.segment_to_run",
+        "idempotency_key.$": "$.Payload.idempotency_key",
+        "quota_reservation_id.$": "$.Payload.quota_reservation_id",
+        "total_segments.$": "$.Payload.total_segments",
+        "partition_map.$": "$.Payload.partition_map",
+        "partition_map_s3_path.$": "$.Payload.partition_map_s3_path",
+        "segment_manifest.$": "$.Payload.segment_manifest",
+        "segment_manifest_s3_path.$": "$.Payload.segment_manifest_s3_path",
+        "state_durations.$": "$.Payload.state_durations",
+        "last_update_time.$": "$.Payload.last_update_time",
+        "start_time.$": "$.Payload.start_time",
+        "max_loop_iterations.$": "$.Payload.max_loop_iterations",
+        "max_branch_iterations.$": "$.Payload.max_branch_iterations",
+        "loop_counter.$": "$.Payload.loop_counter",
+        "payload_size_kb.$": "$.Payload.payload_size_kb",
+        "compression_applied.$": "$.Payload.compression_applied",
+        "llm_segments.$": "$.Payload.llm_segments",
+        "hitp_segments.$": "$.Payload.hitp_segments",
+        "max_concurrency.$": "$.Payload.max_concurrency",
+        "distributed_mode.$": "$.Payload.distributed_mode"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
