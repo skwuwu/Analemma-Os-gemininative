@@ -210,6 +210,9 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID || '' }}
+          GCP_LOCATION: ${{ secrets.GCP_LOCATION || 'us-central1' }}
+          GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY || '' }}
           TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL || '' }}
           TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD || '' }}
           ASYNC_WORKER_ECS_CLUSTER: ${{ secrets.ASYNC_WORKER_ECS_CLUSTER || '' }}
@@ -224,6 +227,16 @@ jobs:
         run: |
           # AllowedOrigins uses default value from template.yaml (not GitHub Secrets)
           PARAM_OVERRIDES="StageName=${STAGE_NAME} CognitoIssuerUrl=${COGNITO_ISSUER_URL} CognitoAudience=${COGNITO_AUDIENCE} OpenAiApiKey=${OPENAI_API_KEY} AnthropicApiKey=${ANTHROPIC_API_KEY} GoogleApiKey=${GOOGLE_API_KEY}"
+
+          # Inject GCP settings for Vertex AI Gemini integration
+          if [ -n "${GCP_PROJECT_ID}" ]; then
+            PARAM_OVERRIDES="${PARAM_OVERRIDES} GcpProjectId=${GCP_PROJECT_ID} GcpLocation=${GCP_LOCATION}"
+          fi
+          if [ -n "${GCP_SERVICE_ACCOUNT_KEY}" ]; then
+            # Escape special characters in JSON for SAM parameter
+            ESCAPED_KEY=$(echo "${GCP_SERVICE_ACCOUNT_KEY}" | sed 's/"/\\"/g' | tr -d '\n')
+            PARAM_OVERRIDES="${PARAM_OVERRIDES} GcpServiceAccountKey='${ESCAPED_KEY}'"
+          fi
 
           # Inject test user secrets (CI/CD → AWS Secrets Manager)
           if [ -n "${TEST_USER_EMAIL}" ] && [ -n "${TEST_USER_PASSWORD}" ]; then

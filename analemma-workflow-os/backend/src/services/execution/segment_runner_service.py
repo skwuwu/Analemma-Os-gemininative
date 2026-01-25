@@ -1287,15 +1287,25 @@ class SegmentRunnerService:
         
         # [Optimization] S3 Hydration 병렬화 (N+1 Query 문제 해결)
         # 브랜치가 많을 경우 (50개+) 순차 다운로드는 timeout 위험
+        # [DEBUG] Log parallel_results structure before processing
+        logger.info(f"[Aggregator] 🔍 DEBUG: parallel_results type: {type(parallel_results)}")
+        logger.info(f"[Aggregator] 🔍 DEBUG: parallel_results length: {len(parallel_results) if parallel_results else 0}")
+        if parallel_results:
+            for idx, item in enumerate(parallel_results[:3]):  # Log first 3 items
+                logger.info(f"[Aggregator] 🔍 DEBUG: parallel_results[{idx}] keys: {list(item.keys()) if isinstance(item, dict) else 'NOT_DICT'}")
+        
         # ThreadPoolExecutor로 병렬 fetch
         branches_needing_s3 = []
         for i, result in enumerate(parallel_results):
             if not result or not isinstance(result, dict):
+                logger.info(f"[Aggregator] ⚠️ DEBUG: Skipping parallel_results[{i}] - not a dict")
                 continue
             
             # [Critical Fix] Unwrap Lambda invoke wrapper if present
             # Distributed Map State returns: {"Payload": {...}}
+            logger.info(f"[Aggregator] 🔍 DEBUG: parallel_results[{i}] has 'Payload' key: {'Payload' in result}")
             if 'Payload' in result and isinstance(result['Payload'], dict):
+                logger.info(f"[Aggregator] ✅ DEBUG: Unwrapping Payload for parallel_results[{i}]")
                 result = result['Payload']
                 parallel_results[i] = result  # Update in-place for later processing
             
@@ -2374,13 +2384,14 @@ class SegmentRunnerService:
         
         # [Fix] 이벤트에서 MOCK_MODE를 읽어서 환경 변수로 주입
         # MOCK_MODE=false인 경우에도 강제로 환경변수를 덮어써서 시뮬레이터가 실제 LLM 호출을 가능하게 함
-        event_mock_mode = str(event.get('MOCK_MODE', '')).lower()
+        # [2026-01-26] 기본값을 false로 변경 (실제 LLM 호출 모드)
+        event_mock_mode = str(event.get('MOCK_MODE', 'false')).lower()
         if event_mock_mode in ('true', '1', 'yes', 'on'):
             os.environ['MOCK_MODE'] = 'true'
             logger.info("🧪 MOCK_MODE enabled from event payload")
-        elif event_mock_mode in ('false', '0', 'no', 'off'):
+        else:
             os.environ['MOCK_MODE'] = 'false'
-            logger.info("🧪 MOCK_MODE disabled from event payload (Simulator Mode)")
+            logger.info("🧪 MOCK_MODE disabled (default: false, Simulator Mode)")
         
         # ====================================================================
         # [Parallel] [Aggregator] 병렬 결과 집계 처리

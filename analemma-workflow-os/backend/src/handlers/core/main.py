@@ -135,7 +135,8 @@ def check_execution_cancelled(execution_arn: str) -> bool:
 LAMBDA_EARLY_EXIT_THRESHOLD_MS = int(os.environ.get('LAMBDA_EARLY_EXIT_MS', '10000'))  # 10 seconds default
 
 # LLM default configuration values (environment variable overrides)
-DEFAULT_LLM_MODEL = os.environ.get('DEFAULT_LLM_MODEL', 'gpt-3.5-turbo')
+# [Fix] Changed default from gpt-3.5-turbo to gemini-2.0-flash (Bedrock compatible via fallback mapping)
+DEFAULT_LLM_MODEL = os.environ.get('DEFAULT_LLM_MODEL', 'gemini-2.0-flash')
 DEFAULT_MAX_TOKENS = int(os.environ.get('DEFAULT_MAX_TOKENS', '1024'))
 DEFAULT_TEMPERATURE = float(os.environ.get('DEFAULT_TEMPERATURE', '0.7'))
 
