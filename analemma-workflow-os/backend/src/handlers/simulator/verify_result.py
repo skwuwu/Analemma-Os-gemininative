@@ -162,7 +162,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     exec_result = event.get('exec_result')
     if exec_result is None:
         # 전체 컨텍스트가 exec_result 자체일 수 있음
-        exec_result = event if 'Status' in event or 'status' in event or 'Error' in event else {}
+        exec_result = event if 'Status' in event or 'status' in event or 'Error' in event or 'final_state' in event else {}
     
     # 상세 로깅: 입력 데이터 기록
     logger.info(f"VerifyResult called for scenario: {scenario}")
@@ -196,8 +196,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             logger.warning(f"⚠️ No output found for {scenario}, using Cause field")
             logger.info(f"Cause content (truncated): {str(cause_raw)[:500]}...")
         else:
-            output_raw = '{"error": "No output or cause found"}'
-            logger.warning(f"⚠️ No output or cause found for {scenario}")
+            # [Fix] Simulator SFN passes 'final_state' at root, treat exec_result as output if present
+            if 'final_state' in exec_result:
+                output_raw = exec_result
+                # Assume SUCCEEDED if final_state is present and no explicit Status
+                if status == 'SUCCEEDED' and 'status' not in exec_result:
+                    status = 'SUCCEEDED'
+            else:
+                output_raw = '{"error": "No output or cause found"}'
+                logger.warning(f"⚠️ No output or cause found for {scenario}")
     
     # [Fix] Parse output if it's a string (ASL passes raw string to avoid payload limit issues)
     output = {}
@@ -343,7 +350,7 @@ def _check_false_positive(scenario: str, output: Dict[str, Any]) -> Tuple[bool, 
         
         # [Fix] Fallback search in scheduling_metadata
         if tokens == 0:
-            sched_meta = output.get('scheduling_metadata') or output.get('__scheduling_metadata') or {}
+            sched_meta = output.get('scheduling_metadata') or output.get('__scheduling_metadata') or final_state.get('scheduling_metadata') or {}
             tokens = sched_meta.get('total_tokens_calculated') or sched_meta.get('total_tokens', 0)
         
         if is_mock:

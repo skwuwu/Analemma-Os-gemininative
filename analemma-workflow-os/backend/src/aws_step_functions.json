@@ -1006,7 +1006,15 @@
         "execution_result.$": "States.JsonMerge($.execution_result_default, $.execution_result, false)"
       },
       "ResultPath": "$.execution_result_wrapper",
-      "OutputPath": "$.execution_result_wrapper.execution_result",
+      "Next": "CleanupMergedState"
+    },
+    "CleanupMergedState": {
+      "Type": "Pass",
+      "Comment": "🛡️ [Payload Safety] Remove parallel_results and debris, keeping only state_data and execution_result",
+      "Parameters": {
+        "state_data.$": "$.state_data",
+        "execution_result.$": "$.execution_result_wrapper.execution_result"
+      },
       "Next": "UpdateStateData"
     },
     "AggregateParallelResults": {
