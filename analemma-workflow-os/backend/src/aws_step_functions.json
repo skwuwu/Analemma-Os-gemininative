@@ -1007,16 +1007,6 @@
       },
       "ResultPath": "$.execution_result_wrapper",
       "OutputPath": "$.execution_result_wrapper.execution_result",
-      "ResultSelector": {
-        "status.$": "$.status",
-        "final_state.$": "$.final_state",
-        "final_state_s3_path.$": "$.final_state_s3_path",
-        "next_segment_to_run.$": "$.next_segment_to_run",
-        "new_history_logs.$": "$.new_history_logs",
-        "error_info.$": "$.error_info",
-        "branches.$": "$.branches",
-        "segment_type.$": "$.segment_type"
-      },
       "Next": "UpdateStateData"
     },
     "AggregateParallelResults": {

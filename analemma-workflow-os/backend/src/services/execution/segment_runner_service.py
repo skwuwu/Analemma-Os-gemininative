@@ -2219,11 +2219,14 @@ class SegmentRunnerService:
                              f"({snapshot.active_executions}/{snapshot.reserved_concurrency})")
         
         # [Fix] 이벤트에서 MOCK_MODE를 읽어서 환경 변수로 주입
-        # 이렇게 하면 모든 하위 함수들(invoke_bedrock_model 등)이 MOCK_MODE를 인식함
-        event_mock_mode = event.get('MOCK_MODE', '').lower()
+        # MOCK_MODE=false인 경우에도 강제로 환경변수를 덮어써서 시뮬레이터가 실제 LLM 호출을 가능하게 함
+        event_mock_mode = str(event.get('MOCK_MODE', '')).lower()
         if event_mock_mode in ('true', '1', 'yes', 'on'):
             os.environ['MOCK_MODE'] = 'true'
             logger.info("🧪 MOCK_MODE enabled from event payload")
+        elif event_mock_mode in ('false', '0', 'no', 'off'):
+            os.environ['MOCK_MODE'] = 'false'
+            logger.info("🧪 MOCK_MODE disabled from event payload (Simulator Mode)")
         
         # ====================================================================
         # [Parallel] [Aggregator] 병렬 결과 집계 처리

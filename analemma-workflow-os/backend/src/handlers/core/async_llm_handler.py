@@ -86,7 +86,7 @@ def _dispatch_worker(payload: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if current_state:
         worker_event["current_state"] = current_state
 
-    for key in ("conversation_id", "execution_id", "request_context"):
+    for key in ("conversation_id", "execution_id", "request_context", "MOCK_MODE"):
         if key in payload:
             worker_event[key] = payload[key]
     # Propagate idempotency_key if present so downstream workers/segment runner can use it
@@ -266,6 +266,8 @@ def _execute_worker(payload: Dict[str, Any], context: Any = None) -> Dict[str, A
         segment_event["execution_id"] = payload["execution_id"]
     if payload.get("idempotency_key"):
         segment_event["idempotency_key"] = payload["idempotency_key"]
+    if payload.get("MOCK_MODE"):
+        segment_event["MOCK_MODE"] = payload["MOCK_MODE"]
 
     try:
         # Fargate Worker에서도 S3 상태 크기 검사 (추가 안전장치)
