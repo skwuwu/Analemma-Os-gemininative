@@ -2361,9 +2361,10 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "PrepareLLMTest-${StageName}"
-      CodeUri: src/
-      Handler: handlers.simulator.prepare_llm_test.lambda_handler
-      Runtime: python3.12
+      PackageType: Image
+      ImageUri: !Ref BackendLambdaImageUri
+      ImageConfig:
+        Command: ["src.handlers.simulator.prepare_llm_test.lambda_handler"]
       Timeout: 30
       MemorySize: 256
       Environment:
@@ -2379,9 +2380,10 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "AggregateLLMResults-${StageName}"
-      CodeUri: src/
-      Handler: handlers.simulator.aggregate_llm_results.lambda_handler
-      Runtime: python3.12
+      PackageType: Image
+      ImageUri: !Ref BackendLambdaImageUri
+      ImageConfig:
+        Command: ["src.handlers.simulator.aggregate_llm_results.lambda_handler"]
       Timeout: 60
       MemorySize: 512
       Environment:
