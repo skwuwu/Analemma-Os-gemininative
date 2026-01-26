@@ -82,10 +82,14 @@ class NodeConfig(BaseModel):
     error_handling: Optional[str] = None  # "fail", "ignore", "fallback"
     max_depth: Optional[int] = None  # 최대 재귀 깊이
     
-    # for_each / distributed_map 공통
-    items_path: Optional[str] = None  # 반복할 아이템 경로
-    body_nodes: Optional[List[str]] = None  # 루프 내 실행할 노드 ID 목록
-    max_iterations: Optional[int] = None  # 최대 반복 횟수
+    # for_each / distributed_map 공통 (input_list_key와 items_path 둘 다 지원)
+    input_list_key: Optional[str] = None  # 반복할 리스트 경로 (예: "state.users")
+    items_path: Optional[str] = None  # input_list_key의 별칭
+    item_key: Optional[str] = None  # 각 아이템을 저장할 상태 키 (기본값: "item")
+    output_key: Optional[str] = None  # 결과 배열 저장 키 (기본값: "for_each_results")
+    sub_workflow: Optional[Dict[str, Any]] = None  # 서브 워크플로우 정의 {"nodes": [...]}
+    sub_node_config: Optional[Dict[str, Any]] = None  # 단일 서브 노드 설정 (sub_workflow 대신 사용)
+    max_iterations: Optional[int] = None  # 최대 반복 횟수 (기본값: 20)
     continue_on_error: Optional[bool] = None  # 에러 시 계속 진행
     
     # parallel
@@ -113,18 +117,39 @@ class NodeConfig(BaseModel):
 
 
 class WorkflowNode(BaseModel):
-    """Workflow node definition"""
+    """
+    Workflow node definition - aligned with main.py ALLOWED_NODE_TYPES
+    
+    Note: 이 스키마는 Agentic Designer가 생성하는 워크플로우 검증에 사용됩니다.
+    main.py의 ALLOWED_NODE_TYPES + NODE_TYPE_ALIASES와 일치해야 합니다.
+    """
     id: str
     type: Literal[
-        "operator", "llm_chat", "api_call", "db_query", "for_each", 
-        "route_draft_quality", "group", "subgraph", "aiModel", "llm",
-        "parallel", "distributed_map", "route_condition", 
-        "retry_wrapper", "error_handler", "wait_for_approval"
+        # === 사용자가 프론트엔드에서 생성하는 핵심 타입 ===
+        "operator",        # 범용 연산자
+        "llm_chat",        # LLM 채팅 (aiModel → llm_chat로 변환됨)
+        "for_each",        # 리스트 반복 (control.loop → for_each로 변환됨)
+        "parallel_group",  # 병렬 브랜치 (control.parallel → parallel_group으로 변환됨)
+        "subgraph",        # 서브그래프/그룹 (group → subgraph로 변환됨)
+        "api_call",        # API 호출
+        "db_query",        # DB 쿼리
+        
+        # === 런타임 내부 타입 (사용자가 직접 생성하지 않음) ===
+        "aggregator",       # 병렬 결과 집계
+        "nested_for_each",  # 중첩 반복 (자동 처리)
+        "vision",           # 멀티모달 (llm_chat이 자동 처리)
+        "video_chunker",    # 비디오 분할
+        "skill_executor",   # 스킬 실행
+        "route_draft_quality",  # 품질 라우팅
+        
+        # === UI 마커 (프론트엔드 전용, passthrough) ===
+        "trigger", "input", "output", "start", "end"
     ]
     label: Optional[str] = None
     position: Position
     config: Optional[NodeConfig] = None
     data: Optional[Dict[str, Any]] = None  # For frontend compatibility
+    hitp: Optional[bool] = None  # Human-in-the-loop flag
     
     # Subgraph relationships
     subgraph_id: Optional[str] = None  # For group nodes (internal subgraph reference)
@@ -132,7 +157,7 @@ class WorkflowNode(BaseModel):
 
 
 class WorkflowEdge(BaseModel):
-    """워크플로우 엣지 정의"""
+    """워크플로우 엣지 정의 - aligned with main.py EdgeModel"""
     id: str
     source: str
     target: str
@@ -140,7 +165,11 @@ class WorkflowEdge(BaseModel):
     target_handle: Optional[str] = None
     label: Optional[str] = None
     condition: Optional[str] = None  # 조건부 분기용
-    type: Optional[str] = None  # edge 타입 (예: "smoothstep")
+    type: Optional[str] = None  # edge 타입: "edge", "if", "while", "hitp", "conditional_edge", "pause"
+    # conditional_edge 지원 필드
+    router_func: Optional[str] = None  # 라우터 함수명 (NODE_REGISTRY에 등록된)
+    mapping: Optional[Dict[str, str]] = None  # 라우터 반환값 -> 타겟 노드 매핑
+    max_iterations: Optional[int] = None  # while 엣지 최대 반복
 
 
 class SubgraphMetadata(BaseModel):

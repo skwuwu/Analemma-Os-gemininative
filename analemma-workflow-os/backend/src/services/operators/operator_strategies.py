@@ -274,7 +274,8 @@ def _list_map(input_val: Any, params: Dict[str, Any]) -> List[Any]:
     result = []
     for item in input_val:
         if field and isinstance(item, dict):
-            result.append(item.get(field))
+            # Support nested field paths like "branch_final_result.summary"
+            result.append(get_nested_value(item, field, None))
         else:
             evaluator = SafeExpressionEvaluator({"item": item, "$": item})
             mapped = evaluator.evaluate(expression.replace("$.", "item.") if expression.startswith("$.") else expression)

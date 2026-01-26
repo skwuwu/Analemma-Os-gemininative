@@ -154,13 +154,25 @@ NODE_TYPE_SPECS = """
    - config.connection_string: DB 연결 문자열 (문자열, 필수)
 
 5. "for_each": 반복 처리 노드
-   - config.items: 반복할 아이템 목록 (배열, 필수)
-   - config.item_key: 각 아이템을 저장할 상태 키 (문자열, 선택사항)
+   - config.items_path: 반복할 리스트 경로 (문자열, 필수, 예: "state.users")
+   - config.item_key: 각 아이템을 저장할 상태 키 (문자열, 선택사항, 기본값: "item")
+   - config.output_key: 결과 배열 저장 키 (문자열, 선택사항, 기본값: "for_each_results")
+   - config.sub_workflow.nodes: 각 아이템에 대해 실행할 노드 배열 (배열, 필수)
+   - config.max_iterations: 최대 반복 횟수 (숫자, 선택사항, 기본값: 20)
 
 6. "route_draft_quality": 품질 라우팅 노드
    - config.threshold: 품질 임계값 (숫자, 필수)
 
-7. "group": 서브그래프 노드
+7. "parallel": 병렬 실행 노드
+   - config.branches: 브랜치 정의 배열 (배열, 필수)
+   - 각 브랜치: {"branch_id": "브랜치명", "nodes": [노드 정의들]} 또는 {"branch_id": "브랜치명", "sub_workflow": {"nodes": [노드 정의들]}}
+
+8. "route_condition": 조건부 라우팅 노드
+   - config.conditions: 조건 정의 배열 (배열, 필수)
+   - 각 조건: {"expression": "$.field == 'value'", "target": "대상_노드_id"}
+   - config.default_node: 조건 미충족 시 기본 대상 노드 (문자열, 선택사항)
+
+9. "group": 서브그래프 노드
    - config.subgraph_id: 서브그래프 ID (문자열)
 
 8. "vision": 이미지/비디오 분석 노드 (Gemini Vision)

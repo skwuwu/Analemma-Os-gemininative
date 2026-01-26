@@ -207,7 +207,7 @@
                 "strategy": "list_filter",
                 "input_key": "partition_results",
                 "params": {
-                    "condition": "$.status == 'completed'"
+                    "condition": "$.partition_final_result.status == 'completed'"
                 },
                 "output_key": "completed_partitions"
             }
@@ -220,7 +220,7 @@
                 "input_key": "partition_results",
                 "params": {
                     "operation": "sum",
-                    "field": "loop_iterations"
+                    "field": "partition_final_result.loop_iterations"
                 },
                 "output_key": "total_loop_iterations"
             }
@@ -233,7 +233,7 @@
                 "input_key": "partition_results",
                 "params": {
                     "operation": "avg",
-                    "field": "final_confidence"
+                    "field": "partition_final_result.final_confidence"
                 },
                 "output_key": "average_confidence"
             }

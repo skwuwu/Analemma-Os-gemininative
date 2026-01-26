@@ -84,13 +84,27 @@ You must analyze the user's request and output workflow components as JSON objec
    - Example: {"id": "db1", "type": "db_query", "config": {"query": "SELECT * FROM users", "connection_string": "postgresql://..."}}
 
 5. "for_each": Loop processing node
-   - config.items: List of items to iterate (array, required)
-   - config.item_key: State key to store each item (string, optional)
-   - Example: {"id": "loop1", "type": "for_each", "config": {"items": [1, 2, 3], "item_key": "current_item"}}
+   - config.items_path: State path to the list to iterate (string, e.g., "state.users")
+   - config.item_key: State key to store each item (string, optional, default: "item")
+   - config.output_key: Key to store results array (string, optional, default: "for_each_results")
+   - config.sub_workflow.nodes: Array of node definitions to execute per item (array, required)
+   - config.max_iterations: Maximum iterations (number, optional, default: 20)
+   - Example: {"id": "loop1", "type": "for_each", "config": {"items_path": "state.users", "item_key": "user", "output_key": "processed_users", "sub_workflow": {"nodes": [{"id": "process", "type": "operator", "config": {"code": "state['result'] = state['user']['name']"}}]}}}
 
 6. "route_draft_quality": 품질 라우팅 노드
    - config.threshold: 품질 임계값 (숫자, 필수)
    - 예: {"id": "route1", "type": "route_draft_quality", "config": {"threshold": 0.8}}
+
+7. "parallel": Parallel execution node (runs multiple branches concurrently)
+   - config.branches: Array of branch definitions (array, required)
+   - Each branch: {"branch_id": "branch_name", "nodes": [<node definitions>]} or {"branch_id": "branch_name", "sub_workflow": {"nodes": [<node definitions>]}}
+   - Example: {"id": "par1", "type": "parallel", "config": {"branches": [{"branch_id": "analysis", "nodes": [{"id": "analyze", "type": "llm_chat", "config": {"prompt_content": "Analyze..."}}]}, {"branch_id": "summary", "nodes": [{"id": "summarize", "type": "llm_chat", "config": {"prompt_content": "Summarize..."}}]}]}}
+
+8. "route_condition": Conditional routing node
+   - config.conditions: Array of condition definitions (array, required)
+   - Each condition: {"expression": "$.field == 'value'", "target": "target_node_id"}
+   - config.default_node: Default target node if no condition matches (string, optional)
+   - Example: {"id": "route1", "type": "route_condition", "config": {"conditions": [{"expression": "$.status == 'approved'", "target": "process_approved"}], "default_node": "handle_rejected"}}
 
 [중요 레이아웃 규칙]
 1. 모든 "type": "node" 객체는 반드시 "position": {"x": <숫자>, "y": <숫자>} 필드를 포함해야 합니다.
@@ -134,10 +148,23 @@ PATCH_SYSTEM_PROMPT = """
    - config.query: SQL 쿼리 (문자열, 필수)
 
 5. "for_each": 반복 처리 노드
-   - config.items: 반복할 아이템 목록 (배열, 필수)
+   - config.items_path: 반복할 리스트 경로 (문자열, 예: "state.users")
+   - config.item_key: 각 아이템 저장 키 (문자열, 선택사항, 기본값: "item")
+   - config.output_key: 결과 배열 저장 키 (문자열, 선택사항, 기본값: "for_each_results")
+   - config.sub_workflow.nodes: 각 아이템에 대해 실행할 노드 배열 (배열, 필수)
+   - config.max_iterations: 최대 반복 횟수 (숫자, 선택사항, 기본값: 20)
 
 6. "route_draft_quality": 품질 라우팅 노드
    - config.threshold: 품질 임계값 (숫자, 필수)
+
+7. "parallel": 병렬 실행 노드
+   - config.branches: 브랜치 정의 배열 (배열, 필수)
+   - 각 브랜치: {"branch_id": "브랜치명", "nodes": [노드 정의들]} 또는 {"branch_id": "브랜치명", "sub_workflow": {"nodes": [노드 정의들]}}
+
+8. "route_condition": 조건부 라우팅 노드
+   - config.conditions: 조건 정의 배열 (배열, 필수)
+   - 각 조건: {"expression": "$.field == 'value'", "target": "대상_노드_id"}
+   - config.default_node: 조건 미충족 시 기본 대상 노드 (문자열, 선택사항)
 
 [명령 규격]
 - 각 라인은 반드시 완전한 JSON 객체여야 합니다(라인 단위로 parse 가능).
@@ -215,7 +242,7 @@ Loop, Map, Parallel, Conditional 구조가 필요한지 **먼저 판단**하세�
 
 [출력 예시]
 {{"type": "node", "data": {{"id": "start", "type": "operator", "position": {{"x": 150, "y": 50}}, "data": {{"label": "Start"}}}}}}
-{{"type": "node", "data": {{"id": "loop_users", "type": "for_each", "config": {{"items_path": "state.users", "body_nodes": ["process_user"]}}, "position": {{"x": 150, "y": 150}}}}}}
+{{"type": "node", "data": {{"id": "loop_users", "type": "for_each", "config": {{"items_path": "state.users", "item_key": "user", "output_key": "processed_users", "sub_workflow": {{"nodes": [{{"id": "process_user", "type": "llm_chat", "config": {{"prompt_content": "Process user: {{{{state.user.name}}}}"}}}}]}}}}, "position": {{"x": 150, "y": 150}}}}}}
 {{"type": "edge", "data": {{"source": "start", "target": "loop_users"}}}}
 {{"type": "status", "data": "done"}}
 """

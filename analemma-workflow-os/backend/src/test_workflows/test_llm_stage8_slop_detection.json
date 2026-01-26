@@ -202,7 +202,7 @@
                 "strategy": "list_filter",
                 "input_key": "test_results",
                 "params": {
-                    "condition": "$.passed == true"
+                    "condition": "$.prediction_correct == true"
                 },
                 "output_key": "passed_cases"
             }

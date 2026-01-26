@@ -266,7 +266,7 @@
                 "strategy": "list_filter",
                 "input_key": "branch_results",
                 "params": {
-                    "condition": "$.status == 'completed'"
+                    "condition": "$.branch_final_result.status == 'completed'"
                 },
                 "output_key": "completed_branches"
             }
@@ -277,7 +277,7 @@
             "config": {
                 "strategy": "list_map",
                 "input_key": "branch_results",
-                "params": {"field": "summary"},
+                "params": {"field": "branch_final_result.summary"},
                 "output_key": "all_summaries"
             }
         },
@@ -289,7 +289,7 @@
                 "input_key": "branch_results",
                 "params": {
                     "operation": "concat",
-                    "field": "key_points"
+                    "field": "branch_final_result.key_points"
                 },
                 "output_key": "all_key_points_nested"
             }
@@ -302,7 +302,7 @@
                 "input_key": "branch_results",
                 "params": {
                     "operation": "sum",
-                    "field": "llm_calls"
+                    "field": "branch_final_result.llm_calls"
                 },
                 "output_key": "total_llm_calls"
             }
@@ -315,7 +315,7 @@
                 "input_key": "branch_results",
                 "params": {
                     "operation": "max",
-                    "field": "confidence"
+                    "field": "branch_final_result.confidence"
                 },
                 "output_key": "max_confidence"
             }
