@@ -1,7 +1,7 @@
 # Heavy dependencies Layer - Large packages like AI/web frameworks
 
 # Vertex AI SDK (Gemini Native)
-google-cloud-aiplatform>=1.38.0
+google-cloud-aiplatform>=1.51.0  # ResponseSchema, Context Caching 지원
 openai
 langgraph>=0.0.40
 langgraph-checkpoint-dynamodb>=0.0.1

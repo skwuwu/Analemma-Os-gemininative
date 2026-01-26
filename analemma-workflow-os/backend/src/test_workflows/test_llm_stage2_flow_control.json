@@ -299,6 +299,25 @@
     "start_node": "start",
     "initial_state": {
         "test_mode": "flow_control",
-        "cost_guardrail_enabled": true
+        "cost_guardrail_enabled": true,
+        "input_items": {
+            "items_to_process": [
+                {
+                    "id": "item_1",
+                    "text": "Cloud computing enables scalable infrastructure.",
+                    "quality_threshold": 0.7
+                },
+                {
+                    "id": "item_2",
+                    "text": "Machine learning transforms data into insights.",
+                    "quality_threshold": 0.7
+                },
+                {
+                    "id": "item_3",
+                    "text": "Serverless architectures reduce operational overhead.",
+                    "quality_threshold": 0.7
+                }
+            ]
+        }
     }
 }

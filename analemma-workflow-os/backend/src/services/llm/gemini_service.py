@@ -239,17 +239,12 @@ _gemini_client = None
 
 def _convert_json_schema_to_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Convert standard JSON Schema to Vertex AI Schema format.
+    Standard JSON Schema를 Vertex AI(OpenAPI 3.0 subset) 규격으로 강제 변환합니다.
     
-    Vertex AI uses uppercase type names:
-    - "object" -> "OBJECT"
-    - "string" -> "STRING"
-    - "array" -> "ARRAY"
-    - "number" -> "NUMBER"
-    - "integer" -> "INTEGER"
-    - "boolean" -> "BOOLEAN"
-    
-    Also handles nested properties recursively.
+    해결되는 이슈:
+    1. maxItems, minItems 등 미지원 필드 제거 (Stage 1 에러 방지)
+    2. ["string", "null"] -> type: "STRING", nullable: True 변환 (Stage 3 에러 방지)
+    3. 모든 type명을 대문자로 정규화
     
     Args:
         schema: Standard JSON Schema dict
@@ -257,35 +252,91 @@ def _convert_json_schema_to_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Vertex AI compatible schema dict
     """
-    if not schema:
+    if not isinstance(schema, dict):
         return schema
     
-    result = {}
+    # 1. 미지원 유효성 검사 필드 정의 (Vertex AI SDK에서 에러를 유발하는 항목들)
+    UNSUPPORTED_KEYWORDS = {
+        "maxItems", "minItems", "maxLength", "minLength", 
+        "pattern", "format", "minimum", "maximum",
+        "additionalProperties", "default", "$schema", "$id", "title"
+    }
     
-    for key, value in schema.items():
-        if key == "type":
-            # Convert type to uppercase
-            if isinstance(value, str):
-                result["type"] = value.upper()
-            elif isinstance(value, list):
-                # Handle union types like ["string", "null"]
-                result["type"] = [t.upper() if isinstance(t, str) else t for t in value]
-        elif key == "properties" and isinstance(value, dict):
-            # Recursively convert nested properties
-            result["properties"] = {
-                prop_name: _convert_json_schema_to_vertex(prop_schema)
-                for prop_name, prop_schema in value.items()
-            }
-        elif key == "items" and isinstance(value, dict):
-            # Handle array items
-            result["items"] = _convert_json_schema_to_vertex(value)
-        elif key in ("required", "enum", "maxItems", "minItems", "description"):
-            # Pass through directly
-            result[key] = value
+    # 새로운 결과 딕셔너리 생성 (원본 훼손 방지) - 미지원 키워드 즉시 제거
+    result = {k: v for k, v in schema.items() if k not in UNSUPPORTED_KEYWORDS}
+    
+    # 2. 타입 매핑 및 Nullable 처리
+    TYPE_MAPPING = {
+        "string": "STRING",
+        "number": "NUMBER",
+        "integer": "INTEGER",
+        "boolean": "BOOLEAN",
+        "array": "ARRAY",
+        "object": "OBJECT",
+    }
+    
+    raw_type = schema.get("type")
+    
+    if isinstance(raw_type, list):
+        # ["string", "null"] 같은 유니온 타입 처리
+        # Vertex AI는 유니온 타입을 지원하지 않음 - nullable로 변환
+        non_null_types = [t for t in raw_type if isinstance(t, str) and t.lower() != "null"]
+        has_null = any(isinstance(t, str) and t.lower() == "null" for t in raw_type)
+        
+        if non_null_types:
+            # 첫 번째 실제 타입을 기반으로 결정
+            base_type = non_null_types[0].lower()
+            result["type"] = TYPE_MAPPING.get(base_type, base_type.upper())
         else:
-            # Pass through unknown keys (nullable, etc.)
-            result[key] = value
+            result["type"] = "STRING"  # fallback
+            
+        if has_null:
+            result["nullable"] = True
+            
+    elif isinstance(raw_type, str):
+        # 단일 타입 대문자화
+        result["type"] = TYPE_MAPPING.get(raw_type.lower(), raw_type.upper())
+
+    # 3. 재귀적 구조 처리 (Object의 Properties, Array의 Items)
+    if result.get("type") == "OBJECT" and "properties" in result:
+        result["properties"] = {
+            prop_name: _convert_json_schema_to_vertex(prop_schema)
+            for prop_name, prop_schema in result["properties"].items()
+        }
+        
+    elif result.get("type") == "ARRAY" and "items" in result:
+        result["items"] = _convert_json_schema_to_vertex(result["items"])
+        
+    # 4. Enum 값 보존 (Vertex AI 지원함)
+    # [Critical] enum이 있을 때 type이 없으면 SDK 에러 발생 가능 - 기본값 STRING 설정
+    if "enum" in schema:
+        result["enum"] = schema["enum"]
+        # enum이 있는데 type이 없으면 enum 값 타입에서 추론
+        if "type" not in result:
+            enum_values = schema["enum"]
+            if enum_values:
+                first_value = enum_values[0]
+                if isinstance(first_value, str):
+                    result["type"] = "STRING"
+                elif isinstance(first_value, bool):
+                    result["type"] = "BOOLEAN"
+                elif isinstance(first_value, int):
+                    result["type"] = "INTEGER"
+                elif isinstance(first_value, float):
+                    result["type"] = "NUMBER"
+                else:
+                    result["type"] = "STRING"  # fallback
+            else:
+                result["type"] = "STRING"  # empty enum fallback
     
+    # 5. required 필드 보존 (Vertex AI 지원함)
+    if "required" in schema:
+        result["required"] = schema["required"]
+    
+    # 6. description 필드 보존 (Vertex AI 지원함)
+    if "description" in schema:
+        result["description"] = schema["description"]
+
     return result
 
 
@@ -600,7 +651,7 @@ class GeminiService:
                 return None
             
             # ═══════════════════════════════════════════════════════════════════
-            # Vertex AI Context Caching API (google-cloud-aiplatform >= 1.60)
+            # Vertex AI Context Caching API (google-cloud-aiplatform >= 1.51.0)
             # https://cloud.google.com/vertex-ai/generative-ai/docs/context-caching
             # ═══════════════════════════════════════════════════════════════════
             cache_name = None
@@ -767,13 +818,19 @@ class GeminiService:
         if not client:
             raise RuntimeError("Gemini client not initialized")
         
-        # Handle Context Caching
+        # ═══════════════════════════════════════════════════════════════════════
+        # Context Caching 로직 강화 (Explicit Cache Bridge)
+        # ═══════════════════════════════════════════════════════════════════════
         cached_tokens = 0
+        cached_content_resource = None  # [Fix] 캐시 리소스를 모델에 명시적으로 전달하기 위한 변수
+        
         if context_to_cache and ENABLE_CONTEXT_CACHING:
             cache_name = self.create_or_refresh_context_cache(context_to_cache)
             if cache_name:
                 # Estimate cached token count
                 cached_tokens = len(context_to_cache) // 4
+                # [Critical Fix] 캐시 리소스 이름을 저장하여 GenerativeModel에 전달
+                cached_content_resource = cache_name
                 logger.debug(f"Using cached context: {cache_name} (~{cached_tokens} tokens)")
         
         # Create model
@@ -793,12 +850,26 @@ class GeminiService:
         # Get safety settings to prevent false positives on technical content
         safety_settings = _get_safety_settings()
         
-        model = client.GenerativeModel(
-            model_name=self.config.model.value,
-            generation_config=generation_config,
-            system_instruction=system_instruction or self.config.system_instruction,
-            safety_settings=safety_settings
-        )
+        # [Fix] GenerativeModel 생성 시 cached_content 파라미터 명시적 전달
+        model_kwargs = {
+            "model_name": self.config.model.value,
+            "generation_config": generation_config,
+            "system_instruction": system_instruction or self.config.system_instruction,
+            "safety_settings": safety_settings
+        }
+        
+        # [Critical Fix] 캐시 리소스가 있으면 모델에 연결
+        if cached_content_resource:
+            try:
+                from vertexai.caching import CachedContent
+                # 캐시 리소스를 모델에 명시적으로 연결
+                cached_content_obj = CachedContent(cached_content_name=cached_content_resource)
+                model_kwargs["cached_content"] = cached_content_obj
+                logger.info(f"✅ Cache Bridge: Linked cached_content to GenerativeModel")
+            except Exception as cache_link_error:
+                logger.warning(f"⚠️ Cache Bridge failed, continuing without cache: {cache_link_error}")
+        
+        model = client.GenerativeModel(**model_kwargs)
         
         # Compose input text (for token counting)
         full_input = user_prompt
@@ -963,12 +1034,17 @@ class GeminiService:
         use_thinking = enable_thinking if enable_thinking is not None else self.config.enable_thinking
         thinking_budget = thinking_budget_tokens or self.config.thinking_budget_tokens
         
-        # Handle Context Caching
+        # ═══════════════════════════════════════════════════════════════════════
+        # Context Caching 로직 강화 (Explicit Cache Bridge)
+        # ═══════════════════════════════════════════════════════════════════════
         cached_tokens = 0
+        cached_content_resource = None  # [Fix] 캐시 리소스를 모델에 명시적으로 전달
+        
         if context_to_cache and ENABLE_CONTEXT_CACHING:
             cache_name = self.create_or_refresh_context_cache(context_to_cache)
             if cache_name:
                 cached_tokens = len(context_to_cache) // 4
+                cached_content_resource = cache_name
                 logger.debug(f"Streaming with cached context: {cache_name}")
         
         generation_config = {
@@ -1010,12 +1086,25 @@ class GeminiService:
         # Get safety settings to prevent false positives on technical content
         safety_settings = _get_safety_settings()
         
-        model = client.GenerativeModel(
-            model_name=self.config.model.value,
-            generation_config=generation_config,
-            system_instruction=system_instruction or self.config.system_instruction,
-            safety_settings=safety_settings
-        )
+        # [Fix] GenerativeModel 생성 시 cached_content 파라미터 명시적 전달
+        model_kwargs = {
+            "model_name": self.config.model.value,
+            "generation_config": generation_config,
+            "system_instruction": system_instruction or self.config.system_instruction,
+            "safety_settings": safety_settings
+        }
+        
+        # [Critical Fix] 캐시 리소스가 있으면 모델에 연결
+        if cached_content_resource:
+            try:
+                from vertexai.caching import CachedContent
+                cached_content_obj = CachedContent(cached_content_name=cached_content_resource)
+                model_kwargs["cached_content"] = cached_content_obj
+                logger.info(f"✅ Cache Bridge (Stream): Linked cached_content to GenerativeModel")
+            except Exception as cache_link_error:
+                logger.warning(f"⚠️ Cache Bridge (Stream) failed: {cache_link_error}")
+        
+        model = client.GenerativeModel(**model_kwargs)
         
         # Input text (for token counting)
         full_input = user_prompt
@@ -1428,7 +1517,8 @@ Refer to all past conversations and changes to generate consistent responses.
         mime_types: Optional[List[str]] = None,
         system_instruction: Optional[str] = None,
         max_output_tokens: Optional[int] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        response_schema: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Gemini Vision call including multiple image inputs
@@ -1442,6 +1532,7 @@ Refer to all past conversations and changes to generate consistent responses.
             system_instruction: System instructions
             max_output_tokens: Maximum output tokens
             temperature: Sampling temperature
+            response_schema: JSON Schema for structured output (Vertex AI format)
             
         Returns:
             Gemini response dictionary
@@ -1497,6 +1588,11 @@ Refer to all past conversations and changes to generate consistent responses.
             "top_p": self.config.top_p,
             "top_k": self.config.top_k,
         }
+        
+        # Apply Response Schema for structured JSON output (Vertex AI format)
+        if response_schema:
+            generation_config["response_mime_type"] = "application/json"
+            generation_config["response_schema"] = _convert_json_schema_to_vertex(response_schema)
         
         # Get safety settings to prevent false positives on technical content
         safety_settings = _get_safety_settings()

@@ -31,11 +31,15 @@ class CompiledGraph:
                     out = fn(state, None)
                 if out:
                     outputs[nid] = out
+                    # [Fix] Merge node output into state so subsequent nodes can access it
+                    # This is critical for operator_official outputs like input_items
+                    if isinstance(out, dict):
+                        state.update(out)
             except Exception as e:
                 # Propagate exceptions properly instead of swallowing them
                 # This allows FAIL workflows to actually fail as expected
                 raise e
-        # merge outputs into state for convenience
+        # merge outputs into state for convenience (legacy compatibility)
         state.update({"node_outputs": outputs})
         return state
 

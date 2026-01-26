@@ -42,6 +42,42 @@ _stepfunctions_client = None
 _cloudwatch_client = None
 
 
+def _hydrate_s3_offloaded_state(state: dict) -> dict:
+    """
+    S3 offload된 상태를 하이드레이션합니다.
+    __s3_offloaded=True인 경우 S3에서 실제 데이터를 가져옵니다.
+    """
+    if not isinstance(state, dict):
+        return state
+    
+    # final_state가 offload된 경우
+    if state.get('__s3_offloaded') is True:
+        s3_path = state.get('__s3_path')
+        if s3_path:
+            try:
+                s3 = get_s3_client()
+                # s3://bucket/key 파싱
+                if s3_path.startswith('s3://'):
+                    path_parts = s3_path[5:].split('/', 1)
+                    bucket = path_parts[0]
+                    key = path_parts[1] if len(path_parts) > 1 else ''
+                    
+                    response = s3.get_object(Bucket=bucket, Key=key)
+                    hydrated = json.loads(response['Body'].read().decode('utf-8'))
+                    logger.info(f"✅ Hydrated S3 offloaded state from {s3_path}")
+                    return hydrated
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to hydrate S3 state from {s3_path}: {e}")
+        return state
+    
+    # 중첩된 final_state 체크
+    if 'final_state' in state and isinstance(state['final_state'], dict):
+        if state['final_state'].get('__s3_offloaded') is True:
+            state['final_state'] = _hydrate_s3_offloaded_state(state['final_state'])
+    
+    return state
+
+
 def get_stepfunctions_client():
     global _stepfunctions_client
     if _stepfunctions_client is None:
@@ -412,7 +448,10 @@ def poll_llm_execution(execution_arn: str, max_seconds: int = MAX_POLL_SECONDS) 
             }
             
             if status == 'SUCCEEDED':
-                result['output'] = json.loads(response.get('output', '{}'))
+                output = json.loads(response.get('output', '{}'))
+                # [Critical Fix] S3 offload된 상태 하이드레이션
+                output = _hydrate_s3_offloaded_state(output)
+                result['output'] = output
             elif status == 'FAILED':
                 result['error'] = f"{response.get('error', 'Unknown')}: {response.get('cause', 'No cause')}"
                 logger.error(f"🔴 LLM Test FAILED: {result['error']}")

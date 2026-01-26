@@ -5,7 +5,7 @@ pytest
 moto
 
 # Vertex AI SDK (Gemini Native)
-google-cloud-aiplatform>=1.38.0
+google-cloud-aiplatform>=1.51.0  # ResponseSchema, Context Caching 지원
 langgraph>=0.0.40
 openai
 # jsonpath-ng  # REMOVED: Not used in codebase (v2.0 cold start optimization)

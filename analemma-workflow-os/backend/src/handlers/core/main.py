@@ -1319,7 +1319,8 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                             mime_types=mime_types,
                             system_instruction=system_prompt,
                             max_output_tokens=max_tokens,
-                            temperature=temperature
+                            temperature=temperature,
+                            response_schema=response_schema  # [Fix] Enable JSON mode for Vision
                         )
                     else:
                         # Standard text-only invocation
@@ -1404,7 +1405,19 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                         logger.info(f"Retryable Gemini error, propagating to retry loop: {gemini_error}")
                         raise gemini_error
                     else:
-                        # 비재시도 에러 - Bedrock 폴백
+                        # 비재시도 에러 - Bedrock 폴백 시도
+                        # [Critical] Vision/multimodal 요청은 Bedrock으로 폴백 불가
+                        if multimodal_parts:
+                            logger.error(
+                                f"🚫 [Vision Fallback Blocked] Node: {node_id}, "
+                                f"Multimodal requests cannot fall back to Bedrock. "
+                                f"Original error: {gemini_error}"
+                            )
+                            raise RuntimeError(
+                                f"Gemini Vision failed and Bedrock fallback not supported for multimodal requests. "
+                                f"Original error: {gemini_error}"
+                            )
+                        
                         logger.warning(
                             f"Non-retryable Gemini error, falling back to Bedrock: {gemini_error}"
                         )
