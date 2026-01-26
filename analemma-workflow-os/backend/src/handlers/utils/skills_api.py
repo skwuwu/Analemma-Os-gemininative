@@ -29,13 +29,13 @@ from concurrent.futures import ThreadPoolExecutor
 # Import repository
 try:
     from src.services.skill_repository import SkillRepository, get_skill_repository
-    from src.models.skill_models import validate_skill, create_default_skill
+    from src.models.skill_models import SkillSchema, create_default_skill
 except ImportError:
     # Fallback for local testing
     import sys
     sys.path.insert(0, os.path.dirname(__file__))
     from src.services.skill_repository import SkillRepository, get_skill_repository
-    from src.models.skill_models import validate_skill, create_default_skill
+    from src.models.skill_models import SkillSchema, create_default_skill
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -248,10 +248,11 @@ def handle_create_skill(repo: SkillRepository, owner_id: str, event: Dict) -> Di
         if key in body:
             skill_data[key] = body[key]
     
-    # Validate
-    errors = validate_skill(skill_data)
-    if errors:
-        return _response(400, {'error': 'Validation failed', 'details': errors})
+    # Validate using Pydantic
+    try:
+        SkillSchema(**skill_data)
+    except Exception as e:
+        return _response(400, {'error': 'Validation failed', 'details': str(e)})
     
     # Create in DynamoDB
     try:
