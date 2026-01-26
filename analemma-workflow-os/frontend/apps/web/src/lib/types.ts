@@ -299,12 +299,11 @@ export interface DetailedDraft {
   node_id?: string;
 }
 
-export interface CheckpointCompareResult {
-  source_checkpoint_id: string;
-  target_checkpoint_id: string;
-  source_node_name: string;
-  target_node_name: string;
-  diff: StateDiff;
+export interface CheckpointCompareResult extends StateDiff {
+  checkpoint_a: string;
+  checkpoint_b: string;
+  source_node_name?: string;
+  target_node_name?: string;
 }
 
 export interface ExecutionHistoryResponse {

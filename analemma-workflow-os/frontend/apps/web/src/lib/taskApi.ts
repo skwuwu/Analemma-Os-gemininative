@@ -23,7 +23,7 @@ export interface TaskListOptions {
  */
 export async function listTasks(options: TaskListOptions = {}): Promise<TaskListResponse> {
   const params = new URLSearchParams();
-  
+
   if (options.status) {
     params.set('status', options.status);
   }
@@ -33,11 +33,11 @@ export async function listTasks(options: TaskListOptions = {}): Promise<TaskList
   if (options.includeCompleted !== undefined) {
     params.set('include_completed', String(options.includeCompleted));
   }
-  
+
   const url = params.toString()
     ? `${API_BASE}/tasks?${params}`
     : `${API_BASE}/tasks`;
-    
+
   const response = await makeAuthenticatedRequest(url);
 
   if (!response.ok) {
@@ -62,15 +62,15 @@ export async function getTaskDetail(
   options: TaskDetailOptions = {}
 ): Promise<TaskDetail> {
   const params = new URLSearchParams();
-  
+
   if (options.includeTechnicalLogs) {
     params.set('include_technical_logs', 'true');
   }
-  
+
   const url = params.toString()
     ? `${API_BASE}/tasks/${encodeURIComponent(taskId)}?${params}`
     : `${API_BASE}/tasks/${encodeURIComponent(taskId)}`;
-    
+
   const response = await makeAuthenticatedRequest(url);
 
   if (!response.ok) {
@@ -82,6 +82,24 @@ export async function getTaskDetail(
   }
 
   return parseApiResponse<TaskDetail>(response);
+}
+
+/**
+ * Task 결과물 조회
+ */
+export async function getTaskOutcomes(taskId: string): Promise<any> {
+  const response = await makeAuthenticatedRequest(`${API_BASE}/tasks/${encodeURIComponent(taskId)}/outcomes`);
+  if (!response.ok) throw new Error('Failed to get task outcomes');
+  return parseApiResponse<any>(response);
+}
+
+/**
+ * Task 비즈니스 지표 조회
+ */
+export async function getTaskMetrics(taskId: string): Promise<any> {
+  const response = await makeAuthenticatedRequest(`${API_BASE}/tasks/${encodeURIComponent(taskId)}/metrics`);
+  if (!response.ok) throw new Error('Failed to get task metrics');
+  return parseApiResponse<any>(response);
 }
 
 // ===== Status Display Helpers =====

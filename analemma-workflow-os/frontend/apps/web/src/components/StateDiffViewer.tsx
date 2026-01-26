@@ -55,45 +55,45 @@ const isComplexValue = (value: any): boolean => {
 const DiffRow: React.FC<DiffRowProps> = ({ keyName, type, value, oldValue, newValue }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  
+
   const config = {
-    added: { 
-      icon: Plus, 
-      bgClass: 'bg-green-50 dark:bg-green-950', 
+    added: {
+      icon: Plus,
+      bgClass: 'bg-green-50 dark:bg-green-950',
       borderClass: 'border-green-200 dark:border-green-800',
       labelClass: 'text-green-700 dark:text-green-300',
       label: '추가됨'
     },
-    removed: { 
-      icon: Minus, 
-      bgClass: 'bg-red-50 dark:bg-red-950', 
+    removed: {
+      icon: Minus,
+      bgClass: 'bg-red-50 dark:bg-red-950',
       borderClass: 'border-red-200 dark:border-red-800',
       labelClass: 'text-red-700 dark:text-red-300',
       label: '삭제됨'
     },
-    modified: { 
-      icon: ArrowLeftRight, 
-      bgClass: 'bg-yellow-50 dark:bg-yellow-950', 
+    modified: {
+      icon: ArrowLeftRight,
+      bgClass: 'bg-yellow-50 dark:bg-yellow-950',
       borderClass: 'border-yellow-200 dark:border-yellow-800',
       labelClass: 'text-yellow-700 dark:text-yellow-300',
       label: '변경됨'
     },
   };
-  
+
   const { icon: Icon, bgClass, borderClass, labelClass, label } = config[type];
   const displayValue = type === 'modified' ? newValue : value;
   const hasComplexValue = isComplexValue(displayValue) || (type === 'modified' && isComplexValue(oldValue));
-  
+
   const handleCopy = async () => {
-    const textToCopy = type === 'modified' 
+    const textToCopy = type === 'modified'
       ? `${keyName}:\n  이전: ${formatValue(oldValue)}\n  이후: ${formatValue(newValue)}`
       : `${keyName}: ${formatValue(displayValue)}`;
-    
+
     await navigator.clipboard.writeText(textToCopy);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-  
+
   if (hasComplexValue) {
     return (
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -153,7 +153,7 @@ const DiffRow: React.FC<DiffRowProps> = ({ keyName, type, value, oldValue, newVa
       </Collapsible>
     );
   }
-  
+
   return (
     <div className={cn("border rounded-md p-2 mb-2", bgClass, borderClass)}>
       <div className="flex items-start justify-between gap-2">
@@ -197,12 +197,13 @@ export const StateDiffViewer: React.FC<StateDiffViewerProps> = ({
   sourceLabel = '이전',
   targetLabel = '이후',
 }) => {
-  const addedEntries = Object.entries(diff?.added || {});
-  const removedEntries = Object.entries(diff?.removed || {});
-  const modifiedEntries = Object.entries(diff?.modified || {});
-  
+  const activeDiff = diff || (compareResult as StateDiff);
+  const addedEntries = Object.entries(activeDiff?.added || {});
+  const removedEntries = Object.entries(activeDiff?.removed || {});
+  const modifiedEntries = Object.entries(activeDiff?.modified || {});
+
   const totalChanges = addedEntries.length + removedEntries.length + modifiedEntries.length;
-  
+
   if (loading) {
     return (
       <Card>
@@ -222,7 +223,7 @@ export const StateDiffViewer: React.FC<StateDiffViewerProps> = ({
       </Card>
     );
   }
-  
+
   if (!diff || totalChanges === 0) {
     return (
       <Card>
@@ -241,7 +242,7 @@ export const StateDiffViewer: React.FC<StateDiffViewerProps> = ({
       </Card>
     );
   }
-  
+
   return (
     <Card>
       <CardHeader>
@@ -288,7 +289,7 @@ export const StateDiffViewer: React.FC<StateDiffViewerProps> = ({
               변경 ({modifiedEntries.length})
             </TabsTrigger>
           </TabsList>
-          
+
           <ScrollArea className="max-h-[400px] pr-4">
             <TabsContent value="all" className="mt-0">
               {addedEntries.map(([key, value]) => (
@@ -298,36 +299,36 @@ export const StateDiffViewer: React.FC<StateDiffViewerProps> = ({
                 <DiffRow key={`removed-${key}`} keyName={key} type="removed" value={value} />
               ))}
               {modifiedEntries.map(([key, change]: [string, any]) => (
-                <DiffRow 
-                  key={`modified-${key}`} 
-                  keyName={key} 
-                  type="modified" 
-                  oldValue={change.old_value}
-                  newValue={change.new_value}
+                <DiffRow
+                  key={`modified-${key}`}
+                  keyName={key}
+                  type="modified"
+                  oldValue={change.old}
+                  newValue={change.new}
                 />
               ))}
             </TabsContent>
-            
+
             <TabsContent value="added" className="mt-0">
               {addedEntries.map(([key, value]) => (
                 <DiffRow key={`added-${key}`} keyName={key} type="added" value={value} />
               ))}
             </TabsContent>
-            
+
             <TabsContent value="removed" className="mt-0">
               {removedEntries.map(([key, value]) => (
                 <DiffRow key={`removed-${key}`} keyName={key} type="removed" value={value} />
               ))}
             </TabsContent>
-            
+
             <TabsContent value="modified" className="mt-0">
               {modifiedEntries.map(([key, change]: [string, any]) => (
-                <DiffRow 
-                  key={`modified-${key}`} 
-                  keyName={key} 
-                  type="modified" 
-                  oldValue={change.old_value}
-                  newValue={change.new_value}
+                <DiffRow
+                  key={`modified-${key}`}
+                  keyName={key}
+                  type="modified"
+                  oldValue={change.old}
+                  newValue={change.new}
                 />
               ))}
             </TabsContent>

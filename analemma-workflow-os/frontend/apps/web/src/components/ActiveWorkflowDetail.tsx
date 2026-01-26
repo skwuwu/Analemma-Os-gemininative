@@ -4,7 +4,9 @@ import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Activity, X, History, RotateCcw } from 'lucide-react';
+import { Activity, X, History, RotateCcw, Zap } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { TimelineItem } from '@/components/TimelineItem';
 import { CheckpointTimeline } from '@/components/CheckpointTimeline';
 import { RollbackDialog } from '@/components/RollbackDialog';
@@ -159,7 +161,7 @@ export const ActiveWorkflowDetail: React.FC<ActiveWorkflowDetailProps> = ({
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
                 <div className="px-6 pt-4 border-b bg-card/30">
-                    <TabsList className="grid w-full max-w-md grid-cols-3">
+                    <TabsList className="grid w-full max-w-md grid-cols-4">
                         <TabsTrigger value="timeline" className="gap-2">
                             <Activity className="w-4 h-4" />
                             타임라인
@@ -170,6 +172,15 @@ export const ActiveWorkflowDetail: React.FC<ActiveWorkflowDetailProps> = ({
                             {checkpoints.timeline.length > 0 && (
                                 <span className="ml-1 text-xs bg-muted px-1.5 py-0.5 rounded-full">
                                     {checkpoints.timeline.length}
+                                </span>
+                            )}
+                        </TabsTrigger>
+                        <TabsTrigger value="suggestions" className="gap-2">
+                            <Zap className="w-4 h-4 text-yellow-500" />
+                            AI 제안
+                            {timeMachine.suggestions.length > 0 && (
+                                <span className="ml-1 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">
+                                    {timeMachine.suggestions.length}
                                 </span>
                             )}
                         </TabsTrigger>
@@ -259,8 +270,8 @@ export const ActiveWorkflowDetail: React.FC<ActiveWorkflowDetailProps> = ({
                         <div className="max-w-3xl mx-auto">
                             {timeMachine.compareResult ? (
                                 <StateDiffViewer
-                                    diff={timeMachine.compareResult}
-                                    compareResult={timeMachine.compareResult as any} // Cast to satisfy mismatched props if necessary, or just rely on diff
+                                    diff={null}
+                                    compareResult={timeMachine.compareResult}
                                     loading={timeMachine.isCompareLoading}
                                 />
                             ) : (
@@ -272,6 +283,64 @@ export const ActiveWorkflowDetail: React.FC<ActiveWorkflowDetailProps> = ({
                                     </p>
                                     <p className="text-xs mt-4 text-muted-foreground/70">
                                         첫 번째 체크포인트를 클릭하고, 두 번째 체크포인트의 🔄 버튼을 클릭하세요.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value="suggestions" className="flex-1 mt-0">
+                    <ScrollArea className="h-full p-6 bg-muted/10">
+                        <div className="max-w-3xl mx-auto space-y-4">
+                            {timeMachine.suggestions.length > 0 ? (
+                                timeMachine.suggestions.map((suggestion, idx) => (
+                                    <Card key={idx} className="border-l-4 border-l-yellow-500 transition-all hover:shadow-md">
+                                        <CardHeader className="pb-2">
+                                            <div className="flex justify-between items-start">
+                                                <CardTitle className="text-sm font-bold flex items-center gap-2">
+                                                    <RotateCcw className="w-4 h-4 text-primary" />
+                                                    {suggestion.node_name || suggestion.node_id} (Step {suggestion.step})
+                                                </CardTitle>
+                                                <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200">
+                                                    Priority {suggestion.priority}
+                                                </Badge>
+                                            </div>
+                                        </CardHeader>
+                                        <CardContent>
+                                            <p className="text-sm text-foreground mb-4 leading-relaxed">{suggestion.reason}</p>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    className="bg-yellow-500 hover:bg-yellow-600 text-white border-none"
+                                                    onClick={() => {
+                                                        const item = checkpoints.timeline.find(t => t.checkpoint_id === suggestion.checkpoint_id);
+                                                        if (item) handleRollbackClick(item as any);
+                                                    }}
+                                                >
+                                                    이 시점으로 롤백
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    onClick={() => {
+                                                        timeMachine.selectCheckpoint(suggestion.checkpoint_id);
+                                                        setActiveTab('checkpoints');
+                                                    }}
+                                                >
+                                                    체크포인트 보기
+                                                </Button>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))
+                            ) : (
+                                <div className="text-center py-12 text-muted-foreground bg-card rounded-xl border border-dashed">
+                                    <Zap className="w-12 h-12 mx-auto mb-4 opacity-10" />
+                                    <p className="text-lg font-medium">AI 제안 없음</p>
+                                    <p className="text-sm mt-2">
+                                        현재 상황에서 추천되는 롤백 포인트가 없습니다.
                                     </p>
                                 </div>
                             )}

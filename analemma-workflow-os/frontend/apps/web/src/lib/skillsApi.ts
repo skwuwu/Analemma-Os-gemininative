@@ -113,7 +113,7 @@ export interface SaveSubgraphAsSkillRequest {
 }
 
 export interface SkillListResponse {
-  skills: Skill[];
+  items: Skill[];
   next_token?: string;
 }
 
@@ -132,7 +132,7 @@ export async function createSkill(request: CreateSkillRequest): Promise<Skill> {
     },
     body: JSON.stringify(request),
   });
-  
+
   return parseApiResponse<Skill>(response);
 }
 
@@ -148,14 +148,14 @@ export async function listSkills(options?: {
   if (options?.category) params.append('category', options.category);
   if (options?.limit) params.append('limit', options.limit.toString());
   if (options?.nextToken) params.append('next_token', options.nextToken);
-  
+
   const queryString = params.toString();
   const url = `${API_BASE_URL}/skills${queryString ? `?${queryString}` : ''}`;
-  
+
   const response = await makeAuthenticatedRequest(url, {
     method: 'GET',
   });
-  
+
   return parseApiResponse<SkillListResponse>(response);
 }
 
@@ -168,7 +168,7 @@ export async function getSkill(skillId: string, version?: string): Promise<Skill
     `${API_BASE_URL}/skills/${encodeURIComponent(skillId)}${params}`,
     { method: 'GET' }
   );
-  
+
   return parseApiResponse<Skill>(response);
 }
 
@@ -186,7 +186,7 @@ export async function updateSkill(skillId: string, request: UpdateSkillRequest):
       body: JSON.stringify(request),
     }
   );
-  
+
   return parseApiResponse<Skill>(response);
 }
 
@@ -214,14 +214,14 @@ export async function listPublicSkills(options?: {
   if (options?.search) params.append('search', options.search);
   if (options?.limit) params.append('limit', options.limit.toString());
   if (options?.nextToken) params.append('next_token', options.nextToken);
-  
+
   const queryString = params.toString();
   const url = `${API_BASE_URL}/skills/public${queryString ? `?${queryString}` : ''}`;
-  
+
   const response = await makeAuthenticatedRequest(url, {
     method: 'GET',
   });
-  
+
   return parseApiResponse<SkillListResponse>(response);
 }
 
@@ -242,7 +242,7 @@ export async function saveSubgraphAsSkill(request: SaveSubgraphAsSkillRequest): 
     input_schema: request.subgraph.input_schema || {},
     output_schema: request.subgraph.output_schema || {},
   };
-  
+
   const response = await makeAuthenticatedRequest(`${API_BASE_URL}/skills`, {
     method: 'POST',
     headers: {
@@ -250,7 +250,7 @@ export async function saveSubgraphAsSkill(request: SaveSubgraphAsSkillRequest): 
     },
     body: JSON.stringify(skillPayload),
   });
-  
+
   return parseApiResponse<Skill>(response);
 }
 
@@ -260,12 +260,12 @@ export async function saveSubgraphAsSkill(request: SaveSubgraphAsSkillRequest): 
 export async function loadSkillAsSubgraph(skillId: string): Promise<SubgraphDefinition | null> {
   try {
     const skill = await getSkill(skillId);
-    
+
     if (skill.skill_type !== 'subgraph_based' || !skill.subgraph_config) {
       console.warn(`Skill ${skillId} is not a subgraph-based skill`);
       return null;
     }
-    
+
     return skill.subgraph_config;
   } catch (error) {
     console.error(`Failed to load skill ${skillId} as subgraph:`, error);

@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Brain, Clock, Webhook, Zap, MessageSquare, Mail, Globe, Calendar, Github, Database, MessageCircle, FolderOpen, Search, GripVertical, ChevronDown, ChevronRight, type LucideIcon } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
+import { listSkills, type Skill } from '@/lib/skillsApi';
 
 // 1. 블록 데이터 정의 (확장성을 위해 type 정의 추천)
 type BlockType = 'trigger' | 'aiModel' | 'operator' | 'control';
@@ -137,9 +138,49 @@ const BlockItem = ({ id, label, icon: Icon, type, defaultData, description }: Bl
 
 export const BlockLibrary = () => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [userSkills, setUserSkills] = useState<Skill[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchSkills = async () => {
+      setIsLoading(true);
+      try {
+        const response = await listSkills();
+        setUserSkills(response.items || []);
+      } catch (error) {
+        console.error('Failed to fetch user skills:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchSkills();
+  }, []);
+
+  const allCategories = useMemo(() => {
+    if (userSkills.length === 0) return BLOCK_CATEGORIES;
+
+    const userSkillCategory = {
+      title: 'User Skills',
+      type: 'operator' as BlockType,
+      items: userSkills.map(skill => ({
+        id: skill.skill_id,
+        label: skill.name,
+        icon: skill.skill_type === 'subgraph_based' ? FolderOpen : Brain,
+        description: skill.description || 'Custom user skill',
+        defaultData: {
+          operatorType: 'skill',
+          skillId: skill.skill_id,
+          version: skill.version,
+          skillType: skill.skill_type
+        }
+      }))
+    };
+
+    return [...BLOCK_CATEGORIES, userSkillCategory];
+  }, [userSkills]);
 
   // 검색 필터링 로직
-  const filteredCategories = BLOCK_CATEGORIES.map(category => ({
+  const filteredCategories = allCategories.map(category => ({
     ...category,
     items: category.items.filter(item =>
       item.label.toLowerCase().includes(searchTerm.toLowerCase())

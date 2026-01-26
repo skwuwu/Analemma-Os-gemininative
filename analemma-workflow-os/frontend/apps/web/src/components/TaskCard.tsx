@@ -10,12 +10,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { 
-  Clock, 
-  Loader2, 
-  AlertCircle, 
-  CheckCircle2, 
-  XCircle, 
+import {
+  Clock,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  XCircle,
   Slash,
   Bot,
   TrendingUp,
@@ -32,7 +32,7 @@ interface TaskCardProps {
 
 const StatusIcon: React.FC<{ status: TaskStatus }> = ({ status }) => {
   const iconProps = { className: 'w-4 h-4' };
-  
+
   switch (status) {
     case 'queued':
       return <Clock {...iconProps} className="w-4 h-4 text-slate-500" />;
@@ -63,9 +63,9 @@ const STATUS_CONFIG: Record<TaskStatus, { label: string; variant: 'default' | 's
 
 const StatusBadge: React.FC<{ status: TaskStatus }> = ({ status }) => {
   const config = STATUS_CONFIG[status] || { label: status, variant: 'secondary' as const };
-  
+
   return (
-    <Badge 
+    <Badge
       variant={config.variant}
       className={cn(
         'text-xs',
@@ -82,7 +82,7 @@ const StatusBadge: React.FC<{ status: TaskStatus }> = ({ status }) => {
 export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }) => {
   const isRunning = task.status === 'in_progress';
   const needsAttention = task.status === 'pending_approval';
-  
+
   // 시간 포맷팅
   const formatTime = (isoString?: string | null) => {
     if (!isoString) return '';
@@ -102,7 +102,7 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
   };
 
   return (
-    <Card 
+    <Card
       className={cn(
         'cursor-pointer transition-all hover:shadow-md',
         isSelected && 'ring-2 ring-primary shadow-md',
@@ -113,7 +113,7 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
       onKeyDown={handleKeyDown}
       tabIndex={onClick ? 0 : -1}
       role={onClick ? 'button' : undefined}
-      aria-label={`${task.agent_name} 작업: ${task.current_step || '진행 중'}`}
+      aria-label={`${task.agent_name} 작업: ${task.current_step_name || '진행 중'}`}
     >
       <CardContent className="p-4">
         {/* 상단: 에이전트 정보 및 상태 */}
@@ -139,17 +139,17 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
             <StatusBadge status={task.status} />
           </div>
         </div>
-        
+
         {/* 업무 요약 */}
         <h3 className="text-sm font-semibold mb-2 line-clamp-1">
           {task.execution_alias || task.task_summary || '작업 진행 중'}
         </h3>
-        
+
         {/* 현재 상태/생각 */}
         <p className="text-xs text-muted-foreground mb-3 line-clamp-2 min-h-[2rem]">
           {task.current_thought || task.current_step_name || '준비 중...'}
         </p>
-        
+
         {/* 비즈니스 가치 지표 - 벤토 그리드 레이아웃 */}
         {/* 
           Grid 매핑:
@@ -168,7 +168,7 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
                 <span className="font-medium">{task.estimated_completion_time}</span>
               </div>
             )}
-            
+
             {/* Row 2: 3열 그리드 (신뢰도 | 자율도 | 개입이력) */}
             {/* 신뢰도 점수 - Left */}
             <div className="flex items-center justify-center gap-1 rounded bg-slate-50 px-2 py-1.5">
@@ -177,12 +177,12 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
                   <Shield className={cn(
                     'w-3 h-3',
                     task.confidence_score >= 80 ? 'text-green-500' :
-                    task.confidence_score >= 60 ? 'text-amber-500' : 'text-red-500'
+                      task.confidence_score >= 60 ? 'text-amber-500' : 'text-red-500'
                   )} />
                   <span className={cn(
                     'font-semibold',
                     task.confidence_score >= 80 ? 'text-green-600' :
-                    task.confidence_score >= 60 ? 'text-amber-600' : 'text-red-600'
+                      task.confidence_score >= 60 ? 'text-amber-600' : 'text-red-600'
                   )}>
                     {task.confidence_score.toFixed(0)}%
                   </span>
@@ -192,7 +192,7 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
                 <span className="text-muted-foreground">-</span>
               )}
             </div>
-            
+
             {/* 자율도 - Center */}
             <div className="flex items-center justify-center gap-1 rounded bg-emerald-50/50 px-2 py-1.5">
               {task.autonomy_rate !== null && task.autonomy_rate !== undefined ? (
@@ -207,13 +207,13 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
                 <span className="text-muted-foreground">-</span>
               )}
             </div>
-            
+
             {/* 개입 이력 - Right */}
             <div className="flex items-center justify-center gap-1 rounded px-2 py-1.5"
-              style={{ 
-                backgroundColor: task.intervention_history?.negative_count && task.intervention_history.negative_count > 0 
-                  ? 'rgba(239, 68, 68, 0.05)' 
-                  : 'rgba(245, 158, 11, 0.05)' 
+              style={{
+                backgroundColor: task.intervention_history?.negative_count && task.intervention_history.negative_count > 0
+                  ? 'rgba(239, 68, 68, 0.05)'
+                  : 'rgba(245, 158, 11, 0.05)'
               }}
             >
               {task.intervention_history && typeof task.intervention_history === 'object' && task.intervention_history.total_count > 0 ? (
@@ -239,7 +239,7 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
             </div>
           </div>
         )}
-        
+
         {/* 진행률 바 (진행 중일 때만) */}
         {(isRunning || task.progress_percentage > 0) && (
           <div className="space-y-1">
@@ -247,8 +247,8 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
               <span>{task.current_step_name || '진행 중'}</span>
               <span>{task.progress_percentage}%</span>
             </div>
-            <Progress 
-              value={task.progress_percentage} 
+            <Progress
+              value={task.progress_percentage}
               className={cn(
                 'h-1.5',
                 needsAttention && '[&>div]:bg-amber-500'
@@ -256,14 +256,14 @@ export const TaskCard = React.memo<TaskCardProps>(({ task, isSelected, onClick }
             />
           </div>
         )}
-        
+
         {/* 에러 메시지 */}
         {task.error_message && (
           <div className="mt-2 p-2 bg-red-50 rounded text-xs text-red-600">
             {task.error_message}
           </div>
         )}
-        
+
         {/* 하단: 시간 정보 */}
         <div className="flex justify-between items-center mt-3 pt-2 border-t text-xs text-muted-foreground">
           <span>
