@@ -248,7 +248,8 @@ export const useNotifications = (options: UseNotificationsOptions = {}) => {
       try {
         // Force refresh token on reconnect to ensure valid credentials
         const session = await fetchAuthSession({ forceRefresh: reconnectAttempts.current > 0 });
-        token = session.tokens?.accessToken?.toString() || null;
+        // Use idToken for WebSocket (same as HTTP API)
+        token = session.tokens?.idToken?.toString() || null;
       } catch (e) {
         console.warn('Failed to get auth token for WS connection', e);
       }

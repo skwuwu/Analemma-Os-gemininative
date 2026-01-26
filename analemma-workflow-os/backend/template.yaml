@@ -324,7 +324,7 @@ Resources:
       Name: !Sub "backend-websocket-${StageName}"
       ProtocolType: WEBSOCKET
       RouteSelectionExpression: "$request.body.action"
-      DisableExecuteApiEndpoint: true
+      DisableExecuteApiEndpoint: false  # Enable default endpoint for WebSocket
 
   # [Fix] Explicit Authorizer Resource (SAM does not support inline Auth for V2 WebSocket)
   WebsocketConnectAuthorizer:
