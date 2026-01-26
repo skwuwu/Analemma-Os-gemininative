@@ -50,11 +50,12 @@
             "id": "parallel_branch_executor",
             "type": "for_each",
             "config": {
-                "items_key": "branch_configs",
-                "item_variable": "current_branch",
+                "input_list_key": "branch_configs",
+                "item_key": "current_branch",
                 "output_key": "branch_results",
                 "max_concurrency": 3,
-                "nodes": [
+                "sub_workflow": {
+                    "nodes": [
                     {
                         "id": "branch_init_id",
                         "type": "operator_official",
@@ -255,6 +256,7 @@
                         }
                     }
                 ]
+                }
             }
         },
         {

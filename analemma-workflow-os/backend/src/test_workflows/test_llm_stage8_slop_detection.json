@@ -39,11 +39,12 @@
             "id": "slop_test_loop",
             "type": "for_each",
             "config": {
-                "items_key": "test_cases",
-                "item_variable": "current_case",
+                "input_list_key": "test_cases",
+                "item_key": "current_case",
                 "output_key": "test_results",
                 "max_concurrency": 1,
-                "nodes": [
+                "sub_workflow": {
+                    "nodes": [
                     {
                         "id": "extract_case_id",
                         "type": "operator_official",
@@ -182,6 +183,7 @@
                         }
                     }
                 ]
+                }
             }
         },
         {

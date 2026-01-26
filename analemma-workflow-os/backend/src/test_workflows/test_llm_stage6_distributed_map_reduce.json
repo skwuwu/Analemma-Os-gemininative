@@ -37,11 +37,12 @@
             "id": "distributed_map_processor",
             "type": "for_each",
             "config": {
-                "items_key": "partition_map",
-                "item_variable": "current_partition",
+                "input_list_key": "partition_map",
+                "item_key": "current_partition",
                 "output_key": "partition_results",
                 "max_concurrency": 3,
-                "nodes": [
+                "sub_workflow": {
+                    "nodes": [
                     {
                         "id": "partition_init_id",
                         "type": "operator_official",
@@ -196,6 +197,7 @@
                         }
                     }
                 ]
+                }
             }
         },
         {

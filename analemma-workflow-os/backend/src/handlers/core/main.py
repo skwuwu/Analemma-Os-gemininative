@@ -1485,6 +1485,9 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             # This ensures test workflows can verify results using exact key names
             out_key = config.get("output_key") or config.get("writes_state_key") or f"{node_id}_output"
             logger.debug(f"[LLM Response] Output key resolved: {out_key} (from config: {config.get('output_key')})")
+            
+            # [DEBUG] Provider Tracking - 폴백 없이 bedrock 표시 문제 디버깅
+            logger.info(f"🔍 [Provider Debug] Node: {node_id}, meta.provider: {meta.get('provider')}, usage.provider: {usage.get('provider')}")
             # 🛡️ [Guard] Layer 1: Validate output keys (Reserved key check)
             raw_output = {out_key: output_value, f"{node_id}_meta": meta, "step_history": new_history, "usage": usage}
             validated_output = _validate_output_keys(raw_output, node_id)

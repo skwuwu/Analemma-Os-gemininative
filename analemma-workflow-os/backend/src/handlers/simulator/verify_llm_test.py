@@ -9,6 +9,10 @@ v2.1: Task Manager 추상화 레이어 검증 추가
 - Provider 교차 검증 (Cross-validation)
 - Thought Memory Compaction (10개 한정)
 - QuickFix 동적 생성 검증
+
+v2.2: S3 Offload Hydration 지원
+- __s3_offloaded 상태 자동 하이드레이션
+- Stage 4, 6, 7, 8에서 S3 경로 추적
 """
 
 import json
@@ -19,6 +23,88 @@ from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+
+# ============================================================================
+# S3 Offload Hydration (v2.2)
+# ============================================================================
+
+def _hydrate_s3_offloaded_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    S3로 오프로드된 상태를 하이드레이션합니다.
+    
+    __s3_offloaded: True 플래그가 있으면 __s3_path에서 전체 상태를 읽어옵니다.
+    이 함수가 없으면 검증기가 빈 상태만 보고 실패로 판정합니다.
+    
+    Args:
+        final_state: 오프로드되었을 수 있는 상태 딕셔너리
+    
+    Returns:
+        하이드레이션된 전체 상태
+    """
+    if not isinstance(final_state, dict):
+        return final_state
+    
+    # S3 오프로드 플래그 확인
+    if not final_state.get('__s3_offloaded'):
+        return final_state
+    
+    s3_path = final_state.get('__s3_path')
+    if not s3_path:
+        logger.warning("[S3 Hydration] __s3_offloaded=True but no __s3_path found")
+        return final_state
+    
+    logger.info(f"[S3 Hydration] Fetching offloaded state from: {s3_path}")
+    
+    try:
+        import boto3
+        s3_client = boto3.client('s3')
+        
+        # s3://bucket/key 형식 파싱
+        if s3_path.startswith('s3://'):
+            parts = s3_path[5:].split('/', 1)
+            bucket = parts[0]
+            key = parts[1] if len(parts) > 1 else ''
+        else:
+            logger.error(f"[S3 Hydration] Invalid S3 path format: {s3_path}")
+            return final_state
+        
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        body = response['Body'].read().decode('utf-8')
+        
+        hydrated_state = json.loads(body)
+        logger.info(f"[S3 Hydration] Successfully hydrated state, keys: {list(hydrated_state.keys())[:10]}...")
+        
+        return hydrated_state
+        
+    except Exception as e:
+        logger.exception(f"[S3 Hydration] Failed to fetch from S3: {e}")
+        # 실패 시 원본 반환 (부분 데이터라도 사용)
+        return final_state
+
+
+def _ensure_hydrated_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    검증 전 상태가 S3에서 완전히 하이드레이션되었는지 확인합니다.
+    
+    중첩된 오프로드 상태도 처리합니다 (예: final_state 내부의 execution_result).
+    """
+    # 최상위 하이드레이션
+    hydrated = _hydrate_s3_offloaded_state(final_state)
+    
+    # execution_result 내부 하이드레이션
+    if 'execution_result' in hydrated:
+        exec_result = hydrated['execution_result']
+        if isinstance(exec_result, dict) and exec_result.get('__s3_offloaded'):
+            hydrated['execution_result'] = _hydrate_s3_offloaded_state(exec_result)
+    
+    # final_state 내부 하이드레이션
+    if 'final_state' in hydrated:
+        inner_state = hydrated['final_state']
+        if isinstance(inner_state, dict) and inner_state.get('__s3_offloaded'):
+            hydrated['final_state'] = _hydrate_s3_offloaded_state(inner_state)
+    
+    return hydrated
 
 # Task Context imports (lazy loading to avoid circular imports)
 def _get_task_context_models():
@@ -1671,6 +1757,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     v2.1: Task Manager Abstraction Verification
     - verification_type: "task_abstraction"으로 설정 시 전용 검증 수행
     - Provider Cross-validation, Thought Memory Compaction, QuickFix 동적 생성 검증
+    
+    v2.2: S3 Offload Hydration
+    - __s3_offloaded 상태 자동 하이드레이션
+    - Stage 4, 6, 7, 8에서 S3 경로 추적
     """
     logger.info(f"Verifying LLM test: {event.get('scenario_key')}")
     
@@ -1679,6 +1769,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     test_config = event.get('test_config', {})
     execution_id = event.get('execution_id', '')
     verification_type = event.get('verification_type', 'standard')
+    
+    # ========================================
+    # v2.2: S3 Offload Hydration (Critical Fix)
+    # ========================================
+    # Stage 4, 6, 7, 8에서 상태가 S3로 오프로드되면 빈 상태만 보이는 문제 수정
+    if final_state.get('__s3_offloaded'):
+        logger.info(f"[S3 Hydration] Detected offloaded state, hydrating from S3...")
+        final_state = _ensure_hydrated_state(final_state)
+        logger.info(f"[S3 Hydration] Hydration complete. State keys: {list(final_state.keys())[:10]}")
     
     # v2.1: Task Abstraction 전용 검증
     if verification_type == 'task_abstraction' or scenario_key == 'TASK_ABSTRACTION':
