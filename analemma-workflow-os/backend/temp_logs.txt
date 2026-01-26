@@ -1,0 +1,7 @@
+{
+    "events": [
+        {
+            "timestamp": 1769429761867,
+
+'cp949' codec can't encode character '\U0001f6a8' in position 33: illegal multibyte sequence
+            "message": 

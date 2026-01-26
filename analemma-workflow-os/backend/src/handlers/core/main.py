@@ -1362,7 +1362,7 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             current_attempt_state["attempt_count"] = attempt + 1
             
             # Render prompts with current attempt count
-            prompt_template = actual_config.get("prompt_content") or actual_config.get("user_prompt_template", "")
+            prompt_template = actual_config.get("prompt_content") or actual_config.get("user_prompt_template") or actual_config.get("prompt_template", "")
             prompt = _render_template(prompt_template, current_attempt_state)
             
             # [DEBUG] Log rendered prompt for troubleshooting empty prompt issues

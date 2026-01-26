@@ -2393,8 +2393,13 @@ Resources:
       Environment:
         Variables:
           STAGE_NAME: !Ref StageName
+          # [Fix] S3 Hydration에 필요한 버킷 이름
+          WORKFLOW_STATE_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
       Policies:
         - CloudWatchPutMetricPolicy: {}
+        # [Fix] S3 offload된 상태를 읽기 위한 권한 추가 - Stage 4-8 검증 실패 원인
+        - S3ReadPolicy:
+            BucketName: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
 
   # LLM Simulator Trigger Lambda - Step Functions 실행 트리거
   LLMSimulatorTriggerFunction:

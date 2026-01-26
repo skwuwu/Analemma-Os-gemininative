@@ -111,7 +111,7 @@
                                     "config": {
                                         "model": "gemini-2.0-flash",
                                         "provider": "gemini",
-                                        "prompt_template": "{{ state.current_prompt }}\n\nProvide a concise, structured response in JSON format with:\n1. summary: A 2-3 sentence summary\n2. key_points: List of 3-5 key points\n3. confidence: Your confidence score (0-1)",
+                                        "prompt_template": "{{ current_prompt }}\n\nProvide a concise, structured response in JSON format with:\n1. summary: A 2-3 sentence summary\n2. key_points: List of 3-5 key points\n3. confidence: Your confidence score (0-1)",
                                         "response_schema": {
                                             "type": "object",
                                             "properties": {
