@@ -1,0 +1,41 @@
+{
+    "events": [
+        {
+            "logStreamName": "2026/01/26/[$LATEST]271560d9176a4debb4d6670c3dd4e9b4",
+            "timestamp": 1769391369639,
+            "message": "2026-01-26 01:36:09,639 WARNING Non-retryable Gemini error, falling back to Bedrock: 'object'\n",
+            "ingestionTime": 1769391378647,
+            "eventId": "39458746090798452252825096426931221309217819857801379848"
+        },
+        {
+            "logStreamName": "2026/01/26/[$LATEST]271560d9176a4debb4d6670c3dd4e9b4",
+            "timestamp": 1769391369639,
+            "message": "[WARNING]\t2026-01-26T01:36:09.639Z\t93f6f9ac-fc3c-489b-8ed1-72787538965c\tNon-retryable Gemini error, falling back to Bedrock: 'object'\n",
+            "ingestionTime": 1769391378647,
+            "eventId": "39458746090798452252825096426931221309217819857801379849"
+        },
+        {
+            "logStreamName": "2026/01/26/[$LATEST]271560d9176a4debb4d6670c3dd4e9b4",
+            "timestamp": 1769391378805,
+            "message": "2026-01-26 01:36:18,805 WARNING Non-retryable Gemini error, falling back to Bedrock: 'object'\n",
+            "ingestionTime": 1769391387650,
+            "eventId": "39458746295207082742556788153131707651957666749945348135"
+        },
+        {
+            "logStreamName": "2026/01/26/[$LATEST]271560d9176a4debb4d6670c3dd4e9b4",
+            "timestamp": 1769391378805,
+            "message": "[WARNING]\t2026-01-26T01:36:18.805Z\ta32def07-b218-42a5-87d1-0ace24754f9b\tNon-retryable Gemini error, falling back to Bedrock: 'object'\n",
+            "ingestionTime": 1769391387650,
+            "eventId": "39458746295207082742556788153131707651957666749945348136"
+        },
+        {
+            "logStreamName": "2026/01/26/[$LATEST]271560d9176a4debb4d6670c3dd4e9b4",
+            "timestamp": 1769391382358,
+            "message": "2026-01-26 01:36:22,358 WARNING Non-retryable Gemini error, falling back to Bedrock: 'object'\n",
+            "ingestionTime": 1769391387650,
+            "eventId": "39458746374441630432936092175008114674677295180693766259"
+        }
+    ],
+    "searchedLogStreams": [],
+    "NextToken": "eyJuZXh0VG9rZW4iOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiA1fQ=="
+}

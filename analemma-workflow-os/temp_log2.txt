@@ -1,0 +1,8 @@
+{
+    "events": [
+        {
+            "logStreamName": "2026/01/26/[$LATEST]271560d9176a4debb4d6670c3dd4e9b4",
+            "timestamp": 1769391369639,
+
+'cp949' codec can't encode character '\U0001f6a8' in position 33: illegal multibyte sequence
+            "message": 

@@ -1,0 +1,27 @@
+{
+    "events": [
+        {
+            "logStreamName": "2026/01/26/[$LATEST]d5349af9c18f4395b2a39b043a367a4b",
+            "timestamp": 1769389064925,
+            "message": "[INFO]\t2026-01-26T00:57:44.925Z\td4b2a42c-4d5c-445d-b959-6930cd9ba916\tVertex AI initialized: project=gen-lang-client-0647360059, location=us-central1, credentials=configured\n",
+            "ingestionTime": 1769389073946,
+            "eventId": "39458694693958782766518510619367392535275031143805747200"
+        },
+        {
+            "logStreamName": "2026/01/26/[$LATEST]d5349af9c18f4395b2a39b043a367a4b",
+            "timestamp": 1769389064935,
+            "message": "[INFO]\t2026-01-26T00:57:44.935Z\td4b2a42c-4d5c-445d-b959-6930cd9ba916\tGeminiService: Vertex AI client initialized successfully\n",
+            "ingestionTime": 1769389073946,
+            "eventId": "39458694694181790218503816850782749718001514758865551361"
+        },
+        {
+            "logStreamName": "2026/01/26/[$LATEST]71cbda688d3a4ea8821efa2631c9259c",
+            "timestamp": 1769390159932,
+            "message": "[INFO]\t2026-01-26T01:15:59.931Z\t25396268-9485-47bc-9d31-587cfb839600\tVertex AI initialized: project=gen-lang-client-0647360059, location=us-central1, credentials=configured\n",
+            "ingestionTime": 1769390168950,
+            "eventId": "39458719113430880373940566286747949622364466833359372288"
+        }
+    ],
+    "searchedLogStreams": [],
+    "NextToken": "eyJuZXh0VG9rZW4iOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAzfQ=="
+}

@@ -237,6 +237,58 @@ class GeminiConfig:
 _gemini_client = None
 
 
+def _convert_json_schema_to_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert standard JSON Schema to Vertex AI Schema format.
+    
+    Vertex AI uses uppercase type names:
+    - "object" -> "OBJECT"
+    - "string" -> "STRING"
+    - "array" -> "ARRAY"
+    - "number" -> "NUMBER"
+    - "integer" -> "INTEGER"
+    - "boolean" -> "BOOLEAN"
+    
+    Also handles nested properties recursively.
+    
+    Args:
+        schema: Standard JSON Schema dict
+        
+    Returns:
+        Vertex AI compatible schema dict
+    """
+    if not schema:
+        return schema
+    
+    result = {}
+    
+    for key, value in schema.items():
+        if key == "type":
+            # Convert type to uppercase
+            if isinstance(value, str):
+                result["type"] = value.upper()
+            elif isinstance(value, list):
+                # Handle union types like ["string", "null"]
+                result["type"] = [t.upper() if isinstance(t, str) else t for t in value]
+        elif key == "properties" and isinstance(value, dict):
+            # Recursively convert nested properties
+            result["properties"] = {
+                prop_name: _convert_json_schema_to_vertex(prop_schema)
+                for prop_name, prop_schema in value.items()
+            }
+        elif key == "items" and isinstance(value, dict):
+            # Handle array items
+            result["items"] = _convert_json_schema_to_vertex(value)
+        elif key in ("required", "enum", "maxItems", "minItems", "description"):
+            # Pass through directly
+            result[key] = value
+        else:
+            # Pass through unknown keys (nullable, etc.)
+            result[key] = value
+    
+    return result
+
+
 def _get_safety_settings():
     """
     Generate safety settings for Gemini API.
@@ -703,7 +755,12 @@ class GeminiService:
         if is_mock_mode():
             logger.info("MOCK_MODE: Returning synthetic Gemini response")
             mock_response = _mock_gemini_response(use_tools=response_schema is not None)
-            mock_response["metadata"] = {"token_usage": TokenUsage(input_tokens=10, output_tokens=50).to_dict()}
+            # [Fix] Estimate realistic mock token counts based on actual prompt lengths
+            mock_input_tokens = max(10, len(user_prompt or "") // 4)  # ~4 chars per token
+            if system_instruction:
+                mock_input_tokens += len(system_instruction) // 4
+            mock_output_tokens = min(200, max(50, mock_input_tokens // 5))  # Reasonable output ratio
+            mock_response["metadata"] = {"token_usage": TokenUsage(input_tokens=mock_input_tokens, output_tokens=mock_output_tokens).to_dict()}
             return mock_response
         
         client = self.client
@@ -730,7 +787,8 @@ class GeminiService:
         # Apply Response Schema (force structured output)
         if response_schema:
             generation_config["response_mime_type"] = "application/json"
-            generation_config["response_schema"] = response_schema
+            # Convert standard JSON Schema to Vertex AI format (uppercase types)
+            generation_config["response_schema"] = _convert_json_schema_to_vertex(response_schema)
         
         # Get safety settings to prevent false positives on technical content
         safety_settings = _get_safety_settings()
@@ -882,10 +940,14 @@ class GeminiService:
             for line in mock_lines:
                 yield line + "\n"
                 time.sleep(0.1)
-            # Mock metadata
+            # [Fix] Estimate realistic mock token counts based on actual prompt lengths
+            mock_input_tokens = max(10, len(user_prompt or "") // 4)
+            if system_instruction:
+                mock_input_tokens += len(system_instruction) // 4
+            mock_output_tokens = min(200, max(50, mock_input_tokens // 5))
             mock_metadata = {
                 "type": "_metadata",
-                "data": TokenUsage(input_tokens=10, output_tokens=50).to_dict()
+                "data": TokenUsage(input_tokens=mock_input_tokens, output_tokens=mock_output_tokens).to_dict()
             }
             yield json.dumps(mock_metadata) + "\n"
             return
@@ -930,7 +992,8 @@ class GeminiService:
         
         if response_schema:
             generation_config["response_mime_type"] = "application/json"
-            generation_config["response_schema"] = response_schema
+            # Convert standard JSON Schema to Vertex AI format (uppercase types)
+            generation_config["response_schema"] = _convert_json_schema_to_vertex(response_schema)
         
         # ═══════════════════════════════════════════════════════════════════════
         # Thinking Mode setup (Gemini 2.0+ thinking_config)
@@ -1385,13 +1448,18 @@ Refer to all past conversations and changes to generate consistent responses.
         """
         if is_mock_mode():
             logger.info(f"MOCK_MODE: Returning synthetic Vision response for {len(image_sources)} images")
+            # [Fix] Realistic mock tokens: images add ~258 tokens each, output based on prompt complexity
+            mock_input_tokens = 100 * len(image_sources) + len(user_prompt or "") // 4
+            if system_instruction:
+                mock_input_tokens += len(system_instruction) // 4
+            mock_output_tokens = min(300, max(80, mock_input_tokens // 5))  # Vision usually has more output
             return {
                 "content": [{
                     "text": f"[MOCK] Analyzed {len(image_sources)} images. "
                            f"Prompt: {user_prompt[:50]}..."
                 }],
                 "metadata": {
-                    "token_usage": TokenUsage(input_tokens=100 * len(image_sources), output_tokens=50).to_dict(),
+                    "token_usage": TokenUsage(input_tokens=mock_input_tokens, output_tokens=mock_output_tokens).to_dict(),
                     "image_count": len(image_sources),
                     "model": self.config.model.value
                 }
