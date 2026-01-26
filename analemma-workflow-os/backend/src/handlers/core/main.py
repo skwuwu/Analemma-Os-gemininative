@@ -1194,6 +1194,16 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             prompt_template = config.get("prompt_content") or config.get("user_prompt_template", "")
             prompt = _render_template(prompt_template, current_attempt_state)
             
+            # [DEBUG] Log rendered prompt for troubleshooting empty prompt issues
+            if not prompt or len(prompt.strip()) < 10:
+                logger.error(f"⚠️ [PROMPT DEBUG] Empty or very short prompt detected for node {config.get('id', 'llm')}")
+                logger.error(f"⚠️ [PROMPT DEBUG] prompt_template: {prompt_template[:200] if prompt_template else 'NONE'}...")
+                logger.error(f"⚠️ [PROMPT DEBUG] rendered prompt: {prompt[:200] if prompt else 'EMPTY'}")
+                logger.error(f"⚠️ [PROMPT DEBUG] state keys: {list(current_attempt_state.keys())}")
+                # Check for input_text specifically
+                input_text_val = current_attempt_state.get('input_text', '__NOT_FOUND__')
+                logger.error(f"⚠️ [PROMPT DEBUG] input_text value: {str(input_text_val)[:100] if input_text_val != '__NOT_FOUND__' else 'NOT IN STATE'}")
+            
             system_prompt_tmpl = config.get("system_prompt", "")
             system_prompt = _render_template(system_prompt_tmpl, current_attempt_state)
             
