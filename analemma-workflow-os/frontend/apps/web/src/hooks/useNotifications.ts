@@ -30,10 +30,11 @@ export const useNotifications = (options: UseNotificationsOptions = {}) => {
   const maxReconnectAttempts = 10; // 최대 재연결 시도 횟수
 
   // Store callbacks in refs to avoid recreating connect function
-  const optionsRef = useRef(options);
-  useEffect(() => {
-    optionsRef.current = options;
-  }, [options]);
+  // Update refs every render (this is safe as it doesn't trigger re-renders)
+  const onWorkflowComponentStreamRef = useRef(options.onWorkflowComponentStream);
+  const onWorkflowStatusUpdateRef = useRef(options.onWorkflowStatusUpdate);
+  onWorkflowComponentStreamRef.current = options.onWorkflowComponentStream;
+  onWorkflowStatusUpdateRef.current = options.onWorkflowStatusUpdate;
 
   // 1. React Query for fetching saved notifications
   const {
@@ -320,7 +321,7 @@ export const useNotifications = (options: UseNotificationsOptions = {}) => {
             updateNotificationsCache(notification);
 
             // Callback
-            optionsRef.current.onWorkflowStatusUpdate?.(notification);
+            onWorkflowStatusUpdateRef.current?.(notification);
 
             // Toast Logic
             if (notification.action === 'hitp_pause') {
@@ -340,13 +341,13 @@ export const useNotifications = (options: UseNotificationsOptions = {}) => {
               }
             }
           } else if (data.type === 'workflow_component_stream') {
-            if (optionsRef.current.onWorkflowComponentStream) {
+            if (onWorkflowComponentStreamRef.current) {
               try {
                 // Backend may send payload as object or JSON string
                 const componentData = typeof data.payload === 'string' 
                   ? JSON.parse(data.payload) 
                   : data.payload;
-                optionsRef.current.onWorkflowComponentStream(componentData);
+                onWorkflowComponentStreamRef.current(componentData);
               } catch (e) {
                 console.error("Invalid component JSON:", data.payload, e);
               }
