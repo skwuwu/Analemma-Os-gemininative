@@ -152,30 +152,34 @@ class InterceptorResult:
     action: InterceptorAction
     original_output: str
     processed_output: Optional[str]
-    
+
     # 분석 결과
     entropy_result: Optional[EntropyAnalysisResult]
     slop_result: Optional[SlopDetectionResult]
-    
+
     # 정보 증류 대상
     distillation_targets: List[DistillationTarget] = field(default_factory=list)
-    
+
     # 백그라운드 증류 태스크 (비동기 처리용)
     background_task: Optional[BackgroundDistillationTask] = None
-    
+
     # 메타데이터
     processing_time_ms: float = 0.0
     node_id: str = ""
     workflow_id: str = ""
     timestamp: str = ""
-    
+
     # Stage 2 결과 (있는 경우)
     stage2_verdict: Optional[QualityVerdict] = None
     stage2_score: Optional[int] = None
-    
+
     # 가드레일 정보
     guardrail_upgrade: bool = False  # DISTILL에서 REGENERATE로 업그레이드 되었는지
     guardrail_reason: str = ""
+
+    # 품질 점수 (main.py에서 참조)
+    combined_score: float = 0.0  # entropy_score와 slop_score의 가중 평균
+    recommendation: str = ""  # 액션에 따른 권장 사항
     
     def to_dict(self) -> Dict:
         result = {
@@ -184,6 +188,8 @@ class InterceptorResult:
             'processed_length': len(self.processed_output) if self.processed_output else 0,
             'entropy': self.entropy_result.to_dict() if self.entropy_result else None,
             'slop': self.slop_result.to_dict() if self.slop_result else None,
+            'combined_score': self.combined_score,
+            'recommendation': self.recommendation,
             'distillation_targets': [
                 {
                     'segment': dt.segment_text[:50] + '...' if len(dt.segment_text) > 50 else dt.segment_text,
@@ -207,11 +213,11 @@ class InterceptorResult:
                 'reason': self.guardrail_reason
             } if self.guardrail_upgrade else None
         }
-        
+
         # 백그라운드 태스크 정보
         if self.background_task:
             result['background_distillation'] = self.background_task.to_dict()
-        
+
         return result
 
 
@@ -315,7 +321,20 @@ class KernelMiddlewareInterceptor:
         # LLM 함수
         self.llm_verifier = llm_verifier
         self.llm_distiller = llm_distiller
-    
+
+    @staticmethod
+    def _get_recommendation(action: InterceptorAction) -> str:
+        """액션에 따른 권장 사항 반환"""
+        recommendations = {
+            InterceptorAction.PASS: "Quality check passed. No action required.",
+            InterceptorAction.PASS_WITH_BACKGROUND_DISTILL: "Quality acceptable. Background improvement scheduled.",
+            InterceptorAction.ESCALATE_STAGE2: "Quality uncertain. Escalate to Stage 2 LLM verification.",
+            InterceptorAction.DISTILL: "Low entropy segments detected. Information distillation recommended.",
+            InterceptorAction.REGENERATE: "Quality too low. Full regeneration recommended.",
+            InterceptorAction.REJECT: "Content rejected due to excessive slop or low quality.",
+        }
+        return recommendations.get(action, "Unknown action.")
+
     def post_process_node(
         self,
         node_output: str,
@@ -371,7 +390,9 @@ class KernelMiddlewareInterceptor:
                 processing_time_ms=processing_time,
                 node_id=node_id,
                 workflow_id=workflow_id,
-                timestamp=timestamp
+                timestamp=timestamp,
+                combined_score=combined_score,
+                recommendation=self._get_recommendation(InterceptorAction.REGENERATE)
             )
         
         # Case 2: 저엔트로피 구간 존재 → 정보 증류
@@ -405,7 +426,9 @@ class KernelMiddlewareInterceptor:
                         workflow_id=workflow_id,
                         timestamp=timestamp,
                         guardrail_upgrade=True,
-                        guardrail_reason=f"Distillation targets ({len(distillation_targets)}) > max ({self.budget_config.max_distillation_targets})"
+                        guardrail_reason=f"Distillation targets ({len(distillation_targets)}) > max ({self.budget_config.max_distillation_targets})",
+                        combined_score=combined_score,
+                        recommendation=self._get_recommendation(InterceptorAction.REGENERATE)
                     )
                 
                 # ============================================================
@@ -438,7 +461,9 @@ class KernelMiddlewareInterceptor:
                         processing_time_ms=processing_time,
                         node_id=node_id,
                         workflow_id=workflow_id,
-                        timestamp=timestamp
+                        timestamp=timestamp,
+                        combined_score=combined_score,
+                        recommendation=self._get_recommendation(InterceptorAction.PASS_WITH_BACKGROUND_DISTILL)
                     )
                 
                 # 동기 증류 필요
@@ -453,7 +478,9 @@ class KernelMiddlewareInterceptor:
                     processing_time_ms=processing_time,
                     node_id=node_id,
                     workflow_id=workflow_id,
-                    timestamp=timestamp
+                    timestamp=timestamp,
+                    combined_score=combined_score,
+                    recommendation=self._get_recommendation(InterceptorAction.DISTILL)
                 )
         
         # Case 3: 불확실 구간 → Stage 2 에스컬레이션
@@ -462,9 +489,10 @@ class KernelMiddlewareInterceptor:
                 logger.info(f"[Kernel] Node {node_id}: Uncertain quality ({combined_score:.3f}), escalating to Stage 2")
                 
                 stage2_result = self._run_stage2_verification(node_output)
-                
+                final_action = InterceptorAction.PASS if stage2_result['verdict'] == QualityVerdict.PASS else InterceptorAction.REGENERATE
+
                 return InterceptorResult(
-                    action=InterceptorAction.PASS if stage2_result['verdict'] == QualityVerdict.PASS else InterceptorAction.REGENERATE,
+                    action=final_action,
                     original_output=node_output,
                     processed_output=node_output if stage2_result['verdict'] == QualityVerdict.PASS else None,
                     entropy_result=entropy_result,
@@ -474,7 +502,9 @@ class KernelMiddlewareInterceptor:
                     workflow_id=workflow_id,
                     timestamp=timestamp,
                     stage2_verdict=stage2_result['verdict'],
-                    stage2_score=stage2_result['score']
+                    stage2_score=stage2_result['score'],
+                    combined_score=combined_score,
+                    recommendation=self._get_recommendation(final_action)
                 )
             else:
                 # Stage 2 없이 ESCALATE 반환
@@ -487,7 +517,9 @@ class KernelMiddlewareInterceptor:
                     processing_time_ms=processing_time,
                     node_id=node_id,
                     workflow_id=workflow_id,
-                    timestamp=timestamp
+                    timestamp=timestamp,
+                    combined_score=combined_score,
+                    recommendation=self._get_recommendation(InterceptorAction.ESCALATE_STAGE2)
                 )
         
         # Case 4: 품질 양호 → PASS
@@ -501,7 +533,9 @@ class KernelMiddlewareInterceptor:
             processing_time_ms=processing_time,
             node_id=node_id,
             workflow_id=workflow_id,
-            timestamp=timestamp
+            timestamp=timestamp,
+            combined_score=combined_score,
+            recommendation=self._get_recommendation(InterceptorAction.PASS)
         )
     
     def _create_distillation_targets(
@@ -634,7 +668,9 @@ Reply: APPROVE: [score] or REJECT: [score]"""
             processing_time_ms=processing_time,
             node_id=node_id,
             workflow_id=workflow_id,
-            timestamp=timestamp
+            timestamp=timestamp,
+            combined_score=1.0,  # 빈 출력 또는 짧은 출력은 기본 통과
+            recommendation=self._get_recommendation(InterceptorAction.PASS)
         )
     
     def _create_background_task(

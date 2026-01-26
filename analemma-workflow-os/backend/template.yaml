@@ -608,6 +608,8 @@ Resources:
           FORCE_CHILD_WORKFLOW: "false"
           # 🛡️ [Quality Kernel] Distributed state table for concurrency control
           KERNEL_STATE_TABLE: !Ref KernelStateTable
+          # 🗂️ [S3 Offload] State offloading bucket for large payloads (>256KB)
+          WORKFLOW_STATE_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkflowsTableV3
@@ -1754,6 +1756,8 @@ Resources:
       Environment:
         Variables:
           SKELETON_S3_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+          # 🗂️ [S3 Offload] State offloading bucket for large payloads (>256KB)
+          WORKFLOW_STATE_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
           STREAM_INLINE_THRESHOLD_BYTES: "250000"
       Policies:
         - S3CrudPolicy:
