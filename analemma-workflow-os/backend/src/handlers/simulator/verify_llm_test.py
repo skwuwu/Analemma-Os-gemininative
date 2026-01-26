@@ -1216,6 +1216,9 @@ def verify_stage5_hyper_stress(final_state: Dict, test_config: Dict) -> Tuple[bo
     - Context Caching TEI ≥ 50%
     - HITL 중첩 처리
     """
+    # [Critical] S3 Offload Hydration
+    final_state = _ensure_hydrated_state(final_state)
+    
     issues = []
     metrics = {}
     
@@ -1302,6 +1305,9 @@ def verify_stage6_distributed_map_reduce(final_state: Dict, test_config: Dict) -
     6. Token Aggregation 정확도
     7. Partial Failure Recovery
     """
+    # [Critical] S3 Offload Hydration
+    final_state = _ensure_hydrated_state(final_state)
+    
     issues = []
     metrics = {}
     
@@ -1485,6 +1491,9 @@ def verify_stage7_parallel_multi_llm(final_state: Dict, test_config: Dict) -> Tu
     6. 비용 집계 정확도
     7. 지연 시간 측정
     """
+    # [Critical] S3 Offload Hydration
+    final_state = _ensure_hydrated_state(final_state)
+    
     issues = []
     metrics = {}
     
@@ -1663,6 +1672,9 @@ def verify_stage8_slop_detection(
     4. Slop Injector 정확도
     5. 페르소나 탈옥 프롬프트 효과
     """
+    # [Critical] S3 Offload Hydration
+    final_state = _ensure_hydrated_state(final_state)
+    
     issues = []
     metrics = {
         'total_cases': 0,

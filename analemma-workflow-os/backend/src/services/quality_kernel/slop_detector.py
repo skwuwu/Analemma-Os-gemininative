@@ -570,14 +570,14 @@ class SlopDetector:
         )
     
     def _analyze_sentence_repetition(self, text: str) -> float:
-        """문장 구조 반복 분석"""
+        """문장 구조 반복 분석 + 문자열 n-gram 반복 감지"""
         sentences = re.split(r'[.!?]+', text)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
         
         if len(sentences) < 3:
             return 0.0
         
-        # 문장 시작 패턴 분석
+        # 1. 문장 시작 패턴 분석
         starters = [s.split()[0].lower() if s.split() else "" for s in sentences]
         starter_counts = {}
         for starter in starters:
@@ -586,10 +586,57 @@ class SlopDetector:
         # 같은 시작어가 30% 이상이면 페널티
         max_repetition = max(starter_counts.values()) / len(starters)
         
+        base_penalty = 0.0
         if max_repetition > 0.5:
-            return 0.2
+            base_penalty = 0.2
         elif max_repetition > 0.3:
-            return 0.1
+            base_penalty = 0.1
+        
+        # 2. 문자 n-gram 반복 감지 (Stage 3 vendor 오염 케이스)
+        # "2023-08-23 12:00:00" 같은 패턴이 반복되는 경우 탐지
+        ngram_penalty = self._detect_ngram_repetition(text)
+        
+        return min(1.0, base_penalty + ngram_penalty)
+    
+    def _detect_ngram_repetition(self, text: str, ngram_size: int = 20) -> float:
+        """
+        문자 n-gram 반복 감지
+        
+        같은 20자 이상의 문자열이 반복되면 높은 페널티.
+        예: "2023-08-23 12:00:00..." 반복
+        
+        Args:
+            text: 검사할 텍스트
+            ngram_size: n-gram 크기 (기본 20자)
+            
+        Returns:
+            0.0 ~ 1.0 페널티 점수
+        """
+        if len(text) < ngram_size * 2:
+            return 0.0
+        
+        # 20자 단위로 n-gram 생성
+        ngrams = {}
+        for i in range(len(text) - ngram_size + 1):
+            ngram = text[i:i + ngram_size]
+            # 공백만 있는 ngram은 제외
+            if len(ngram.strip()) < 10:
+                continue
+            ngrams[ngram] = ngrams.get(ngram, 0) + 1
+        
+        if not ngrams:
+            return 0.0
+        
+        # 가장 많이 반복된 ngram 찾기
+        max_count = max(ngrams.values())
+        
+        # 반복 횟수에 따라 페널티
+        if max_count >= 10:  # 10회 이상 반복 → 확실한 슬롭
+            return 0.8
+        elif max_count >= 5:  # 5회 이상 반복 → 높은 의심
+            return 0.5
+        elif max_count >= 3:  # 3회 이상 반복 → 주의
+            return 0.3
         
         return 0.0
     

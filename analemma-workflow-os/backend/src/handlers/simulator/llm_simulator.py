@@ -490,7 +490,9 @@ def _verify_token_usage(usage: dict, limit: int, stage_name: str) -> Tuple[bool,
 def verify_stage1_basic(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """Stage 1: Basic Operation Verification (Response Schema + JSON Parse)"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     final_state = output.get('final_state', {})
+    final_state = _hydrate_s3_offloaded_state(final_state)
     
     # 1. Check for valid JSON output (from llm_chat)
     structured_json = final_state.get('structured_output_raw')
@@ -529,7 +531,9 @@ def verify_stage1_basic(execution_arn: str, result: dict, scenario_config: dict)
 def verify_stage2_flow_control(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """Stage 2: Flow Control Verification (Loop/Map + Guardrails)"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     final_state = output.get('final_state', {})
+    final_state = _hydrate_s3_offloaded_state(final_state)
     
     # 1. Verify Loop Count (from internal counter or accumulated result)
     # Check if we have processed items
@@ -557,7 +561,9 @@ def verify_stage2_flow_control(execution_arn: str, result: dict, scenario_config
 def verify_stage3_vision_basic(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """Stage 3: Vision Basic Verification"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     final_state = output.get('final_state', {})
+    final_state = _hydrate_s3_offloaded_state(final_state)
     
     # 1. Check Hydration (S3 -> Bytes)
     # Internal operator result usually not exposed in final output unless requested
@@ -589,7 +595,9 @@ def verify_stage3_vision_basic(execution_arn: str, result: dict, scenario_config
 def verify_stage4_vision_map(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """Stage 4: Vision Map Verification (Parallel)"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     final_state = output.get('final_state', {})
+    final_state = _hydrate_s3_offloaded_state(final_state)
     
     # 1. Check Parallel Results
     # Assuming the map state output is aggregated into a key
@@ -617,6 +625,11 @@ def verify_stage5_hyper_stress(execution_arn: str, result: dict, scenario_config
     # This is a chaos test - we primarily check it didn't crash hard (Timeout/Runtime Error)
     # The framework guarantees SUCCEEDED status means it handled errors gracefully
     
+    # Hydrate S3 offloaded state
+    output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
+    result['output'] = output
+    
     status = result.get('status')
     if status != 'SUCCEEDED':
         return False, f"Stage 5 Failed with status {status}"
@@ -631,7 +644,9 @@ def verify_stage5_hyper_stress(execution_arn: str, result: dict, scenario_config
 def verify_basic_llm_call(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """LI-A: 기본 LLM 호출 검증"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     final_state = output.get('final_state', {})
+    final_state = _hydrate_s3_offloaded_state(final_state)
     
     # [Fix] Support multiple LLM output key patterns used across different workflows
     llm_output_keys = [
@@ -668,6 +683,7 @@ def verify_basic_llm_call(execution_arn: str, result: dict, scenario_config: dic
 def verify_structured_output(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """LI-B: Structured Output 검증"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     
     # Try to find structured output
     structured_output = output.get('structured_output') or output.get('final_state', {}).get('structured_output')
@@ -694,6 +710,7 @@ def verify_structured_output(execution_arn: str, result: dict, scenario_config: 
 def verify_thinking_mode(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """LI-C: Thinking Mode 검증"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     
     # Check for thinking output
     thinking_output = output.get('thinking_output') or output.get('final_state', {}).get('thinking_output')
@@ -729,7 +746,9 @@ def verify_thinking_mode(execution_arn: str, result: dict, scenario_config: dict
 def verify_llm_operator_integration(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """LI-D: LLM + operator_official 통합 검증"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     final_state = output.get('final_state', output)
+    final_state = _hydrate_s3_offloaded_state(final_state)
     
     # Check that operator strategies were used
     step_history = final_state.get('step_history', [])
@@ -760,7 +779,9 @@ def verify_llm_operator_integration(execution_arn: str, result: dict, scenario_c
 def verify_document_analysis(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """LI-E: 복합 문서 분석 파이프라인 검증"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     final_state = output.get('final_state', output)
+    final_state = _hydrate_s3_offloaded_state(final_state)
     
     # Check pipeline stages completed
     expected_stages = scenario_config.get('input_data', {}).get('expected_pipeline_stages', [])
@@ -792,6 +813,7 @@ def verify_document_analysis(execution_arn: str, result: dict, scenario_config: 
 def verify_multimodal_vision_live(execution_arn: str, result: dict, scenario_config: dict) -> Tuple[bool, str]:
     """LI-F: Multimodal Vision 라이브 검증"""
     output = result.get('output', {})
+    output = _hydrate_s3_offloaded_state(output)
     
     vision_output = output.get('vision_output') or output.get('final_state', {}).get('vision_output')
     

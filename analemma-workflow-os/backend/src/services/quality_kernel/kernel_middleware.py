@@ -51,6 +51,122 @@ from .quality_gate import QualityGate, QualityVerdict, QualityGateResult
 logger = logging.getLogger(__name__)
 
 
+def validate_response_against_schema(
+    response: Any,
+    schema: Optional[Dict[str, Any]],
+    path: str = "root"
+) -> List[str]:
+    """
+    Validate LLM response against Response Schema constraints.
+    
+    Checks:
+    - maxLength for string fields
+    - maxItems for array fields
+    - enum constraints
+    - required fields
+    - type mismatches
+    
+    Args:
+        response: LLM response (parsed JSON or string)
+        schema: Response Schema definition
+        path: Current validation path (for error messages)
+        
+    Returns:
+        List of validation error messages (empty if valid)
+    """
+    if not schema:
+        return []
+    
+    errors = []
+    
+    # Handle string response that should be JSON
+    if isinstance(response, str) and schema.get('type') == 'object':
+        try:
+            response = json.loads(response)
+        except json.JSONDecodeError:
+            errors.append(f"{path}: Expected JSON object, got non-parseable string")
+            return errors
+    
+    schema_type = schema.get('type')
+    
+    # Type validation
+    type_map = {
+        'object': dict,
+        'array': list,
+        'string': str,
+        'number': (int, float),
+        'integer': int,
+        'boolean': bool
+    }
+    
+    if schema_type in type_map:
+        expected_type = type_map[schema_type]
+        if not isinstance(response, expected_type):
+            # Allow null if nullable: true
+            if response is None and schema.get('nullable'):
+                return []
+            errors.append(
+                f"{path}: Expected {schema_type}, got {type(response).__name__}"
+            )
+            return errors
+    
+    # Object validation
+    if schema_type == 'object' and isinstance(response, dict):
+        properties = schema.get('properties', {})
+        required = schema.get('required', [])
+        
+        # Check required fields
+        for field in required:
+            if field not in response:
+                errors.append(f"{path}.{field}: Required field missing")
+        
+        # Validate each property
+        for prop_name, prop_value in response.items():
+            if prop_name in properties:
+                prop_schema = properties[prop_name]
+                prop_errors = validate_response_against_schema(
+                    prop_value,
+                    prop_schema,
+                    f"{path}.{prop_name}"
+                )
+                errors.extend(prop_errors)
+    
+    # Array validation
+    elif schema_type == 'array' and isinstance(response, list):
+        max_items = schema.get('maxItems')
+        if max_items and len(response) > max_items:
+            errors.append(
+                f"{path}: Array length {len(response)} exceeds maxItems {max_items}"
+            )
+        
+        items_schema = schema.get('items')
+        if items_schema:
+            for idx, item in enumerate(response):
+                item_errors = validate_response_against_schema(
+                    item,
+                    items_schema,
+                    f"{path}[{idx}]"
+                )
+                errors.extend(item_errors)
+    
+    # String validation
+    elif schema_type == 'string' and isinstance(response, str):
+        max_length = schema.get('maxLength')
+        if max_length and len(response) > max_length:
+            errors.append(
+                f"{path}: String length {len(response)} exceeds maxLength {max_length} "
+                f"(preview: '{response[:50]}...')"
+            )
+        
+        enum_values = schema.get('enum')
+        if enum_values and response not in enum_values:
+            errors.append(
+                f"{path}: Value '{response}' not in allowed enum: {enum_values}"
+            )
+    
+    return errors
+
+
 class InterceptorAction(Enum):
     """인터셉터 액션 타입"""
     PASS = "PASS"                                        # 통과
@@ -360,6 +476,41 @@ class KernelMiddlewareInterceptor:
         # 빈 출력 처리
         if not node_output or len(node_output.strip()) < 10:
             return self._create_pass_result(node_output, node_id, workflow_id, timestamp, 0)
+        
+        # ============================================================
+        # STAGE 0: Response Schema Validation (비용 $0, 최우선)
+        # ============================================================
+        schema_errors = []
+        if context and 'response_schema' in context:
+            try:
+                # Try parsing as JSON first (structured output)
+                parsed_output = json.loads(node_output)
+                schema_errors = validate_response_against_schema(
+                    parsed_output,
+                    context['response_schema']
+                )
+            except json.JSONDecodeError:
+                # If not JSON, check if schema expects string
+                if context['response_schema'].get('type') != 'string':
+                    schema_errors = ["Output is not valid JSON but schema expects structured data"]
+            
+            if schema_errors:
+                logger.warning(
+                    f"[Kernel] Node {node_id}: Response Schema violations detected: {schema_errors[:3]}"
+                )
+                return InterceptorResult(
+                    action=InterceptorAction.REGENERATE,
+                    original_output=node_output,
+                    processed_output=None,
+                    entropy_result=None,
+                    slop_result=None,
+                    processing_time_ms=(time.time() - start_time) * 1000,
+                    node_id=node_id,
+                    workflow_id=workflow_id,
+                    timestamp=timestamp,
+                    combined_score=0.0,
+                    recommendation=f"REGENERATE: Response Schema violations - {'; '.join(schema_errors[:3])}"
+                )
         
         # ============================================================
         # STAGE 1: Local Heuristic Analysis (비용 $0)

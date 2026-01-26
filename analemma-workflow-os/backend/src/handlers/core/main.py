@@ -621,8 +621,10 @@ def humanize_llm_error(error: Exception, provider: str, node_id: str) -> str:
 
 
 def _get_nested_value(state: Dict[str, Any], path: str, default: Any = "") -> Any:
-    """Retrieve nested value from src.state using dot-separated path."""
+    """Retrieve nested value from state using dot-separated path. Handles Mapping types."""
     if not path: return default
+    if path not in state and '.' not in path: return state.get(path, default)
+    
     parts = path.split('.')
     cur: Any = state
     try:
@@ -634,6 +636,27 @@ def _get_nested_value(state: Dict[str, Any], path: str, default: Any = "") -> An
         return cur
     except Exception:
         return default
+
+
+def _set_nested_value(state: Dict[str, Any], path: str, value: Any):
+    """Set a nested value in state using dot-separated path. Mutates state."""
+    if not path: return
+    parts = path.split('.')
+    
+    # 1. Handle non-nested case
+    if len(parts) == 1:
+        state[parts[0]] = value
+        return
+        
+    # 2. Traverse or create path
+    cur = state
+    for i, p in enumerate(parts[:-1]):
+        if p not in cur or not isinstance(cur[p], dict):
+            cur[p] = {}
+        cur = cur[p]
+    
+    # 3. Set the leaf value
+    cur[parts[-1]] = value
 
 
 def _render_template(template: Any, state: Dict[str, Any]) -> Any:
@@ -1176,7 +1199,9 @@ def prepare_multimodal_content(prompt: str, state: Dict[str, Any]) -> Tuple[str,
     return prompt, multimodal_parts
 
 # Async processing threshold (configurable via environment variable)
-ASYNC_TOKEN_THRESHOLD = int(os.getenv('ASYNC_TOKEN_THRESHOLD', '2000'))
+# [DISABLED] Fargate async is NOT IMPLEMENTED yet. Set very high threshold to disable.
+# Original: ASYNC_TOKEN_THRESHOLD = 2000 (caused false positives with max_tokens > 2000)
+ASYNC_TOKEN_THRESHOLD = int(os.getenv('ASYNC_TOKEN_THRESHOLD', '999999'))  # Effectively disabled
 ASYNC_HEAVY_MODELS = os.getenv('ASYNC_HEAVY_MODELS', 'claude-3-opus,gpt-4').split(',')
 
 # HTTP request timeout configuration
@@ -1188,18 +1213,24 @@ CACHE_COST_REDUCTION = float(os.environ.get('CACHE_COST_REDUCTION', '0.75'))  # 
 APPROXIMATE_TOKEN_COST_USD = float(os.environ.get('APPROXIMATE_TOKEN_COST_USD', '0.000001'))  # $1 per 1M tokens
 
 def should_use_async_llm(config: Dict[str, Any]) -> bool:
-    """Heuristic to check if async processing is needed."""
-    max_tokens = config.get("max_tokens", 0)
-    model = config.get("model", "")
-    force_async = config.get("force_async", False)
+    """
+    Heuristic to check if async processing is needed.
     
-    high_token_count = max_tokens > ASYNC_TOKEN_THRESHOLD
-    heavy_model = any(heavy in model for heavy in ASYNC_HEAVY_MODELS)
-    
-    if high_token_count or heavy_model or force_async:
-        logger.info(f"Async required: tokens={max_tokens}, model={model}, force={force_async}")
-        return True
-    return False
+    [DISABLED] Fargate async worker is NOT IMPLEMENTED.
+    Always return False until ECS/Fargate infrastructure is deployed.
+    """
+    # [TODO] Re-enable when Fargate async worker is implemented
+    # max_tokens = config.get("max_tokens", 0)
+    # model = config.get("model", "")
+    # force_async = config.get("force_async", False)
+    # 
+    # high_token_count = max_tokens > ASYNC_TOKEN_THRESHOLD
+    # heavy_model = any(heavy in model for heavy in ASYNC_HEAVY_MODELS)
+    # 
+    # if high_token_count or heavy_model or force_async:
+    #     logger.info(f"Async required: tokens={max_tokens}, model={model}, force={force_async}")
+    #     return True
+    return False  # Always sync until Fargate is implemented
 
 
 # -----------------------------------------------------------------------------
@@ -1232,7 +1263,9 @@ def _hydrate_s3_value(value: Any) -> Any:
         return value
 
 def _hydrate_state_for_config(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-    """Hydrate keys referenced in input_variables if present."""
+    """Hydrate keys referenced in input_variables if present. Supports nested paths."""
+    # Create a deep copy to avoid modifying original state if needed, 
+    # but _set_nested_value mutates, so we copy once at the start.
     hydrated_state = state.copy()
     input_vars = config.get("input_variables", [])
     if isinstance(input_vars, list):
@@ -1240,11 +1273,8 @@ def _hydrate_state_for_config(state: Dict[str, Any], config: Dict[str, Any]) -> 
             val = _get_nested_value(hydrated_state, key)
             hydrated_val = _hydrate_s3_value(val)
             if hydrated_val != val:
-                # Update nested state not supported easily here, so we just update top level or 
-                # strictly mapped keys. For now, we update the top-level key if it matches.
-                # Ideally we should use a set_nested_value, but input_variables usually refer to top level.
-                if key in hydrated_state:
-                    hydrated_state[key] = hydrated_val
+                logger.info(f"💧 [Hydration] Hydrated nested key: {key}")
+                _set_nested_value(hydrated_state, key, hydrated_val)
     return hydrated_state
 
 # -----------------------------------------------------------------------------
@@ -1678,11 +1708,17 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                     )
                     
                     workflow_id = exec_state.get("workflow_id") or exec_state.get("execution_id", "unknown")
+                    
+                    # Add response_schema to context for kernel validation
+                    kernel_context = exec_state.copy()
+                    if response_schema:
+                        kernel_context['response_schema'] = response_schema
+                    
                     intercept_result = interceptor.post_process_node(
                         node_output=text,
                         node_id=node_id,
                         workflow_id=workflow_id,
-                        context=exec_state
+                        context=kernel_context
                     )
                     
                     # [Defensive Coding] Use getattr to prevent attribute errors (InterceptorResult v3.8)
@@ -2319,12 +2355,44 @@ def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
         logger.error(f"[ForEach] Missing input_list_key in node {node_id}")
         return {}
 
-    # Proactive S3 hydration
+    # Proactive S3 hydration - handles multiple offload patterns
     input_val = _get_nested_value(state, input_list_key)
-    if state.get("__s3_offloaded") or (isinstance(input_val, str) and input_val.startswith("s3://")):
-        logger.info(f"💧 [ForEach] Hydrating {input_list_key} from S3")
-        state = _hydrate_state_for_config(state, {"input_variables": [input_list_key]})
-        input_list = _get_nested_value(state, input_list_key, [])
+    
+    # [S3 Hydration] Detect input_val offload patterns:
+    # Note: Top-level state is already hydrated by segment_runner_service.execute_segment()
+    # Here we only check if input_val itself is offloaded
+    # 1. input_val is an s3:// string
+    # 2. input_val is a dict with __s3_offloaded: True (nested offload)
+    needs_hydration = (
+        (isinstance(input_val, str) and input_val.startswith("s3://")) or
+        (isinstance(input_val, dict) and input_val.get("__s3_offloaded"))
+    )
+    
+    if needs_hydration:
+        logger.info(f"💧 [ForEach] Hydrating {input_list_key} from S3 (pattern: {'dict' if isinstance(input_val, dict) else 'string'})")
+        
+        # [Fix] Handle nested offload dict pattern
+        if isinstance(input_val, dict) and input_val.get("__s3_offloaded"):
+            s3_path = input_val.get("s3_path") or input_val.get("__s3_path")
+            if s3_path:
+                try:
+                    from src.services.state.state_manager import StateManager
+                    sm = StateManager()
+                    hydrated_data = sm.download_state_from_s3(s3_path)
+                    # Extract 'results' key if present (from for_each offload format)
+                    input_list = hydrated_data.get("results", hydrated_data) if isinstance(hydrated_data, dict) else hydrated_data
+                    if not isinstance(input_list, list):
+                        input_list = [input_list] if input_list else []
+                    logger.info(f"✅ [ForEach] Hydrated {len(input_list)} items from S3")
+                except Exception as hydrate_err:
+                    logger.error(f"❌ [ForEach] S3 hydration failed: {hydrate_err}")
+                    input_list = []
+            else:
+                logger.warning(f"⚠️ [ForEach] __s3_offloaded=True but no s3_path found")
+                input_list = []
+        else:
+            state = _hydrate_state_for_config(state, {"input_variables": [input_list_key]})
+            input_list = _get_nested_value(state, input_list_key, [])
     else:
         input_list = input_val if isinstance(input_val, list) else []
 
@@ -2350,12 +2418,31 @@ def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
         logger.warning(f"for_each truncated {len(input_list)} -> {max_iterations}")
         input_list = input_list[:max_iterations]
 
+    # [Critical Fix] Create immutable snapshot of state for thread-safe parallel execution
+    # ChainMap with shared state causes race conditions in ThreadPoolExecutor
+    import copy
+    state_snapshot = copy.deepcopy(state)  # Deep copy once, used by all workers
+    
     def worker(item):
         if execution_arn and check_execution_cancelled(execution_arn):
             return {"error": "cancelled", "_item": item}
         
-        # [Isolation] ChainMap으로 부모 상태는 보존하고 로컬 업데이트만 수행
-        it_state = ChainMap({item_key: item}, state)
+        # [Fix] Each worker gets isolated state view (not shared reference)
+        # Using dict merge instead of ChainMap for true isolation
+        it_state = {**state_snapshot, item_key: item}
+        
+        # [Fix] Hydrate item if it's an S3 offloaded object
+        if isinstance(item, dict) and item.get("__s3_offloaded"):
+            try:
+                from src.services.state.state_manager import StateManager
+                sm = StateManager()
+                s3_path = item.get("s3_path") or item.get("__s3_path")
+                if s3_path:
+                    hydrated_item = sm.download_state_from_s3(s3_path)
+                    it_state[item_key] = hydrated_item
+            except Exception as e:
+                logger.warning(f"[ForEach] Failed to hydrate item from S3: {e}")
+        
         # Deep copy messages to prevent race conditions
         if "messages" in it_state and isinstance(it_state["messages"], list):
             it_state["messages"] = it_state["messages"].copy()
@@ -2380,6 +2467,10 @@ def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                 updates = handler(current_view, rendered_node)
                 if isinstance(updates, dict):
                     it_updates.update(updates)
+            # [DISABLED] AsyncLLMRequiredException handling - Fargate async not implemented
+            # except AsyncLLMRequiredException:
+            #     # Bubble up to trigger PAUSED_FOR_ASYNC_LLM
+            #     raise
             except Exception as e:
                 logger.error(f"Iteration node {node_def.get('id')} failed: {e}")
                 it_updates["error"] = str(e)
@@ -2510,7 +2601,11 @@ def loop_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]
     # [Cancellation]
     execution_arn = state.get("execution_arn") or state.get("ExecutionArn")
     
-    current_state = state.copy()
+    # [Thread Safety] Deep copy to prevent mutation of original state across iterations
+    # Note: Top-level state S3 hydration is already handled by segment_runner_service.execute_segment()
+    import copy
+    current_state = copy.deepcopy(state)
+    
     all_loop_updates = {}
     
     total_input_tokens = 0
@@ -2648,11 +2743,30 @@ def nested_for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dic
     
     logger.info(f"🔄 Nested ForEach starting: {node_id}")
     
-    # 외부 리스트 가져오기
+    # [Critical Fix] Create immutable snapshot for thread-safe parallel execution
+    import copy
+    state_snapshot = copy.deepcopy(state)
+    
+    # 외부 리스트 가져오기 - with S3 hydration support
     if "." in input_list_key:
         input_list_key = input_list_key.split(".")[-1]
     
-    outer_list = _get_nested_value(state, input_list_key, [])
+    outer_list = _get_nested_value(state_snapshot, input_list_key, [])
+    
+    # [Critical Fix] Handle S3 offloaded outer_list
+    if isinstance(outer_list, dict) and outer_list.get("__s3_offloaded"):
+        logger.info(f"💧 [Nested ForEach] Hydrating outer list from S3")
+        try:
+            from src.services.state.state_manager import StateManager
+            sm = StateManager()
+            s3_path = outer_list.get("s3_path") or outer_list.get("__s3_path")
+            if s3_path:
+                hydrated_data = sm.download_state_from_s3(s3_path)
+                outer_list = hydrated_data.get("results", hydrated_data) if isinstance(hydrated_data, dict) else hydrated_data
+        except Exception as e:
+            logger.error(f"❌ [Nested ForEach] S3 hydration failed: {e}")
+            outer_list = []
+    
     if not isinstance(outer_list, list):
         logger.warning(f"Nested ForEach: {input_list_key} is not a list")
         return {output_key: []}
@@ -2704,14 +2818,28 @@ def nested_for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dic
         
         def process_inner_item(inner_item: Any) -> Dict[str, Any]:
             """내부 아이템 처리"""
-            # 상태 준비
-            # [Optimization] Use ChainMap for zero-copy state view
-            # Writes updates to the first dict, keeping 'state' pristine and avoiding deep/shallow copy overhead
-            item_state = ChainMap({}, state)
-            item_state["outer_item"] = outer_item
-            item_state["inner_item"] = inner_item
-            item_state["item"] = inner_item  # 기존 호환성 유지
-            item_state["parent"] = outer_item
+            # [Critical Fix] Use dict merge for true isolation instead of ChainMap
+            # ChainMap with shared state causes race conditions
+            item_state = {
+                **state_snapshot,
+                "outer_item": outer_item,
+                "inner_item": inner_item,
+                "item": inner_item,  # 기존 호환성 유지
+                "parent": outer_item
+            }
+            
+            # [Fix] Hydrate inner_item if it's S3 offloaded
+            if isinstance(inner_item, dict) and inner_item.get("__s3_offloaded"):
+                try:
+                    from src.services.state.state_manager import StateManager
+                    sm = StateManager()
+                    s3_path = inner_item.get("s3_path") or inner_item.get("__s3_path")
+                    if s3_path:
+                        hydrated_item = sm.download_state_from_s3(s3_path)
+                        item_state["inner_item"] = hydrated_item
+                        item_state["item"] = hydrated_item
+                except Exception as e:
+                    logger.warning(f"[Nested ForEach] Failed to hydrate inner_item: {e}")
             
             # 메시지 복사 (레이스 컨디션 방지)
             if "messages" in item_state and isinstance(item_state["messages"], list):
@@ -2724,6 +2852,10 @@ def nested_for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dic
             
             try:
                 return sub_node_func(item_state, rendered_sub)
+            # [DISABLED] AsyncLLMRequiredException handling - Fargate async not implemented
+            # except AsyncLLMRequiredException:
+            #     # Bubble up to trigger PAUSED_FOR_ASYNC_LLM  
+            #     raise
             except Exception as e:
                 logger.error(f"Nested ForEach inner error [{outer_item_id}]: {e}")
                 return {"error": str(e), "outer": outer_item_id}
@@ -2848,6 +2980,11 @@ def parallel_group_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict
     if not branches:
         return {}
 
+    # [Thread Safety] Create immutable snapshot for thread-safe parallel execution
+    # Note: Top-level state S3 hydration is already handled by segment_runner_service.execute_segment()
+    import copy
+    state_snapshot = copy.deepcopy(state)
+
     def run_branch(branch):
         branch_id = branch.get("branch_id", "sub")
         # [Fix] 일관성을 위해 branches 내부에서도 nodes 리스트나 sub_workflow 지원
@@ -2857,13 +2994,14 @@ def parallel_group_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict
             if isinstance(branch_def, dict):
                 branch_nodes = branch_def.get("nodes", [])
         
-        # Branch execution uses local copy for safety
-        b_state = ChainMap({}, state)
+        # [Critical Fix] Use dict merge for true isolation instead of ChainMap
+        # ChainMap with shared state causes race conditions in ThreadPoolExecutor
+        b_state = {**state_snapshot}
         b_updates = {}
         
         for n_def in (branch_nodes or []):
-            # [Fix] 브랜치 내 노드 간 상태 공유를 위해 ChainMap 활용
-            current_view = ChainMap(b_updates, b_state)
+            # [Fix] 브랜치 내 노드 간 상태 공유를 위해 업데이트 병합
+            current_view = {**b_state, **b_updates}
             node_type = n_def.get("type", "operator")
             handler = NODE_REGISTRY.get(node_type)
             
