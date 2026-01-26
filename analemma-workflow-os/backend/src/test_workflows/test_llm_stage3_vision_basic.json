@@ -72,10 +72,10 @@
                 "provider": "gemini",
                 "model": "gemini-2.0-flash",
                 "vision_enabled": true,
-                "system_prompt": "You are a document analyzer. Extract structured data from images precisely. Always respond with valid JSON.",
-                "prompt_content": "Analyze this image: {{image_uri}}\n\nExtract the following fields in JSON format:\n- amount (total amount if receipt, or main value)\n- date (in YYYY-MM-DD format)\n- vendor (company/store name)\n- items (list of items/components)\n\nIf a field is not visible, use null.",
-                "max_tokens": 1024,
-                "temperature": 0.2,
+                "system_prompt": "You are a document analyzer. Extract ONLY the data visible in the image. Do NOT invent or hallucinate information. If data is not visible, return null. Be concise - use short strings only.",
+                "prompt_content": "Analyze this image: {{image_uri}}\n\nExtract these fields in JSON format:\n- amount: number or null (total amount if visible)\n- date: string \"YYYY-MM-DD\" or null\n- vendor: string (ONLY the company name, max 50 chars) or null\n- items: array of strings (item names only)\n\nIMPORTANT:\n- Return null for any field not clearly visible in the image\n- Do NOT make up or guess any information\n- Keep vendor name SHORT (just the company name, no descriptions)\n- If this is not a receipt/document, set all fields to null",
+                "max_tokens": 512,
+                "temperature": 0.1,
                 "response_schema": {
                     "type": "object",
                     "properties": {
@@ -92,13 +92,16 @@
                         "vendor": {
                             "type": "string",
                             "nullable": true,
-                            "description": "Company or store name"
+                            "description": "Company or store name (short, max 50 chars)",
+                            "maxLength": 50
                         },
                         "items": {
                             "type": "array",
                             "items": {
-                                "type": "string"
+                                "type": "string",
+                                "maxLength": 100
                             },
+                            "maxItems": 20,
                             "description": "List of items or components"
                         },
                         "confidence": {
@@ -107,6 +110,7 @@
                         },
                         "image_type": {
                             "type": "string",
+                            "enum": ["receipt", "invoice", "document", "product", "other", "unknown"],
                             "description": "Type of image detected"
                         }
                     }

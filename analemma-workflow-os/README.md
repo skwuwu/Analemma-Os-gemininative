@@ -148,6 +148,51 @@ sam build && sam deploy --guided
 
 ## 🔑 Key Innovations
 
+### 🛡️ Quality Kernel (Slop Detection)
+Automatic detection and prevention of LLM hallucinations and low-quality outputs at the kernel level.
+
+**Features:**
+- **SlopDetector**: Pattern-based detection of boilerplate phrases, excessive hedging, and verbose emptiness
+- **EntropyAnalyzer**: Information density measurement to identify low-entropy (repetitive) content
+- **QualityGate**: Multi-stage verification pipeline with optional LLM-based Stage 2 escalation
+- **Real-time Interception**: Integrated directly into `llm_chat_runner` for zero-configuration protection
+
+**Default Behavior:** Quality Kernel is **enabled by default** when available. Every LLM response is automatically analyzed.
+
+**Disabling Quality Check:**
+```json
+// Method 1: Node-level config
+{
+    "id": "llm_node",
+    "type": "llm_chat",
+    "config": {
+        "disable_kernel_quality_check": true
+    }
+}
+
+// Method 2: Quality gate explicit disable
+{
+    "config": {
+        "quality_gate": { "enabled": false }
+    }
+}
+
+// Method 3: Workflow-level global disable
+{
+    "initial_state": {
+        "disable_kernel_quality_check": true
+    }
+}
+```
+
+**Output Fields:**
+| Field | Description |
+|-------|-------------|
+| `_kernel_quality_check.slop_score` | 0.0 (clean) to 1.0 (pure slop) |
+| `_kernel_quality_check.is_slop` | Boolean slop detection result |
+| `_kernel_quality_check.action` | `PASS`, `ESCALATE_STAGE2`, `DISTILL`, or `REJECT` |
+| `_kernel_action` | Quick reference to the action taken |
+
 ### 🎯 Mission Simulator (Chaos Engineering)
 8+ failure scenarios: network latency, LLM hallucinations, rate limiting, cold starts.
 - **98%+ success rate** under adversarial conditions

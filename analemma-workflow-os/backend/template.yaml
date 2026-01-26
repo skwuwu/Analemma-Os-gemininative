@@ -620,6 +620,9 @@ Resources:
             TableName: !Ref KernelStateTable
         - S3CrudPolicy:
              BucketName: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+        # 🧪 [LLM Simulator] Vision 테스트용 S3 이미지 접근 권한
+        - S3ReadPolicy:
+            BucketName: analemma-workflows-dev
         # 🚀 [NEW] EventBridge 발행 권한 추가
         - EventBridgePutEventsPolicy:
             EventBusName: !Ref WorkflowEventBus
@@ -1094,18 +1097,6 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /tasks/{id}
             Method: GET
-        GetTaskOutcomesEvent:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /tasks/{id}/outcomes
-            Method: GET
-        GetTaskMetricsEvent:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref HttpApi
-            Path: /tasks/{id}/metrics
-            Method: GET
 
   # --- Skills API Functions ---
   ListSkillsFunction:
@@ -1357,6 +1348,42 @@ Resources:
           Properties:
             ApiId: !Ref HttpApi
             Path: /notifications/dismiss
+            Method: POST
+
+  # ============================================
+  # 📁 MediaUploadFunction - 미디어 파일 업로드 API
+  # ============================================
+  # 프론트엔드에서 이미지/비디오 업로드 → S3 URL 반환
+  # RunWorkflow 호출 시 S3 URL만 전달 (Step Functions 256KB 제한 회피)
+  MediaUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      ImageUri: !Ref BackendLambdaImageUri
+      ImageConfig:
+        Command: ["src.handlers.media.upload_handler.lambda_handler"]
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          MEDIA_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+          MAX_FILE_SIZE_MB: "50"
+          PRESIGN_EXPIRY_SECONDS: "3600"
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+      Events:
+        UploadEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/media/upload
+            Method: POST
+        PresignEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /api/media/presign
             Method: POST
 
   ResumeHandlerFunction:
@@ -4494,3 +4521,9 @@ Outputs:
   WorkflowBranchesTableName:
     Description: Workflow Branches DynamoDB table for Time Machine rollback history
     Value: !Ref WorkflowBranchesTable
+  MediaUploadApiEndpoint:
+    Description: Media Upload API endpoint for frontend image/video uploads
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/api/media/upload"
+  MediaPresignApiEndpoint:
+    Description: Media Presign API endpoint for large file uploads
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/api/media/presign"

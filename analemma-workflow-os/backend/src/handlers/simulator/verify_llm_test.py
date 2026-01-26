@@ -88,21 +88,49 @@ def _ensure_hydrated_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
     검증 전 상태가 S3에서 완전히 하이드레이션되었는지 확인합니다.
     
     중첩된 오프로드 상태도 처리합니다 (예: final_state 내부의 execution_result).
+    
+    v2.4: 모든 필드에 대해 재귀적으로 S3 오프로드 상태를 하이드레이션합니다.
+    - Stage 4: vision_results, processed_items
+    - Stage 6: partition_results, items
+    - Stage 7: branch_results, claude_branch, gemini_branch
+    - Stage 8: successful_items, failed_items, processed_results
     """
     # 최상위 하이드레이션
     hydrated = _hydrate_s3_offloaded_state(final_state)
     
-    # execution_result 내부 하이드레이션
-    if 'execution_result' in hydrated:
-        exec_result = hydrated['execution_result']
-        if isinstance(exec_result, dict) and exec_result.get('__s3_offloaded'):
-            hydrated['execution_result'] = _hydrate_s3_offloaded_state(exec_result)
+    if not isinstance(hydrated, dict):
+        return hydrated
     
-    # final_state 내부 하이드레이션
-    if 'final_state' in hydrated:
-        inner_state = hydrated['final_state']
-        if isinstance(inner_state, dict) and inner_state.get('__s3_offloaded'):
-            hydrated['final_state'] = _hydrate_s3_offloaded_state(inner_state)
+    # 재귀적으로 모든 딕셔너리 필드 하이드레이션 (Stage 4, 6, 7, 8 지원)
+    def _recursive_hydrate(obj: Any, depth: int = 0) -> Any:
+        """최대 3단계까지 재귀적으로 S3 오프로드 상태를 하이드레이션합니다."""
+        if depth > 3:  # 무한 재귀 방지
+            return obj
+        
+        if isinstance(obj, dict):
+            # 현재 객체가 오프로드되었으면 하이드레이션
+            if obj.get('__s3_offloaded'):
+                obj = _hydrate_s3_offloaded_state(obj)
+            
+            # 모든 하위 필드에 대해 재귀 적용
+            for key, value in list(obj.items()):
+                if isinstance(value, dict):
+                    obj[key] = _recursive_hydrate(value, depth + 1)
+                elif isinstance(value, list):
+                    obj[key] = [
+                        _recursive_hydrate(item, depth + 1) if isinstance(item, dict) else item
+                        for item in value
+                    ]
+            return obj
+        
+        return obj
+    
+    # 재귀 하이드레이션 적용
+    hydrated = _recursive_hydrate(hydrated)
+    
+    # 하이드레이션 완료 로깅
+    offload_keys = [k for k, v in hydrated.items() if isinstance(v, dict) and not v.get('__s3_offloaded')]
+    logger.info(f"[S3 Hydration] Recursive hydration complete. Active keys: {offload_keys[:10]}")
     
     return hydrated
 
@@ -966,10 +994,14 @@ def verify_stage1_basic(final_state: Dict, test_config: Dict) -> Tuple[bool, str
         issues.append(f"Missing schema fields: {missing_fields}")
     
     # 4. json_parse 시간 검증 (0.5초 = 500ms 이내)
-    parse_start = final_state.get('parse_start_ms', 0)
-    parse_end = final_state.get('parse_end_ms', 0)
+    # 방어적 코딩: 문자열/숫자 타입 모두 처리
+    from src.common.json_utils import get_ms_timestamp
     
-    if parse_start and parse_end:
+    parse_start = get_ms_timestamp(final_state.get('parse_start_ms', 0))
+    parse_end = get_ms_timestamp(final_state.get('parse_end_ms', 0))
+    parse_duration_ms = 0
+    
+    if parse_start > 0 and parse_end > 0:
         parse_duration_ms = parse_end - parse_start
         expected_max_ms = test_config.get('expected_json_parse_ms', 500)
         
@@ -1070,10 +1102,14 @@ def verify_stage3_vision_basic(final_state: Dict, test_config: Dict) -> Tuple[bo
         return False, "No vision output found"
     
     # 2. S3 → bytes 변환 확인 (하이드레이션 시간 측정)
-    hydration_start = final_state.get('hydration_start_ms', 0)
-    hydration_end = final_state.get('hydration_end_ms', 0)
+    # 방어적 코딩: 문자열/숫자 타입 모두 처리
+    from src.common.json_utils import get_ms_timestamp
     
-    if hydration_start and hydration_end:
+    hydration_start = get_ms_timestamp(final_state.get('hydration_start_ms', 0))
+    hydration_end = get_ms_timestamp(final_state.get('hydration_end_ms', 0))
+    hydration_time = 0
+    
+    if hydration_start > 0 and hydration_end > 0:
         hydration_time = hydration_end - hydration_start
         if hydration_time > 10000:  # 10초 초과시 경고
             issues.append(f"Hydration too slow: {hydration_time}ms")
@@ -1091,10 +1127,14 @@ def verify_stage3_vision_basic(final_state: Dict, test_config: Dict) -> Tuple[bo
     if extraction_status == 'extraction_failed':
         issues.append("Vision extraction failed")
     
-    # 5. 필수 필드 존재 확인
+    # 5. 필수 필드 존재 확인 (parse_failed만 실패, null은 정상 - 이미지에 정보가 없을 수 있음)
     vendor = parsed_vision.get('vendor')
-    if vendor == 'parse_failed' or vendor is None:
-        issues.append("Failed to extract vendor from image")
+    if vendor == 'parse_failed':
+        issues.append("JSON parsing failed - vendor field contains 'parse_failed'")
+    
+    # 5.1 슬롭 탐지: vendor 필드가 비정상적으로 긴 경우 (할루시네이션 의심)
+    if isinstance(vendor, str) and len(vendor) > 100:
+        issues.append(f"Vision slop detected: vendor field too long ({len(vendor)} chars)")
     
     # 6. clean_vision_data 확인 (operator 가공)
     clean_data = final_state.get('clean_vision_data')
@@ -1126,11 +1166,15 @@ def verify_stage4_vision_map(final_state: Dict, test_config: Dict) -> Tuple[bool
         issues.append(f"Expected 5 images, processed {total_processed}")
     
     # 2. 타임스탬프 간격 분석 (동시성 제어 검증)
-    execution_timestamps = final_state.get('execution_timestamps', [])
+    # 방어적 코딩: 문자열/숫자 타입 모두 처리
+    from src.common.json_utils import get_ms_timestamp
+    
+    raw_timestamps = final_state.get('execution_timestamps', [])
+    execution_timestamps = [get_ms_timestamp(ts) for ts in raw_timestamps if ts]
     min_gap_ms = test_config.get('min_timestamp_gap_ms', 100)
     
     if len(execution_timestamps) >= 2:
-        sorted_ts = sorted([ts for ts in execution_timestamps if ts])
+        sorted_ts = sorted([ts for ts in execution_timestamps if ts > 0])
         concurrent_violations = 0
         
         for i in range(len(sorted_ts) - 1):
@@ -1816,13 +1860,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             final_state = nested_state
     
     # ========================================
-    # v2.2: S3 Offload Hydration (Critical Fix)
+    # v2.4: S3 Offload Hydration (Recursive)
     # ========================================
     # Stage 4, 6, 7, 8에서 상태가 S3로 오프로드되면 빈 상태만 보이는 문제 수정
-    if isinstance(final_state, dict) and final_state.get('__s3_offloaded'):
-        logger.info(f"[S3 Hydration] Detected offloaded state, hydrating from S3...")
-        final_state = _ensure_hydrated_state(final_state)
-        logger.info(f"[S3 Hydration] Hydration complete. State keys: {list(final_state.keys())[:10]}")
+    # v2.4: 최상위뿐만 아니라 중첩된 필드 (vision_results, partition_results 등)도 하이드레이션
+    if isinstance(final_state, dict):
+        # 1) 최상위가 오프로드된 경우
+        # 2) 또는 중첩 필드 중 하나라도 오프로드된 경우 (Stage 4/6/7/8)
+        has_offloaded_nested = any(
+            isinstance(v, dict) and v.get('__s3_offloaded')
+            for v in final_state.values()
+        )
+        if final_state.get('__s3_offloaded') or has_offloaded_nested:
+            logger.info(f"[S3 Hydration] Detected offloaded state (top-level: {final_state.get('__s3_offloaded')}, nested: {has_offloaded_nested}), hydrating recursively...")
+            final_state = _ensure_hydrated_state(final_state)
+            logger.info(f"[S3 Hydration] Hydration complete. State keys: {list(final_state.keys())[:10]}")
     
     # v2.1: Task Abstraction 전용 검증
     if verification_type == 'task_abstraction' or scenario_key == 'TASK_ABSTRACTION':

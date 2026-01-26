@@ -30,6 +30,9 @@ from .token_utils import (
     calculate_cost_usd
 )
 
+# Quality Kernel - SlopDetector Integration (lazy import after logger is defined)
+QUALITY_KERNEL_AVAILABLE = False  # Will be set True after successful import below
+
 # -----------------------------------------------------------------------------
 # 1. Imports & Constants
 # -----------------------------------------------------------------------------
@@ -65,6 +68,21 @@ try:
     from langgraph.graph.message import add_messages
 except ImportError:
     logger.warning("LangGraph not available, using fallback message reducer. This may cause issues with complex workflows.")
+
+# ============================================================================
+# [Quality Kernel] SlopDetector Integration (v2.5)
+# ============================================================================
+try:
+    from src.services.quality_kernel import (
+        KernelMiddlewareInterceptor,
+        ContentDomain,
+        InterceptorAction
+    )
+    QUALITY_KERNEL_AVAILABLE = True
+    logger.info("Quality Kernel loaded successfully - slop detection enabled")
+except ImportError as e:
+    QUALITY_KERNEL_AVAILABLE = False
+    logger.warning(f"Quality Kernel not available, slop detection disabled: {e}")
 
 # ============================================================================
 # [Configuration] Model Mapping and Timeouts
@@ -948,6 +966,124 @@ def normalize_llm_usage(usage: Dict[str, Any], provider: str) -> Dict[str, Any]:
     
     return normalized
 
+
+def _auto_upload_image_to_s3(image_data: Union[str, bytes], state: Dict[str, Any], content_type: str = "image/png") -> Optional[str]:
+    """
+    Base64 또는 bytes 이미지를 S3에 자동 업로드하고 URI를 반환합니다.
+    
+    Args:
+        image_data: Base64 문자열 또는 bytes
+        state: 워크플로우 상태 (execution_id 등 추출용)
+        content_type: MIME 타입 (기본 image/png)
+    
+    Returns:
+        S3 URI (s3://bucket/key) 또는 None (실패 시)
+    """
+    import base64
+    import uuid
+    
+    try:
+        # bytes 변환
+        if isinstance(image_data, str):
+            # Base64 문자열 - data URI prefix 제거
+            if image_data.startswith('data:'):
+                # data:image/png;base64,xxxx 형식
+                parts = image_data.split(',', 1)
+                if len(parts) == 2:
+                    header, image_data = parts
+                    # MIME 타입 추출
+                    if 'image/jpeg' in header or 'image/jpg' in header:
+                        content_type = 'image/jpeg'
+                    elif 'image/png' in header:
+                        content_type = 'image/png'
+                    elif 'image/webp' in header:
+                        content_type = 'image/webp'
+                    elif 'image/gif' in header:
+                        content_type = 'image/gif'
+            
+            image_bytes = base64.b64decode(image_data)
+        else:
+            image_bytes = image_data
+        
+        # 확장자 결정
+        ext_map = {
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+            'image/webp': '.webp',
+            'image/gif': '.gif',
+        }
+        ext = ext_map.get(content_type, '.png')
+        
+        # S3 키 생성
+        execution_id = state.get('execution_id') or state.get('llm_execution_id') or uuid.uuid4().hex[:8]
+        s3_key = f"auto-uploaded/{execution_id}/image_{uuid.uuid4().hex[:8]}{ext}"
+        
+        # S3 버킷 결정 (환경 변수 또는 기본값)
+        s3_bucket = os.environ.get('WORKFLOW_STATE_BUCKET') or os.environ.get('S3_BUCKET') or 'analemma-workflows-dev'
+        
+        # S3 업로드
+        s3_client = boto3.client('s3', region_name=os.environ.get('AWS_REGION', 'ap-northeast-2'))
+        s3_client.put_object(
+            Bucket=s3_bucket,
+            Key=s3_key,
+            Body=image_bytes,
+            ContentType=content_type
+        )
+        
+        s3_uri = f"s3://{s3_bucket}/{s3_key}"
+        logger.info(f"✅ [Auto Upload] Image uploaded to S3: {s3_uri} ({len(image_bytes)} bytes)")
+        return s3_uri
+        
+    except Exception as e:
+        logger.error(f"❌ [Auto Upload] Failed to upload image to S3: {e}")
+        return None
+
+
+def _preprocess_image_inputs(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    워크플로우 상태에서 이미지 데이터를 전처리합니다.
+    
+    지원 형식:
+    - image_data: Base64 문자열 또는 data URI
+    - image_bytes: bytes 객체
+    - image_base64: Base64 문자열
+    
+    이 데이터가 있으면 S3에 업로드하고 image_uri로 변환합니다.
+    
+    Args:
+        state: 워크플로우 상태
+    
+    Returns:
+        업데이트된 상태 (image_uri 추가됨)
+    """
+    # 이미 image_uri가 있으면 처리 불필요
+    if state.get('image_uri') and state['image_uri'].startswith('s3://'):
+        return state
+    
+    # 이미지 데이터 소스 확인
+    image_data = state.get('image_data') or state.get('image_base64') or state.get('image_bytes')
+    
+    if not image_data:
+        return state
+    
+    logger.info(f"🖼️ [Image Preprocess] Detected inline image data, auto-uploading to S3...")
+    
+    # MIME 타입 추론
+    content_type = state.get('image_content_type') or state.get('image_mime_type') or 'image/png'
+    
+    # S3 업로드
+    s3_uri = _auto_upload_image_to_s3(image_data, state, content_type)
+    
+    if s3_uri:
+        state['image_uri'] = s3_uri
+        state['_image_auto_uploaded'] = True
+        logger.info(f"🖼️ [Image Preprocess] Auto-converted to S3 URI: {s3_uri}")
+    else:
+        logger.warning(f"🖼️ [Image Preprocess] Failed to upload image, image_uri not set")
+    
+    return state
+
+
 def prepare_multimodal_content(prompt: str, state: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Extract S3 URIs from prompt and prepare multimodal content for Gemini Vision API.
@@ -1144,6 +1280,12 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     # 0. Hydrate Data (Pre-execution)
     # Ensure S3 pointers defined in input_variables are downloaded
     exec_state = _hydrate_state_for_config(state, actual_config)
+    
+    # [v2.6] Auto-upload inline image data to S3
+    # Supports: image_data (base64), image_bytes, image_base64
+    # Converts to image_uri (s3://...) for Vision API
+    if actual_config.get("vision_enabled", False):
+        exec_state = _preprocess_image_inputs(exec_state)
     
     # [FIX] Override MOCK_MODE from state if present (payload takes precedence over Lambda env var)
     # This allows LLM Simulator to force MOCK_MODE=false even when Lambda default is true
@@ -1501,8 +1643,90 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             
             # [DEBUG] Provider Tracking - 폴백 없이 bedrock 표시 문제 디버깅
             logger.info(f"🔍 [Provider Debug] Node: {node_id}, meta.provider: {meta.get('provider')}, usage.provider: {usage.get('provider')}")
+            
+            # ================================================================
+            # 🛡️ [Quality Kernel] SlopDetector Integration (v2.5)
+            # LLM 응답에 대한 자동 슬롭 탐지 및 품질 검증
+            # 기본: 활성화 (QUALITY_KERNEL_AVAILABLE=True일 때)
+            # 비활성화: disable_kernel_quality_check=true 설정
+            # ================================================================
+            kernel_quality_result = None
+            
+            # 비활성화 조건 확인 (명시적으로 끄는 경우)
+            disable_quality_check = (
+                actual_config.get("disable_kernel_quality_check", False) or
+                actual_config.get("quality_gate", {}).get("enabled") == False or
+                exec_state.get("disable_kernel_quality_check", False)
+            )
+            
+            # 기본 활성화 (Quality Kernel 사용 가능 + 비활성화 안됨)
+            enable_quality_check = QUALITY_KERNEL_AVAILABLE and not disable_quality_check
+            
+            if enable_quality_check and isinstance(text, str) and len(text) > 20:
+                try:
+                    # 도메인 추론
+                    domain_hint = actual_config.get("content_domain") or exec_state.get("content_domain", "general_text")
+                    domain_map = {
+                        "technical": ContentDomain.TECHNICAL_REPORT,
+                        "technical_report": ContentDomain.TECHNICAL_REPORT,
+                        "creative": ContentDomain.CREATIVE_WRITING,
+                        "code": ContentDomain.CODE_DOCUMENTATION,
+                        "api": ContentDomain.API_RESPONSE,
+                        "workflow": ContentDomain.WORKFLOW_OUTPUT,
+                        "document_analysis": ContentDomain.GENERAL_TEXT,
+                    }
+                    content_domain = domain_map.get(domain_hint, ContentDomain.GENERAL_TEXT)
+                    
+                    # 인터셉터 생성 및 실행
+                    interceptor = KernelMiddlewareInterceptor(
+                        domain=content_domain,
+                        slop_threshold=actual_config.get("slop_threshold", 0.5),
+                        enable_distillation=False,  # 현재는 탐지만
+                        enable_stage2=False  # Stage 2 LLM 검증은 비활성화
+                    )
+                    
+                    workflow_id = exec_state.get("workflow_id") or exec_state.get("execution_id", "unknown")
+                    intercept_result = interceptor.post_process_node(
+                        node_output=text,
+                        node_id=node_id,
+                        workflow_id=workflow_id,
+                        context=exec_state
+                    )
+                    
+                    kernel_quality_result = {
+                        "action": intercept_result.action.value,
+                        "slop_score": intercept_result.slop_result.slop_score if intercept_result.slop_result else 0.0,
+                        "is_slop": intercept_result.slop_result.is_slop if intercept_result.slop_result else False,
+                        "combined_score": intercept_result.combined_score,
+                        "recommendation": intercept_result.recommendation
+                    }
+                    
+                    logger.info(
+                        f"🛡️ [Quality Kernel] Node: {node_id}, "
+                        f"Action: {intercept_result.action.value}, "
+                        f"Slop Score: {kernel_quality_result['slop_score']:.3f}, "
+                        f"Combined: {intercept_result.combined_score:.3f}"
+                    )
+                    
+                    # REJECT 액션인 경우 경고 로깅 (현재는 차단하지 않음)
+                    if intercept_result.action == InterceptorAction.REJECT:
+                        logger.warning(
+                            f"⚠️ [Quality Kernel REJECT] Node: {node_id}, "
+                            f"Slop detected but not blocking. Score: {kernel_quality_result['slop_score']:.3f}"
+                        )
+                        
+                except Exception as qk_error:
+                    logger.warning(f"Quality Kernel check failed for node {node_id}: {qk_error}")
+                    kernel_quality_result = {"error": str(qk_error)}
+            
             # 🛡️ [Guard] Layer 1: Validate output keys (Reserved key check)
             raw_output = {out_key: output_value, f"{node_id}_meta": meta, "step_history": new_history, "usage": usage}
+            
+            # Quality Kernel 결과 추가
+            if kernel_quality_result:
+                raw_output["_kernel_quality_check"] = kernel_quality_result
+                raw_output["_kernel_action"] = kernel_quality_result.get("action", "PASS")
+            
             validated_output = _validate_output_keys(raw_output, node_id)
             # 🛡️ [Guard] Layer 2: Schema validation (Type safety)
             return validate_state_with_schema(validated_output, node_id)

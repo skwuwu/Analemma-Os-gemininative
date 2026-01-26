@@ -1,6 +1,6 @@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { FileJson, Trash2, Play, Loader2, Eye, ChevronRight, Activity } from 'lucide-react';
+import { FileJson, Trash2, Play, Loader2, Eye, ChevronRight, Activity, Upload, X, Image, Film, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { WorkflowChat } from './WorkflowChat';
 import { CloneInstructionsDialog } from './CloneInstructionsDialog';
@@ -8,6 +8,7 @@ import { useWorkflowStore } from '@/lib/workflowStore';
 import { useWorkflowApi } from '@/hooks/useWorkflowApi';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { uploadMedia, SUPPORTED_MEDIA_TYPES, MAX_FILE_SIZE_MB, type UploadedMedia } from '@/lib/mediaApi';
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useState, useRef, useLayoutEffect, useMemo } from 'react';
@@ -69,7 +70,11 @@ export const SavedWorkflows = ({
   const [showInitialStateDialog, setShowInitialStateDialog] = useState(false);
   const [initialStateText, setInitialStateText] = useState('');
   const [workflowAlias, setWorkflowAlias] = useState('');
-
+  
+  // 미디어 업로드 관련 상태
+  const [uploadedMedia, setUploadedMedia] = useState<UploadedMedia[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   // Clone Instructions Dialog 상태
   const [showCloneDialog, setShowCloneDialog] = useState(false);
   const [savedWorkflowId, setSavedWorkflowId] = useState<string | null>(null);
@@ -149,6 +154,61 @@ export const SavedWorkflows = ({
     setShowCloneDialog(false);
     setSavedWorkflowId(null);
     setSavedWorkflowName('');
+  };
+
+  // 미디어 업로드 핸들러
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleMediaUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    
+    // 파일 타입 검증
+    if (!SUPPORTED_MEDIA_TYPES.includes(file.type as any)) {
+      toast.error(`지원되지 않는 파일 형식입니다: ${file.type}`);
+      return;
+    }
+
+    // 파일 크기 검증
+    const sizeMB = file.size / (1024 * 1024);
+    if (sizeMB > MAX_FILE_SIZE_MB) {
+      toast.error(`파일 크기가 ${MAX_FILE_SIZE_MB}MB를 초과합니다. (${sizeMB.toFixed(1)}MB)`);
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      const result = await uploadMedia(file, (percent) => {
+        setUploadProgress(percent);
+      });
+      
+      setUploadedMedia((prev) => [...prev, result]);
+      toast.success(`${file.name} 업로드 완료`);
+    } catch (error) {
+      console.error('Media upload failed:', error);
+      toast.error(`업로드 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleRemoveMedia = (index: number) => {
+    setUploadedMedia((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const getMediaIcon = (contentType: string) => {
+    if (contentType.startsWith('image/')) return <Image className="w-4 h-4" />;
+    if (contentType.startsWith('video/')) return <Film className="w-4 h-4" />;
+    return <FileText className="w-4 h-4" />;
   };
 
   const handleDeleteClick = (workflowId: string, workflowName: string) => {
@@ -260,7 +320,12 @@ export const SavedWorkflows = ({
   const handleLoadCancel = () => { setShowLoadDialog(false); setSelectedWorkflow(null); };
   const handlePreviewClose = () => { setShowPreviewDialog(false); setPreviewData(null); setSelectedWorkflow(null); };
 
-  const handleInitialStateCancel = () => { setShowInitialStateDialog(false); setInitialStateText(''); setWorkflowAlias(''); };
+  const handleInitialStateCancel = () => { 
+    setShowInitialStateDialog(false); 
+    setInitialStateText(''); 
+    setWorkflowAlias(''); 
+    setUploadedMedia([]); // 미디어 초기화
+  };
   const handleInitialStateConfirm = async () => {
     const userInput = (initialStateText ?? '').trim();
     const inputs = parseInitialState(userInput, currentWorkflow);
@@ -273,9 +338,29 @@ export const SavedWorkflows = ({
     if (finalAlias) {
       inputs.workflow_alias = finalAlias;
     }
+    
+    // 업로드된 미디어 URL 추가
+    if (uploadedMedia.length > 0) {
+      const mediaUrls = uploadedMedia.map((m) => m.s3_url);
+      // 단일 미디어인 경우 문자열로, 복수인 경우 배열로
+      if (mediaUrls.length === 1) {
+        inputs.media_url = mediaUrls[0];
+      } else {
+        inputs.media_urls = mediaUrls;
+      }
+      // 모든 미디어 메타데이터도 포함
+      inputs._uploaded_media = uploadedMedia.map((m) => ({
+        filename: m.filename,
+        s3_url: m.s3_url,
+        content_type: m.content_type,
+        size_bytes: m.size_bytes,
+      }));
+    }
+    
     setShowInitialStateDialog(false);
     setInitialStateText('');
     setWorkflowAlias('');
+    setUploadedMedia([]); // 미디어 초기화
     await executeRun(inputs);
   };
 
@@ -410,9 +495,9 @@ export const SavedWorkflows = ({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 4. Initial State Dialog (기존 유지) */}
+      {/* 4. Initial State Dialog (미디어 업로드 기능 추가) */}
       <AlertDialog open={showInitialStateDialog} onOpenChange={setShowInitialStateDialog}>
-        <AlertDialogContent className="max-w-2xl">
+        <AlertDialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Run: Initial Prompt</AlertDialogTitle>
             <AlertDialogDescription>Enter a natural-language prompt to start the workflow.</AlertDialogDescription>
@@ -431,6 +516,75 @@ export const SavedWorkflows = ({
               <label className="text-sm font-semibold mb-2 block">Initial Prompt</label>
               <Textarea placeholder='e.g. "내 구글 드라이브 요약해줘"' value={initialStateText} onChange={(e) => setInitialStateText(e.target.value)} className="min-h-[120px] w-full text-sm" />
             </div>
+            
+            {/* 📁 미디어 업로드 섹션 */}
+            <div className="border-t pt-4">
+              <label className="text-sm font-semibold mb-2 block">📁 Media Attachments (Optional)</label>
+              <p className="text-xs text-muted-foreground mb-3">
+                이미지, 비디오, PDF 파일을 첨부하면 워크플로우에서 분석할 수 있습니다. (최대 {MAX_FILE_SIZE_MB}MB)
+              </p>
+              
+              {/* 업로드 버튼 */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleMediaUpload}
+                accept={SUPPORTED_MEDIA_TYPES.join(',')}
+                className="hidden"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="w-full mb-3"
+              >
+                {isUploading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    업로드 중... {uploadProgress}%
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4 mr-2" />
+                    파일 첨부하기
+                  </>
+                )}
+              </Button>
+              
+              {/* 업로드된 파일 목록 */}
+              {uploadedMedia.length > 0 && (
+                <div className="space-y-2">
+                  {uploadedMedia.map((media, index) => (
+                    <div 
+                      key={`${media.filename}-${index}`}
+                      className="flex items-center justify-between p-2 bg-secondary rounded-md text-sm"
+                    >
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        {getMediaIcon(media.content_type)}
+                        <span className="truncate max-w-[200px]" title={media.filename}>
+                          {media.filename}
+                        </span>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          ({(media.size_bytes / 1024 / 1024).toFixed(1)}MB)
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveMedia(index)}
+                        className="h-6 w-6 p-0 hover:bg-destructive/20"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
             <div>
               <h4 className="text-sm font-semibold mb-2">Supported Test Keywords</h4>
               <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto">

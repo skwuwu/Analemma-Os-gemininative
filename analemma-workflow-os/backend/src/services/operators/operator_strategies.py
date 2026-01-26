@@ -1136,12 +1136,18 @@ def _timestamp(input_val: Any, params: Dict[str, Any]) -> Union[str, int, float]
         return now.isoformat()
     elif format_type == "unix":
         return int(now.timestamp())
-    elif format_type == "unix_ms":
+    elif format_type in ("unix_ms", "epoch_ms", "ms"):
+        # epoch_ms, ms 별칭 지원
         return int(now.timestamp() * 1000)
     elif format_type == "epoch":
         return now.timestamp()
     else:
-        return now.strftime(format_type)
+        # Custom strftime format (e.g., "%Y-%m-%d")
+        try:
+            return now.strftime(format_type)
+        except ValueError:
+            # Invalid format string - fallback to ISO
+            return now.isoformat()
 
 
 # =============================================================================
