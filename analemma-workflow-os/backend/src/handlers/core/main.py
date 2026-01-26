@@ -2614,7 +2614,7 @@ def loop_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]
     from src.common.statebag import ensure_state_bag
     from src.services.operators.operator_strategies import SafeExpressionEvaluator
     
-    evaluator = SafeExpressionEvaluator()
+    # SafeExpressionEvaluator is created per-iteration with current state as context
     
     for i in range(max_iterations):
         if execution_arn and check_execution_cancelled(execution_arn):
@@ -2665,7 +2665,9 @@ def loop_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]
         # Check exit condition
         try:
             # 1. Logic-based condition
-            should_exit = evaluator.evaluate(condition, current_state)
+            # Create evaluator with current state as context
+            evaluator = SafeExpressionEvaluator(current_state)
+            should_exit = evaluator.evaluate(condition)
             if should_exit:
                 logger.info(f"✅ [Loop] Exit condition met at iteration {i}")
                 all_loop_updates["loop_exit_reason"] = "condition_met"

@@ -132,9 +132,19 @@ class SafeExpressionEvaluator:
                 parts.append(token)
         return parts
     
-    def _parse_literal(self, value_str: str) -> Any:
-        """Parse a literal value from string."""
+    def _parse_literal(self, value_str: str, resolve_path: bool = False) -> Any:
+        """Parse a literal value from string.
+        
+        Args:
+            value_str: The value string to parse
+            resolve_path: If True, resolve $.path expressions to actual values
+        """
         value_str = value_str.strip()
+        
+        # Path reference: $.field.nested - resolve to actual value
+        if resolve_path and value_str.startswith("$."):
+            path = value_str[2:]  # Remove $. prefix
+            return self.get_path(path)
         
         # String literals
         if (value_str.startswith("'") and value_str.endswith("'")) or \
@@ -189,12 +199,13 @@ class SafeExpressionEvaluator:
         if path_match:
             return self.get_path(path_match.group(1))
         
-        # Comparison: $.field == 'value'
+        # Comparison: $.field == 'value' OR $.field == $.other_field
         comp_match = self.COMPARISON_PATTERN.match(expression)
         if comp_match:
             path, op, value_str = comp_match.groups()
             left_value = self.get_path(path)
-            right_value = self._parse_literal(value_str)
+            # resolve_path=True allows right side to be $.path reference
+            right_value = self._parse_literal(value_str, resolve_path=True)
             op_func = self.COMPARISON_OPS.get(op)
             if op_func:
                 try:

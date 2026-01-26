@@ -50,7 +50,7 @@
             "id": "parallel_branch_executor",
             "type": "for_each",
             "config": {
-                "input_list_key": "branch_configs",
+                "input_list_key": "init_result.branch_configs",
                 "item_key": "current_branch",
                 "output_key": "branch_results",
                 "max_concurrency": 3,
