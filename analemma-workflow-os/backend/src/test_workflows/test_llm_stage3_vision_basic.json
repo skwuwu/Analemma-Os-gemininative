@@ -72,45 +72,42 @@
                 "provider": "gemini",
                 "model": "gemini-2.0-flash",
                 "vision_enabled": true,
-                "image_sources": [
-                    "{{image_uri}}"
-                ],
                 "system_prompt": "You are a document analyzer. Extract structured data from images precisely. Always respond with valid JSON.",
-                "prompt_content": "Analyze this image and extract the following fields in JSON format:\n- amount (total amount if receipt, or main value)\n- date (in YYYY-MM-DD format)\n- vendor (company/store name)\n- items (list of items/components)\n\nIf a field is not visible, use null.",
+                "prompt_content": "Analyze this image: {{image_uri}}\n\nExtract the following fields in JSON format:\n- amount (total amount if receipt, or main value)\n- date (in YYYY-MM-DD format)\n- vendor (company/store name)\n- items (list of items/components)\n\nIf a field is not visible, use null.",
                 "max_tokens": 1024,
                 "temperature": 0.2,
                 "response_schema": {
                     "type": "object",
                     "properties": {
                         "amount": {
-                            "type": [
-                                "number",
-                                "null"
-                            ]
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Total amount or main value from image"
                         },
                         "date": {
-                            "type": [
-                                "string",
-                                "null"
-                            ]
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Date in YYYY-MM-DD format"
                         },
                         "vendor": {
-                            "type": [
-                                "string",
-                                "null"
-                            ]
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Company or store name"
                         },
                         "items": {
                             "type": "array",
                             "items": {
                                 "type": "string"
-                            }
+                            },
+                            "description": "List of items or components"
                         },
                         "confidence": {
-                            "type": "number"
+                            "type": "number",
+                            "description": "Confidence score 0-1"
                         },
                         "image_type": {
-                            "type": "string"
+                            "type": "string",
+                            "description": "Type of image detected"
                         }
                     }
                 },

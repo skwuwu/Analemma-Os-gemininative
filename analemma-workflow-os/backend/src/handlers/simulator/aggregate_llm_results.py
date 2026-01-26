@@ -131,7 +131,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         scenario = result.get('scenario', 'unknown')
         verification = result.get('verification_result', {}).get('verification', {})
         
-        status = verification.get('status', 'UNKNOWN')
+        # [Fix] verify_llm_test.py는 'verified' boolean을 반환하므로 'status' 문자열로 변환
+        # 기존: status = verification.get('status', 'UNKNOWN')
+        if 'status' in verification:
+            status = verification.get('status')
+        elif 'verified' in verification:
+            status = 'PASSED' if verification.get('verified') else 'FAILED'
+        else:
+            status = 'UNKNOWN'
         
         if status == 'PASSED':
             passed_count += 1

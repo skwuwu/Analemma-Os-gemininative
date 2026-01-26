@@ -1000,8 +1000,13 @@ def verify_stage2_flow_control(final_state: Dict, test_config: Dict) -> Tuple[bo
     metrics = {}
     
     # 1. for_each 결과 확인
+    # [Fix] processed_items 배열 길이도 확인 (processed_count가 없을 때 fallback)
     processed_items = final_state.get('processed_items', [])
     processed_count = final_state.get('processed_count', 0)
+    
+    # processed_count가 0이면 processed_items 길이 사용
+    if processed_count == 0 and isinstance(processed_items, list):
+        processed_count = len(processed_items)
     
     if processed_count < 3:
         issues.append(f"Expected 3 items processed, got {processed_count}")
@@ -1761,6 +1766,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     v2.2: S3 Offload Hydration
     - __s3_offloaded 상태 자동 하이드레이션
     - Stage 4, 6, 7, 8에서 S3 경로 추적
+    
+    v2.3: Nested final_state 자동 추출
+    - Step Functions 출력이 {status, final_state: {...}} 구조일 때 자동 추출
     """
     logger.info(f"Verifying LLM test: {event.get('scenario_key')}")
     
@@ -1771,10 +1779,29 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     verification_type = event.get('verification_type', 'standard')
     
     # ========================================
+    # v2.3: Nested final_state 자동 추출
+    # ========================================
+    # Step Functions 출력이 {status: "SUCCEEDED", final_state: {...}} 구조일 때
+    # 실제 final_state가 중첩되어 있으면 자동 추출
+    if isinstance(final_state, str):
+        try:
+            final_state = json.loads(final_state)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"Failed to parse final_state as JSON string")
+            final_state = {}
+    
+    # 중첩된 final_state 추출 (output.final_state 구조)
+    if isinstance(final_state, dict) and 'final_state' in final_state and 'status' in final_state:
+        logger.info(f"[Nested] Extracting nested final_state from Step Functions output structure")
+        nested_state = final_state.get('final_state', {})
+        if isinstance(nested_state, dict) and nested_state:
+            final_state = nested_state
+    
+    # ========================================
     # v2.2: S3 Offload Hydration (Critical Fix)
     # ========================================
     # Stage 4, 6, 7, 8에서 상태가 S3로 오프로드되면 빈 상태만 보이는 문제 수정
-    if final_state.get('__s3_offloaded'):
+    if isinstance(final_state, dict) and final_state.get('__s3_offloaded'):
         logger.info(f"[S3 Hydration] Detected offloaded state, hydrating from S3...")
         final_state = _ensure_hydrated_state(final_state)
         logger.info(f"[S3 Hydration] Hydration complete. State keys: {list(final_state.keys())[:10]}")
