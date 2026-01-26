@@ -243,31 +243,31 @@ def _get_safety_settings():
     Uses BLOCK_NONE to prevent false positives on technical workflow content.
     
     Returns:
-        List of safety setting dictionaries for all harm categories
+        List of SafetySetting objects for all harm categories, or None if import fails
     """
     try:
-        from vertexai.generative_models import HarmCategory, HarmBlockThreshold
+        from vertexai.generative_models import SafetySetting, HarmCategory, HarmBlockThreshold
         
         return [
-            {
-                "category": HarmCategory.HARM_CATEGORY_HARASSMENT,
-                "threshold": HarmBlockThreshold.BLOCK_NONE,
-            },
-            {
-                "category": HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                "threshold": HarmBlockThreshold.BLOCK_NONE,
-            },
-            {
-                "category": HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                "threshold": HarmBlockThreshold.BLOCK_NONE,
-            },
-            {
-                "category": HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                "threshold": HarmBlockThreshold.BLOCK_NONE,
-            },
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_HARASSMENT,
+                threshold=HarmBlockThreshold.BLOCK_NONE,
+            ),
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                threshold=HarmBlockThreshold.BLOCK_NONE,
+            ),
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                threshold=HarmBlockThreshold.BLOCK_NONE,
+            ),
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                threshold=HarmBlockThreshold.BLOCK_NONE,
+            ),
         ]
     except ImportError:
-        logger.warning("Could not import HarmCategory/HarmBlockThreshold, using default safety settings")
+        logger.warning("Could not import SafetySetting/HarmCategory/HarmBlockThreshold, using default safety settings")
         return None
 
 
