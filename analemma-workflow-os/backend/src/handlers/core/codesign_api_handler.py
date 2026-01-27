@@ -20,6 +20,10 @@ import time
 from typing import Dict, Any, Optional, Generator, Callable, AsyncGenerator
 from functools import wraps
 
+# [CRITICAL] Initialize logger BEFORE any other imports that might use it
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 🚨 [Critical Fix] Import 경로 수정
 # 기존: agentic_designer_handler (함수들이 존재하지 않음)

@@ -35,7 +35,7 @@ class StructureDefinition(BaseModel):
     name: str
     type: StructureType
     description: str
-    schema: Dict[str, Any]
+    schema_def: Dict[str, Any] = Field(default_factory=dict)  # Renamed from 'schema' to avoid shadowing BaseModel.schema()
     examples: List[Dict[str, Any]]
     use_cases: List[str]
     ui_hints: Dict[str, Any] = Field(default_factory=dict)
@@ -48,7 +48,7 @@ LOOP_STRUCTURE = StructureDefinition(
     name="loop",
     type=StructureType.LOOP,
     description="A structure that sequentially processes a collection of data, applying the same processing logic to each item.",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
@@ -147,7 +147,7 @@ MAP_STRUCTURE = StructureDefinition(
     name="map",
     type=StructureType.MAP,
     description="A structure that processes a collection of data in parallel. Compatible with AWS Step Functions Distributed Map.",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
@@ -245,7 +245,7 @@ PARALLEL_STRUCTURE = StructureDefinition(
     name="parallel",
     type=StructureType.PARALLEL,
     description="A structure that executes multiple different tasks simultaneously. Each branch runs independently.",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
@@ -341,7 +341,7 @@ CONDITIONAL_STRUCTURE = StructureDefinition(
     name="conditional",
     type=StructureType.CONDITIONAL,
     description="A structure that branches to different paths based on conditions. Supports if-else and switch-case patterns.",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
@@ -439,7 +439,7 @@ RETRY_STRUCTURE = StructureDefinition(
     name="retry",
     type=StructureType.RETRY,
     description="A structure that automatically retries on failure. Supports exponential backoff and maximum retry counts.",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
@@ -534,7 +534,7 @@ CATCH_STRUCTURE = StructureDefinition(
     name="catch",
     type=StructureType.CATCH,
     description="A structure that branches to alternative paths on error. Implements try-catch patterns.",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
@@ -631,7 +631,7 @@ SUBGRAPH_STRUCTURE = StructureDefinition(
     description="""A reusable nested workflow structure.
 Modularizes complex workflows and can be used recursively within other structures (Loop, Parallel, etc.).
 SubGraph exchanges data between parent and child through independent state mapping.""",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type"],
         "properties": {
@@ -810,7 +810,7 @@ WAIT_FOR_APPROVAL_STRUCTURE = StructureDefinition(
     name="wait_for_approval",
     type=StructureType.WAIT_FOR_APPROVAL,
     description="A structure that waits for human approval at points where AI judgment is uncertain. Core element of Glassbox AI.",
-    schema={
+    schema_def={
         "type": "object",
         "required": ["id", "type", "config"],
         "properties": {
@@ -941,7 +941,7 @@ def get_all_structure_tools() -> List[Dict[str, Any]]:
             "name": struct.name,
             "type": struct.type.value,
             "description": struct.description,
-            "schema": struct.schema,
+            "schema": struct.schema_def,
             "examples": struct.examples,
             "use_cases": struct.use_cases,
         })
@@ -1026,7 +1026,7 @@ Each tool implements a specific control flow pattern. Refer to detailed schema s
 
 **JSON Schema:**
 ```json
-{json.dumps(struct.schema, ensure_ascii=False, indent=2)}
+{json.dumps(struct.schema_def, ensure_ascii=False, indent=2)}
 ```
 
 **Example:**
@@ -1094,14 +1094,14 @@ def validate_structure_node(node: Dict[str, Any], all_node_ids: Optional[List[st
         return errors
     
     # Required field validation
-    required_fields = struct.schema.get("required", [])
+    required_fields = struct.schema_def.get("required", [])
     for field in required_fields:
         if field not in node:
             errors.append(f"{struct.name} node is missing required field '{field}'.")
     
     # Config required field validation
     config = node.get("config", {})
-    config_schema = struct.schema.get("properties", {}).get("config", {})
+    config_schema = struct.schema_def.get("properties", {}).get("config", {})
     config_required = config_schema.get("required", [])
     
     for field in config_required:
@@ -1347,3 +1347,4 @@ def get_structure_type_for_node(node_type: str) -> Optional[StructureDefinition]
         "wait_for_approval": WAIT_FOR_APPROVAL_STRUCTURE,
     }
     return type_to_struct.get(node_type)
+

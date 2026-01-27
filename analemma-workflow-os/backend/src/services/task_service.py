@@ -140,6 +140,10 @@ class TaskService:
         """
         Task 목록 조회
         
+        [v2.1] Executions 테이블에서 직접 조회로 변경
+        - 완료된 워크플로우도 히스토리에 표시
+        - OwnerIdStartDateIndex GSI 사용 (최신순 정렬)
+        
         Args:
             owner_id: 사용자 ID
             status_filter: 상태 필터 (pending_approval, in_progress, completed 등)
@@ -150,15 +154,18 @@ class TaskService:
             Task 요약 정보 목록
         """
         try:
-            # 기존 notification 테이블에서 조회
+            # [v2.1] Executions 테이블에서 직접 조회
+            owner_index = os.environ.get('OWNER_INDEX', 'OwnerIdStartDateIndex')
+            
             query_func = partial(
-                self.notification_table.query,
+                self.execution_table.query,
+                IndexName=owner_index,
                 KeyConditionExpression="ownerId = :oid",
                 ExpressionAttributeValues={
                     ":oid": owner_id
                 },
                 ScanIndexForward=False,  # 최신순
-                Limit=limit
+                Limit=limit * 2  # 필터링 후 충분한 결과를 위해 2배 조회
             )
             response = await asyncio.get_event_loop().run_in_executor(None, query_func)
             
@@ -166,7 +173,7 @@ class TaskService:
             tasks = []
             
             for item in items:
-                task = self._convert_notification_to_task(item)
+                task = self._convert_execution_to_task(item)
                 if task:
                     # 필터 적용
                     if status_filter:
@@ -176,12 +183,43 @@ class TaskService:
                         continue
                     
                     tasks.append(task)
+                    
+                    # limit 도달하면 중단
+                    if len(tasks) >= limit:
+                        break
             
-            return tasks[:limit]
+            return tasks
             
         except ClientError as e:
-            logger.error(f"Failed to get tasks: {e}")
-            return []
+            logger.error(f"Failed to get tasks from executions table: {e}")
+            # Fallback: notification 테이블에서 조회 (진행 중인 작업만)
+            try:
+                query_func = partial(
+                    self.notification_table.query,
+                    KeyConditionExpression="ownerId = :oid",
+                    ExpressionAttributeValues={
+                        ":oid": owner_id
+                    },
+                    ScanIndexForward=False,
+                    Limit=limit
+                )
+                response = await asyncio.get_event_loop().run_in_executor(None, query_func)
+                items = response.get('Items', [])
+                tasks = []
+                
+                for item in items:
+                    task = self._convert_notification_to_task(item)
+                    if task:
+                        if status_filter and task.get('status') != status_filter:
+                            continue
+                        if not include_completed and task.get('status') == 'completed':
+                            continue
+                        tasks.append(task)
+                
+                return tasks[:limit]
+            except Exception as fallback_error:
+                logger.error(f"Fallback query also failed: {fallback_error}")
+                return []
 
     async def get_task_detail(
         self,
@@ -433,6 +471,126 @@ class TaskService:
                 return None
             logger.error(f"Failed to get task from event store: {e}")
             return None
+
+    def _convert_execution_to_task(
+        self,
+        execution: Dict[str, Any],
+        detailed: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Execution 데이터를 Task 형식으로 변환
+        
+        [v2.1] Executions 테이블 항목을 Task Manager UI 형식으로 변환
+        
+        Args:
+            execution: DynamoDB execution 항목
+            detailed: 상세 정보 포함 여부
+            
+        Returns:
+            Task 정보 딕셔너리
+        """
+        try:
+            execution_arn = execution.get('executionArn', '')
+            execution_id = execution_arn.split(':')[-1] if execution_arn else execution.get('execution_id', '')
+            
+            technical_status = execution.get('status', 'UNKNOWN')
+            task_status = convert_technical_status(technical_status)
+            
+            # step_function_state에서 추가 정보 추출
+            sfn_state = execution.get('step_function_state', {})
+            
+            # 진행률 계산
+            progress = 100 if task_status == TaskStatus.COMPLETED else 0
+            if task_status == TaskStatus.IN_PROGRESS:
+                # initial_input에서 총 세그먼트 수 추출 시도
+                initial_input = execution.get('initial_input', {})
+                if isinstance(initial_input, str):
+                    try:
+                        initial_input = json.loads(initial_input)
+                    except:
+                        initial_input = {}
+                
+                current_segment = sfn_state.get('current_segment', 0)
+                total_segments = initial_input.get('total_segments', 1)
+                progress = int((current_segment / max(total_segments, 1)) * 100)
+            
+            # 기본 Task 정보
+            task = {
+                "task_id": execution_id,
+                "task_summary": execution.get('name', '') or self._generate_task_summary_from_execution(execution),
+                "agent_name": "AI Assistant",
+                "status": task_status.value,
+                "progress_percentage": progress,
+                "current_step_name": sfn_state.get('current_step', ''),
+                "current_thought": self._generate_thought_from_status(task_status, technical_status),
+                "is_interruption": technical_status in ['PAUSED', 'PAUSED_FOR_HITP'],
+                "started_at": self._format_timestamp(execution.get('startDate') or execution.get('created_at')),
+                "updated_at": self._format_timestamp(execution.get('stopDate') or execution.get('updated_at')),
+                "workflow_name": execution.get('workflow_name', ''),
+                "workflow_id": execution.get('workflowId', ''),
+            }
+            
+            # 에러 정보
+            if task_status == TaskStatus.FAILED:
+                error = execution.get('error', '')
+                if error:
+                    message, suggestion = get_friendly_error_message(str(error))
+                    task['error_message'] = message
+                    task['error_suggestion'] = suggestion
+            
+            # 상세 정보
+            if detailed:
+                task['artifacts'] = []
+                task['thought_history'] = []
+                
+                # final_result에서 아티팩트 추출
+                final_result = execution.get('final_result', {})
+                if isinstance(final_result, str):
+                    try:
+                        final_result = json.loads(final_result)
+                    except:
+                        pass
+                
+                if isinstance(final_result, dict):
+                    task['artifacts'] = self._extract_artifacts(final_result)
+            
+            return task
+            
+        except Exception as e:
+            logger.error(f"Failed to convert execution to task: {e}")
+            return None
+
+    def _generate_task_summary_from_execution(self, execution: Dict[str, Any]) -> str:
+        """Execution 데이터로부터 Task 요약 생성"""
+        workflow_id = execution.get('workflowId', '')
+        if workflow_id:
+            return f"워크플로우 {workflow_id[:8]}... 실행"
+        
+        execution_arn = execution.get('executionArn', '')
+        if execution_arn:
+            exec_id = execution_arn.split(':')[-1]
+            return f"실행 {exec_id[:8]}..."
+        
+        return "AI 작업"
+
+    def _generate_thought_from_status(self, task_status: TaskStatus, technical_status: str) -> str:
+        """상태에 따른 에이전트 사고 메시지 생성"""
+        if technical_status in ['PAUSED', 'PAUSED_FOR_HITP']:
+            return "사용자의 승인을 기다리고 있습니다."
+        
+        if task_status == TaskStatus.IN_PROGRESS:
+            return "작업을 처리하고 있습니다..."
+        
+        if task_status == TaskStatus.COMPLETED:
+            return "작업이 완료되었습니다."
+        
+        if task_status == TaskStatus.FAILED:
+            return "작업 중 문제가 발생했습니다."
+        
+        if task_status == TaskStatus.QUEUED:
+            return "작업을 준비하고 있습니다..."
+        
+        return "대기 중입니다."
 
     def _convert_notification_to_task(
         self,
