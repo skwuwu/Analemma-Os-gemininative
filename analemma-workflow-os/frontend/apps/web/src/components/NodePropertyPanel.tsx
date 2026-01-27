@@ -328,6 +328,41 @@ const ControlSettings = ({ data, updateField }: any) => {
           </motion.div>
         )}
 
+        {controlType === 'conditional' && (
+          <motion.div key="conditional" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3 pt-1">
+            <div className="p-2.5 rounded-lg bg-purple-50 border border-purple-100/50 text-[10px] text-purple-700 leading-normal flex gap-2">
+              <Activity className="w-4 h-4 shrink-0 text-purple-400" />
+              <span>Python 표현식을 평가하여 조건에 따라 다음 노드를 결정합니다 (if-elif-else 로직).</span>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-[10px] font-bold text-slate-400">Conditions (순서대로 평가)</Label>
+              <div className="space-y-1.5 text-[9px] text-slate-500 italic">
+                예시: state.score &gt;= 90, state.status == 'approved'
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold text-slate-400">Default Target Node</Label>
+              <Input 
+                value={data.default_node || ''} 
+                onChange={(e) => updateField('default_node', e.target.value)} 
+                placeholder="manual_review" 
+                className="h-8 text-xs bg-white font-mono" 
+              />
+              <p className="text-[9px] text-slate-400 italic">모든 조건이 거짓일 때 이동할 노드 ID</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold text-slate-400">Evaluation Mode</Label>
+              <Select value={data.evaluation_mode || 'first_match'} onValueChange={(val) => updateField('evaluation_mode', val)}>
+                <SelectTrigger className="h-9 bg-white"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="first_match">First Match (첫 번째 참인 조건)</SelectItem>
+                  <SelectItem value="all_match">All Match (모든 조건 평가)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </motion.div>
+        )}
+
         {controlType === 'while' && (
           <motion.div key="while" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3 pt-1">
             <div className="space-y-1.5">
@@ -584,6 +619,11 @@ const NodeForm = ({
         } else if (formData.controlType === 'aggregator') {
           updates.strategy = formData.strategy || 'auto';
           updates.output_key = formData.output_key || 'aggregated_result';
+        } else if (formData.controlType === 'conditional') {
+          updates.conditions = formData.conditions || [];
+          updates.default_node = formData.default_node;
+          updates.defaultNode = formData.default_node;
+          updates.evaluation_mode = formData.evaluation_mode || 'first_match';
         } else if (formData.controlType === 'human') {
           updates.approval_message = formData.approval_message;
         }

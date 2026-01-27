@@ -50,6 +50,7 @@ export interface BackendNode {
     | 'api_call'       // operator(api_call) → api_call
     | 'db_query'       // operator(db_query) → db_query
     | 'safe_operator'  // operator(safe_operator) → safe_operator
+    | 'route_condition' // control(conditional) → route_condition
     | 'trigger';       // trigger → trigger (백엔드에서 정규화됨)
   provider?: 'openai' | 'bedrock' | 'anthropic' | 'google';
   model?: string;
@@ -207,9 +208,17 @@ export const convertNodeToBackendFormat = (node: any): BackendNode => {
           sources: node.data.sources || [], // 특정 소스 지정 (선택사항)
           output_key: node.data.output_key || 'aggregated_result',
         };
-      } else if (controlType === 'human' || controlType === 'branch' || controlType === 'conditional') {
-        // human, branch, conditional: 엣지로만 표현되므로 백엔드 노드 생성하지 않음
-        // convertWorkflowToBackendFormat에서 이 노드를 제외하고 엣지만 생성
+      } else if (controlType === 'conditional') {
+        // conditional: route_condition 노드로 변환
+        backendNode.type = 'route_condition';
+        backendNode.config = {
+          conditions: node.data.conditions || [],
+          default_node: node.data.default_node || node.data.defaultNode,
+          evaluation_mode: node.data.evaluation_mode || 'first_match',
+        };
+      } else if (controlType === 'human' || controlType === 'branch') {
+        // human: HITL (Human-in-the-Loop) 엣지로만 표현
+        // branch: Graph Analysis용 가상 노드 (conditional_edge로 변환됨)
         return null;
       } else {
         // 기타 control (while 등): operator로 저장하고 엣지로 처리
@@ -472,11 +481,13 @@ export const convertWorkflowToBackendFormat = (workflow: any): BackendWorkflow =
     });
   });
   
-  // HITL/Conditional control 노드 (edge로만 표현됨)
+  // HITL/Branch control 노드 (edge로만 표현됨)
+  // 주의: 'branch'는 Graph Analysis용 가상 노드 (제거됨)
+  // 'conditional'은 route_condition 노드용 (실제 노드로 유지됨)
   nodes.forEach((node: any) => {
     if (node.type === 'control') {
       const controlType = node.data?.controlType;
-      if (controlType === 'human' || controlType === 'branch' || controlType === 'conditional') {
+      if (controlType === 'human' || controlType === 'branch') {
         excludedNodeIds.add(node.id);
       }
     }
@@ -770,6 +781,20 @@ export const convertWorkflowFromBackendFormat = (backendWorkflow: any): any => {
           subgraph_ref: node.subgraph_ref || node.config?.subgraph_ref,
           subgraphRef: node.subgraph_ref || node.config?.subgraph_ref,
           subgraph_inline: node.subgraph_inline || node.config?.subgraph_inline,
+        };
+        break;
+      case 'route_condition':
+        // route_condition → control(conditional)
+        frontendType = 'control';
+        label = 'Route Condition';
+        const routeConfig = node.config || {};
+        nodeData = {
+          label,
+          controlType: 'conditional',
+          conditions: routeConfig.conditions || [],
+          default_node: routeConfig.default_node,
+          defaultNode: routeConfig.default_node,
+          evaluation_mode: routeConfig.evaluation_mode || 'first_match',
         };
         break;
       case 'api_call':

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Brain, Clock, Webhook, Zap, MessageSquare, Globe, Database, Search, GripVertical, ChevronDown, ChevronRight, Repeat, GitFork, CheckCircle2, FolderOpen, Merge, type LucideIcon } from 'lucide-react';
+import { Brain, Clock, Webhook, Zap, MessageSquare, Globe, Database, Search, GripVertical, ChevronDown, ChevronRight, Repeat, GitFork, CheckCircle2, FolderOpen, Merge, Split, type LucideIcon } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -53,6 +53,7 @@ export const BLOCK_CATEGORIES: { title: string; type: BlockType; items: Omit<Blo
     items: [
       { id: 'for_each', label: 'For Each Loop', icon: Repeat, description: 'Iterate over a list of items and execute sub-workflow for each', defaultData: { controlType: 'for_each', items_path: 'state.items', item_key: 'item', output_key: 'results', max_iterations: 20 } },
       { id: 'parallel', label: 'Parallel Branches', icon: GitFork, description: 'Execute multiple branches concurrently', defaultData: { controlType: 'parallel', branches: [] } },
+      { id: 'conditional', label: 'Conditional Router', icon: Split, description: 'Route workflow based on Python expressions (if-elif-else logic)', defaultData: { controlType: 'conditional', conditions: [], default_node: null, evaluation_mode: 'first_match' } },
       { id: 'aggregator', label: 'Aggregator', icon: Merge, description: 'Merge and aggregate results from parallel branches or iterations (includes token usage)', defaultData: { controlType: 'aggregator', strategy: 'auto', sources: [], output_key: 'aggregated_result' } },
       { id: 'while', label: 'While Loop', icon: Clock, description: 'Repeat workflow steps while a condition is true', defaultData: { controlType: 'loop', condition: 'count < 5' } },
       { id: 'confirmation', label: 'User Intervention', icon: MessageSquare, description: 'Pause workflow execution for human approval or input', defaultData: { controlType: 'human', condition: 'approval_required' } },
