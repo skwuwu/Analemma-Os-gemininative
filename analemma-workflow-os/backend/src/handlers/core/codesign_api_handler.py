@@ -486,9 +486,14 @@ async def _generate_initial_workflow_stream(user_request: str, owner_id: str, se
             user_request=user_request
         )
         
+        # OpenAI 모델은 지원하지 않으므로 Gemini로 fallback
+        if "gpt" in selected_model_id.lower() or "openai" in selected_model_id.lower():
+            logger.warning(f"OpenAI model {selected_model_id} not supported, falling back to Gemini")
+            selected_model_id = "gemini-1.5-flash"
+        
         logger.info(f"Using model for Agentic Designer: {selected_model_id}")
         
-        # 실제 Bedrock 스트리밍 호출
+        # 실제 LLM 스트리밍 호출 (Gemini 우선, Claude fallback)
         system_prompt = SYSTEM_PROMPT
         enhanced_prompt = f"""사용자 요청: {user_request}
 
@@ -498,7 +503,34 @@ async def _generate_initial_workflow_stream(user_request: str, owner_id: str, se
 
 레이아웃 규칙을 준수하여 X=150, Y는 50부터 시작해서 100씩 증가시켜주세요."""
         
-        # 선택된 모델로 Bedrock 스트리밍 호출
+        # Gemini 모델이면 gemini_service 직접 사용
+        if "gemini" in selected_model_id.lower():
+            try:
+                from src.services.llm.gemini_service import GeminiService, GeminiConfig, GeminiModel
+                
+                # GeminiModel enum 매핑
+                gemini_model = GeminiModel.FLASH  # 기본값
+                if "pro" in selected_model_id.lower():
+                    gemini_model = GeminiModel.PRO
+                elif "8b" in selected_model_id.lower():
+                    gemini_model = GeminiModel.FLASH_8B
+                
+                config = GeminiConfig(model=gemini_model, temperature=0.1, max_output_tokens=4096)
+                service = GeminiService(config=config)
+                
+                logger.info(f"Using Gemini via gemini_service for Agentic Designer")
+                for chunk in service.invoke_model_stream(
+                    user_prompt=enhanced_prompt,
+                    system_instruction=system_prompt
+                ):
+                    yield chunk
+                return
+                    
+            except Exception as e:
+                logger.warning(f"Gemini service failed, falling back to Bedrock: {e}")
+        
+        # Bedrock Claude fallback
+        logger.info(f"Using Bedrock Claude for Agentic Designer")
         for chunk in invoke_bedrock_model_stream(system_prompt, enhanced_prompt):
             yield chunk
             

@@ -17,6 +17,8 @@ interface BlockDefinition {
   type: BlockType;
   description?: string; // 툴팁용 설명
   defaultData: Record<string, unknown>; // 타입 강화
+  disabled?: boolean; // 선택 불가 상태
+  disabledReason?: string; // 비활성화 사유
 }
 
 // 2. 카테고리별 데이터 그룹화
@@ -34,7 +36,7 @@ export const BLOCK_CATEGORIES: { title: string; type: BlockType; items: Omit<Blo
     title: 'AI Models',
     type: 'aiModel',
     items: [
-      { id: 'gpt4', label: 'GPT-4', icon: Brain, description: 'OpenAI\'s most advanced language model for complex reasoning tasks', defaultData: { modelType: 'gpt4', temperature: 0.7 } },
+      { id: 'gpt4', label: 'GPT-4', icon: Brain, description: 'OpenAI\'s most advanced language model for complex reasoning tasks', defaultData: { modelType: 'gpt4', temperature: 0.7 }, disabled: true, disabledReason: 'OpenAI API integration is not implemented yet. Please use Gemini or Claude models.' },
       { id: 'claude', label: 'Claude', icon: Brain, description: 'Anthropic\'s helpful and truthful AI assistant', defaultData: { modelType: 'claude', temperature: 0.7 } },
       { id: 'gemini', label: 'Gemini', icon: Brain, description: 'Google\'s multimodal AI model for various tasks', defaultData: { modelType: 'gemini', temperature: 0.7 } },
     ]

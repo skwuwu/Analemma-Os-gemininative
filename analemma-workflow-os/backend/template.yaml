@@ -452,6 +452,8 @@ Resources:
           COMPLEXITY_SCORE_THRESHOLD: "80"
       Policies:
         - DynamoDBCrudPolicy:
+            TableName: !Ref WorkflowsTableV3
+        - DynamoDBCrudPolicy:
             TableName: !Ref UsersTableV3
         - DynamoDBCrudPolicy:
             TableName: !Ref IdempotencyTableV3
@@ -466,6 +468,11 @@ Resources:
             StateMachineName: !GetAtt StepFunctionDistributedOrchestrator.Name
         - S3CrudPolicy:
             BucketName: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+        - Statement:
+          - Effect: Allow
+            Action:
+              - cloudwatch:PutMetricData
+            Resource: "*"
       Events:
         ApiEvent:
           Type: HttpApi
@@ -646,6 +653,10 @@ Resources:
           - Effect: Allow
             Action: bedrock:InvokeModel*
             Resource: "*"
+          - Effect: Allow
+            Action:
+              - cloudwatch:PutMetricData
+            Resource: "*"
 
   # 🛡️ [Reserved Concurrency] 디자인 어시스턴트 동시성 제한
   # - 계정 한도 1000 중 50개 예약
@@ -689,6 +700,10 @@ Resources:
             Resource: 
               - !GetAtt WebsocketConnectionsTableV3.Arn
               - !Sub "${WebsocketConnectionsTableV3.Arn}/index/OwnerIdConnectionIndex"
+          - Effect: Allow
+            Action:
+              - cloudwatch:PutMetricData
+            Resource: "*"
       Events:
         ApiEvent:
           Type: HttpApi
@@ -943,6 +958,10 @@ Resources:
             Action:
               - bedrock:InvokeModel
               - bedrock:InvokeModelWithResponseStream
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - cloudwatch:PutMetricData
             Resource: "*"
       Events:
         CodesignStreamEvent:

@@ -30,10 +30,11 @@ logger.setLevel(os.getenv("LOG_LEVEL", "INFO"))
 # 상수 정의
 # ============================================================================
 
-# 모델 ID (Claude requires inference profile ARNs for on-demand throughput)
-# Use cross-region inference profiles: https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html
+# 모델 ID
+# Claude 3.5 Sonnet v2 (2024년 10월 출시): anthropic.claude-3-5-sonnet-20241022-v2:0
+# Note: Cross-region inference profiles use format us.anthropic.* but require explicit ARN or model access
 MODEL_HAIKU = os.getenv("HAIKU_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
-MODEL_SONNET = os.getenv("SONNET_MODEL_ID", "us.anthropic.claude-3-5-sonnet-20241022-v2:0")
+MODEL_SONNET = os.getenv("SONNET_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
 MODEL_GEMINI_PRO = os.getenv("GEMINI_PRO_MODEL_ID", "gemini-1.5-pro")
 MODEL_GEMINI_FLASH = os.getenv("GEMINI_FLASH_MODEL_ID", "gemini-1.5-flash")
 

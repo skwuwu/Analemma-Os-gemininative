@@ -177,9 +177,24 @@ const AIModelSettings = ({ data, updateField }: any) => (
       <Select value={data.model} onValueChange={(val) => updateField('model', val)}>
         <SelectTrigger className="h-9 bg-white"><SelectValue /></SelectTrigger>
         <SelectContent>
-          {AI_MODELS.map((m: any) => <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>)}
+          {AI_MODELS.map((m: any) => (
+            <SelectItem 
+              key={m.id} 
+              value={m.id} 
+              disabled={m.disabled}
+              className={cn(m.disabled && "opacity-50 cursor-not-allowed")}
+            >
+              {m.label}
+              {m.disabled && <span className="text-[9px] text-amber-500 ml-2">(Not Available)</span>}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
+      {AI_MODELS.find((m: any) => m.id === data.model)?.disabled && (
+        <p className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+          ⚠️ {AI_MODELS.find((m: any) => m.id === data.model)?.disabledReason}
+        </p>
+      )}
     </div>
     <div className="space-y-2">
       <Label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">System Instruction</Label>
