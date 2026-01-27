@@ -191,13 +191,17 @@ const WorkflowCanvasInner = () => {
     const analysisResult = analyzeWorkflowGraph(nodes, edges);
     const warnings = analysisResult.warnings || [];
     
+    // 안정적인 참조를 위해 warnings 배열을 정렬된 문자열로 키 생성
+    const warningsKey = warnings.map(w => `${w.type}:${w.nodeIds.join(',')}`).sort().join('|');
+    
     return {
       issueCount: warnings.length,
       hasErrors: warnings.some(w => w.type === 'unreachable_node'),
       hasWarnings: warnings.length > 0,
-      warnings
+      warnings,
+      _warningsKey: warningsKey // 내부 비교용 키
     };
-  }, [nodes, edges]);
+  }, [nodes.length, edges.length, JSON.stringify(nodes.map(n => n.id).sort()), JSON.stringify(edges.map(e => `${e.source}-${e.target}`).sort())]);
 
   // Wrap workflow actions to record changes for Co-design
   const addNodeWithTracking = useCallback((node: Node) => {

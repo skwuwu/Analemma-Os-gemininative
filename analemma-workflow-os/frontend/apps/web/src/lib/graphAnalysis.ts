@@ -513,8 +513,9 @@ export function analyzeWorkflowGraph(
   // 1. Cycle 감지
   const cycles = detectCycles(nodes, edges);
   
-  // Back-edge ID 수집
-  const backEdgeIds = new Set(cycles.map(c => c.backEdge.id));
+  // Back-edge ID 수집 - Set 대신 정렬된 배열로 변환하여 안정적인 참조 유지
+  const backEdgeIdsArray = cycles.map(c => c.backEdge.id).sort();
+  const backEdgeIds = new Set(backEdgeIdsArray);
   
   // 2. 위상 정렬 (성능 최적화를 위한 캐싱)
   const { order: topologicalOrder, nodeIndex: nodeOrderIndex } = topologicalSort(nodes, edges, backEdgeIds);
@@ -525,8 +526,9 @@ export function analyzeWorkflowGraph(
   // 4. 중첩 구조 계산
   calculateNesting(cycles, parallelGroups);
   
-  // Parallel source 노드 ID 수집
-  const parallelSourceIds = new Set(parallelGroups.map(g => g.sourceNodeId));
+  // Parallel source 노드 ID 수집 - Set 대신 정렬된 배열로 변환
+  const parallelSourceIdsArray = parallelGroups.map(g => g.sourceNodeId).sort();
+  const parallelSourceIds = new Set(parallelSourceIdsArray);
   
   // 5. Orphan node detection
   const orphanNodes = findOrphanNodes(nodes, edges);
