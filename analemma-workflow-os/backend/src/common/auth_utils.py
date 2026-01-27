@@ -243,3 +243,28 @@ def extract_owner_id_from_fastapi_request(request) -> Optional[str]:
     except Exception as e:
         logger.error(f"Failed to extract owner_id from FastAPI request: {e}")
         return None
+
+
+def require_authentication(event: Dict[str, Any]) -> str:
+    """
+    Extract and require owner_id from API Gateway event.
+    
+    This function enforces authentication by raising a ValueError if 
+    the owner_id cannot be extracted from the event.
+    
+    Args:
+        event: API Gateway event
+        
+    Returns:
+        User ID (owner_id)
+        
+    Raises:
+        ValueError: If authentication fails or owner_id cannot be extracted
+    """
+    owner_id = extract_owner_id_from_event(event)
+    
+    if not owner_id:
+        logger.error("Authentication required but no valid credentials found")
+        raise ValueError("Authentication required: No valid credentials provided")
+    
+    return owner_id
