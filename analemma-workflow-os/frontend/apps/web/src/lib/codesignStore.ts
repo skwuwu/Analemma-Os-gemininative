@@ -323,17 +323,35 @@ export const useCodesignStore = create<CodesignState>((set, get) => ({
       };
 
       const result = await callCoDesignAssistantSync('audit', body, authToken);
-      console.log('Audit API response:', result);
+      console.log('Audit API raw response:', result);
       
-      if (result && result.issues && Array.isArray(result.issues)) {
-        get().setAuditIssues(result.issues);
-      } else if (result && Array.isArray(result)) {
-        // 응답이 배열 자체인 경우
-        get().setAuditIssues(result);
-      } else {
-        console.error('Unexpected audit response format:', result);
-        get().setAuditIssues([]);
+      // 안전하게 issues 배열 추출
+      let issues: AuditIssue[] = [];
+      
+      if (result && typeof result === 'object') {
+        if (Array.isArray(result.issues)) {
+          issues = result.issues;
+        } else if (Array.isArray(result)) {
+          issues = result;
+        }
       }
+      
+      // 각 issue가 올바른 형식인지 검증
+      const validIssues = issues.filter(issue => {
+        return issue && 
+               typeof issue === 'object' && 
+               typeof issue.message === 'string' &&
+               ['error', 'warning', 'info'].includes(issue.level);
+      }).map(issue => ({
+        level: issue.level,
+        type: issue.type || 'unknown',
+        message: String(issue.message),
+        suggestion: issue.suggestion ? String(issue.suggestion) : undefined,
+        affectedNodes: Array.isArray(issue.affectedNodes) ? issue.affectedNodes : undefined
+      }));
+      
+      console.log('Validated issues:', validIssues);
+      get().setAuditIssues(validIssues);
       set({ syncStatus: 'idle', lastSyncTime: Date.now() });
     } catch (error) {
       console.error('Audit request failed:', error);
