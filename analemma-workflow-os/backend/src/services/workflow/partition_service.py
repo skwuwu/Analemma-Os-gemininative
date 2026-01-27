@@ -18,14 +18,10 @@ MAX_PARTITION_DEPTH = int(os.environ.get("MAX_PARTITION_DEPTH", "50"))
 MAX_NODES_LIMIT = int(os.environ.get("MAX_NODES_LIMIT", "500"))
 
 # LLM 노드 타입들 - 이 타입들을 만날 때마다 세그먼트를 분할합니다
+# Note: Specific vendor types (openai_chat, anthropic_chat, etc.) are mapped to llm_chat via NODE_TYPE_ALIASES
 LLM_NODE_TYPES: FrozenSet[str] = frozenset({
     "llm_chat",
-    "openai_chat", 
-    "anthropic_chat",
-    "bedrock_chat",
-    "claude_chat",
-    "gpt_chat",
-    "aiModel"  # 범용 AI 모델 노드 타입 추가
+    "aiModel"  # 범용 AI 모델 노드 타입 (llm_chat의 별칭)
 })
 
 # HITP (Human in the Loop) 엣지 타입들

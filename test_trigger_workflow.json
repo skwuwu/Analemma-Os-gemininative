@@ -1,0 +1,38 @@
+{
+    "workflow_id": "test_trigger_workflow",
+    "name": "Trigger Node Test Workflow",
+    "description": "API request trigger가 start로 매핑되는지 테스트",
+    "version": "1.0.0",
+    "nodes": [
+        {
+            "id": "api_entry",
+            "type": "trigger",
+            "config": {
+                "trigger_type": "request",
+                "description": "API 요청 진입점 - start로 매핑되어야 함"
+            }
+        },
+        {
+            "id": "welcome_message",
+            "type": "operator",
+            "config": {
+                "function": "simple_response",
+                "message": "워크플로우가 성공적으로 시작되었습니다!"
+            }
+        }
+    ],
+    "edges": [
+        {
+            "from": "api_entry",
+            "to": "welcome_message"
+        },
+        {
+            "from": "welcome_message", 
+            "to": "END"
+        }
+    ],
+    "metadata": {
+        "test_scenario": "trigger_api_mapping",
+        "expected_behavior": "api_entry 노드가 start로 매핑되어 실행"
+    }
+}

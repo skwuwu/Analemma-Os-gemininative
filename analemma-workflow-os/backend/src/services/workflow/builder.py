@@ -282,6 +282,45 @@ class DynamicWorkflowBuilder:
         
         return None
     
+    def _handle_trigger_node(self, node_def: Dict[str, Any]):
+        """
+        Trigger 노드 특수 처리:
+        - API request trigger → start 노드로 매핑
+        - Time/external trigger → 향후 구현 예정 (TODO로 표시)
+        """
+        from src.handlers.core.main import TRIGGER_TYPE_MAPPING
+        
+        trigger_type = node_def.get('config', {}).get('trigger_type', 'request')
+        node_id = node_def.get('id', 'unknown_trigger')
+        
+        # API request trigger는 start 노드로 매핑
+        if trigger_type in TRIGGER_TYPE_MAPPING:
+            mapped_type = TRIGGER_TYPE_MAPPING[trigger_type]
+            if mapped_type == "start":
+                logger.info(f"🚀 Mapping trigger node {node_id} (type: {trigger_type}) to start node")
+                # start 노드는 passthrough (아무것도 하지 않음)
+                def _start_node(state: Dict[str, Any], config=None) -> Dict[str, Any]:
+                    logger.info(f"🔧 Start node {node_id} - workflow entry point")
+                    return {}  # No state changes for start nodes
+                return _start_node
+        
+        # Time/external trigger - 아직 구현되지 않음
+        logger.warning(f"⚠️ TODO: Trigger type '{trigger_type}' not implemented yet for node {node_id}")
+        logger.warning(f"     Supported: API request triggers (mapped to start)")
+        logger.warning(f"     Coming soon: time/schedule/event/webhook triggers")
+        
+        # 일시적으로 operator_runner로 fallback
+        try:
+            from src.handlers.core.main import operator_runner
+            def _trigger_fallback_node(state: Dict[str, Any], config=None) -> Dict[str, Any]:
+                logger.warning(f"🔄 Using fallback operator for trigger node {node_id}")
+                result = operator_runner(state, node_def)
+                return result
+            return _trigger_fallback_node
+        except ImportError:
+            logger.error(f"🚨 Cannot handle trigger node {node_id} - no fallback available")
+            raise ValueError(f"Trigger type '{trigger_type}' not implemented and no fallback available")
+    
     def _detect_cycle(self, subgraph_id: str, visited: Set[str] = None) -> None:
         """Detect circular subgraph references to prevent infinite recursion."""
         if visited is None:
@@ -581,16 +620,8 @@ class DynamicWorkflowBuilder:
                 pass
 
         elif node_type == "trigger":
-            # Triggers are handled like operators
-            try:
-                from src.handlers.core.main import operator_runner
-                def _trigger_node(state: Dict[str, Any], config=None) -> Dict[str, Any]:
-                    result = operator_runner(state, node_def)
-                    # [Annotated + Reducer] 업데이트만 반환
-                    return result
-                return _trigger_node
-            except ImportError:
-                pass
+            # Trigger 노드 특수 처리
+            return self._handle_trigger_node(node_def)
         
         elif node_type == "code":
             # [Fix] 'code' is alias for operator - handle explicitly as fallback
@@ -626,8 +657,13 @@ class DynamicWorkflowBuilder:
 
         # 🛡️ [v3.9] UI Marker nodes - passthrough (no execution needed)
         # These are visual/structural markers from frontend, not executable nodes
-        UI_MARKER_TYPES = frozenset({"input", "output", "start", "end"})
+        # trigger nodes are handled specially based on their trigger_type
+        from src.handlers.core.main import UI_MARKER_TYPES
         if node_type in UI_MARKER_TYPES:
+            # Special handling for trigger nodes
+            if node_type == "trigger":
+                return self._handle_trigger_node(node_def)
+            
             def _passthrough_node(state: Dict[str, Any], config=None) -> Dict[str, Any]:
                 node_id = node_def.get('id', f'unknown_{node_type}')
                 logger.debug(f"⏭️ UI Marker node: {node_id} (passthrough, no-op)")

@@ -48,6 +48,24 @@ try:
     from src.common.model_router import select_optimal_model
     from src.common.auth_utils import extract_owner_id_from_event
     _IMPORTS_OK = True
+    logger.info("All imports successful")
+except ImportError as e:
+    logger.error(f"Import failed: {e}")
+    _IMPORTS_OK = False
+    # Fallback definitions
+    stream_codesign_response = None
+    explain_workflow = None
+    generate_suggestions = None
+    apply_suggestion = None
+    get_or_create_context = None
+    invoke_bedrock_model_stream = None
+    MODEL_SONNET = "anthropic.claude-3-sonnet-20240229-v1:0"
+    _is_mock_mode = lambda: os.getenv("MOCK_MODE", "false").lower() in {"true", "1", "yes", "on"}
+    _mock_workflow_json = lambda: {"nodes": [], "edges": []}
+    SYSTEM_PROMPT = "You are a workflow design assistant."
+    select_optimal_model = None
+    def extract_owner_id_from_event(*args, **kwargs):
+        raise Exception("Unauthorized: auth_utils not available")
 except ImportError as e:
     import logging
     logging.getLogger(__name__).warning(f"Import fallback activated: {e}")
@@ -80,7 +98,9 @@ except ImportError as e:
     
     try:
         from src.common.model_router import get_model_for_canvas_mode
-    except ImportError:
+        logger.info("Successfully imported get_model_for_canvas_mode")
+    except ImportError as e:
+        logger.error(f"Failed to import get_model_for_canvas_mode: {e}")
         get_model_for_canvas_mode = None
     
     try:
@@ -549,11 +569,15 @@ async def _generate_initial_workflow_stream(user_request: str, owner_id: str, se
             return
         
         # 동적 모델 선택 (Agentic Designer 모드)
-        selected_model_id = get_model_for_canvas_mode(
-            canvas_mode="agentic-designer",
-            current_workflow={"nodes": [], "edges": []},
-            user_request=user_request
-        )
+        if get_model_for_canvas_mode is None:
+            logger.warning("get_model_for_canvas_mode not available, using default model")
+            selected_model_id = "gemini-1.5-flash"
+        else:
+            selected_model_id = get_model_for_canvas_mode(
+                canvas_mode="agentic-designer",
+                current_workflow={"nodes": [], "edges": []},
+                user_request=user_request
+            )
         
         # OpenAI 모델은 지원하지 않으므로 Gemini로 fallback
         if "gpt" in selected_model_id.lower() or "openai" in selected_model_id.lower():
@@ -968,6 +992,20 @@ async def _lambda_handler_streaming_async(event, response_stream, context):
         context: Lambda 컨텍스트 객체
     """
     try:
+        # Import 상태 확인
+        if not _IMPORTS_OK:
+            logger.error("Critical imports failed, cannot proceed")
+            error_response = {
+                "type": "error",
+                "data": {
+                    "message": "Service temporarily unavailable due to import errors",
+                    "error_code": "IMPORT_FAILED"
+                }
+            }
+            response_stream.write(json.dumps(error_response, ensure_ascii=False).encode('utf-8') + b"\n")
+            response_stream.close()
+            return
+        
         # 스트리밍 모드 확인 (환경변수 기반)
         if not _is_streaming_invocation(event):
             # 스트리밍 모드가 아닐 경우 기존 동기 로직으로 브릿지

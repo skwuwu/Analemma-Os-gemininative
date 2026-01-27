@@ -20,24 +20,24 @@
 
 ---
 
-## 🔥 Why Gemini-Native? — The Only Model That Makes This Possible
+## 🔥 Why Gemini-Native? — Leveraging Gemini's Advanced Capabilities
 
-This isn't just an AI project *using* Gemini—it's an **operating system that couldn't exist without Gemini**.
+This project demonstrates deep integration with Gemini's unique architectural features—it's an **operating system designed specifically for Gemini**.
 
-> **"We didn't choose Gemini. Gemini's capabilities chose us."**
+> **"Gemini's advanced capabilities enable new architectural patterns."**
 >
-> After evaluating every major LLM, only Gemini 3 Pro met the **minimum viable requirements** for an OS-level abstraction:
+> After technical evaluation, Gemini 3 Pro provides several key advantages for OS-level abstractions:
 
 ### Gemini's Unique Capabilities Enable Our Core Architecture
 
-| Gemini 3 Pro Feature | Analemma Kernel Use Case | Why Competitors Fail |
-|----------------------|--------------------------|----------------------|
-| **2M Token Context Window** | Load **entire workflow execution history** for self-healing diagnosis | GPT-4: 128K, Claude: 200K — insufficient for OS-level observability |
-| **Sub-500ms TTFT** | Kernel scheduler makes **real-time partitioning decisions** during execution | Slower models add 2-5s latency per "syscall" — unusable for OS |
-| **Native JSON Mode** | **Zero-parsing overhead** for structured kernel state serialization | Other LLMs require prompt engineering workarounds → brittle + slow |
-| **Structured Output Schema** | Guarantees valid `Node[]` / `Edge[]` workflow graph output | No hallucinated fields → deterministic kernel behavior |
-| **Context Caching** | Cache 500K+ token system prompts, **75% cost reduction** | Unique to Gemini → economically viable at scale |
-| **Multimodal Reasoning** | Analyze **logs + architecture diagrams + metrics** together | Text-only models miss critical visual debugging signals |
+| Gemini 3 Pro Feature | Analemma Kernel Use Case | Technical Advantage |
+|----------------------|--------------------------|--------------------|
+| **2M Token Context Window** | Load **entire workflow execution history** for self-healing diagnosis | Large context enables comprehensive analysis |
+| **Sub-500ms TTFT** | Kernel scheduler makes **real-time partitioning decisions** during execution | Fast response enables real-time processing |
+| **Native JSON Mode** | **Zero-parsing overhead** for structured kernel state serialization | Direct structured output improves reliability |
+| **Structured Output Schema** | Guarantees valid `Node[]` / `Edge[]` workflow graph output | Schema validation ensures deterministic behavior |
+| **Context Caching** | Cache 500K+ token system prompts, **75% cost reduction** | Caching reduces operational costs |
+| **Multimodal Reasoning** | Analyze **logs + architecture diagrams + metrics** together | Multimodal analysis provides richer insights |
 
 ### The Gemini Kernel Advantage
 
@@ -119,25 +119,25 @@ flowchart TB
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  🚫 WITHOUT GEMINI 3                                                │
+│  � TECHNICAL REQUIREMENTS                                          │
 ├─────────────────────────────────────────────────────────────────────┤
-│  • Context window too small for full execution history analysis    │
-│  • Response latency too high for real-time kernel scheduling       │
-│  • No native JSON mode → brittle prompt engineering required       │
-│  • Self-healing impossible without sufficient reasoning depth      │
+│  • Large context window for full execution history analysis        │
+│  • Low latency for real-time kernel scheduling                     │
+│  • Native JSON mode for reliable structured output                 │
+│  • Advanced reasoning for autonomous failure analysis              │
 │                                                                     │
-│  → "OS for AI Agents" concept becomes architecturally IMPOSSIBLE   │
+│  → Requirements for OS-level abstraction                           │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│  ✅ WITH GEMINI 3 PRO                                               │
+│  ✅ GEMINI 3 PRO CAPABILITIES                                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │  • 2M token context → Entire workflow history in single inference  │
-│  • Sub-500ms TTFT → Kernel scheduling feels like syscalls          │
+│  • Sub-500ms TTFT → Kernel scheduling with low latency             │
 │  • Native JSON Mode → Zero-parsing structured state serialization  │
 │  • Deep reasoning → Autonomous failure analysis & recovery         │
 │                                                                     │
-│  → Analemma OS: The world's first AI Agent Operating System        │
+│  → Analemma OS: AI Agent Operating System Implementation           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -243,55 +243,7 @@ sam build && sam deploy --guided
 
 ---
 
-## � UI Response Debugging
-
-When UI doesn't display responses despite successful backend processing, use the built-in response logging to verify backend functionality:
-
-### CloudWatch Logs (Production)
-The system automatically logs detailed response analysis to CloudWatch:
-
-```
-INFO: Streaming response generated: 12 chunks, 2456 bytes, nodes=5, edges=4, errors=0, status=3
-INFO: [abc12345] Chunk #1: type=status, size=45 bytes
-INFO: [abc12345] Node: id=node_1, type=llm
-INFO: [abc12345] Edge: node_1 -> node_2
-INFO: [abc12345] Streaming completed: 12 chunks, nodes=5, edges=4, errors=0
-```
-
-### Browser Developer Tools (Production)
-Check response headers in browser Network tab:
-
-```
-X-Debug-Chunk-Count: 12
-X-Debug-Node-Count: 5
-X-Debug-Edge-Count: 4
-X-Debug-Error-Count: 0
-X-Payload-Size: 2456
-X-Payload-Truncated: false
-```
-
-### Debug Response Files (Development Only)
-When `DEBUG_MODE=true`, response files are saved locally:
-
-```bash
-# Check recent debug files
-ls -la backend/debug_responses/
-
-# View response content
-cat backend/debug_responses/response_[session_id]_[timestamp].jsonl
-```
-
-### Log Analysis
-- **Chunk Count**: Total number of JSONL chunks generated
-- **Content Types**: Breakdown of nodes, edges, status messages, errors
-- **Response Size**: Payload size for performance analysis
-- **Truncation**: Whether response was cut off due to size limits
-
-This ensures you can always verify backend correctness even when UI display issues occur.
-
----
-
-## �📚 Documentation
+## 📚 Documentation
 
 | Document | Description |
 |----------|-------------|

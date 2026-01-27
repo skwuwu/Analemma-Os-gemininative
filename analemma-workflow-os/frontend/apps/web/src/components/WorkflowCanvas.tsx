@@ -150,22 +150,24 @@ const WorkflowCanvasInner = () => {
   } = useWorkflowStore();
 
   // Handle selection changes for both single and multi-node selection
+  const handleSelectionChange = useCallback(({ nodes }: { nodes: Node[] }) => {
+    // Update selectedNodes state for grouping functionality
+    setSelectedNodes(nodes);
+
+    // Update store for single node selection (property panel)
+    if (nodes.length === 1) {
+      setSelectedNodeId(nodes[0].id);
+    } else if (nodes.length === 0) {
+      setSelectedNodeId(null);
+    }
+    // For multi-selection, keep the first node as active in property panel
+    else if (nodes.length > 1) {
+      setSelectedNodeId(nodes[0].id);
+    }
+  }, [setSelectedNodeId]);
+
   useOnSelectionChange({
-    onChange: ({ nodes }) => {
-      // Update selectedNodes state for grouping functionality
-      setSelectedNodes(nodes);
-      
-      // Update store for single node selection (property panel)
-      if (nodes.length === 1) {
-        setSelectedNodeId(nodes[0].id);
-      } else if (nodes.length === 0) {
-        setSelectedNodeId(null);
-      }
-      // For multi-selection, keep the first node as active in property panel
-      else if (nodes.length > 1) {
-        setSelectedNodeId(nodes[0].id);
-      }
-    },
+    onChange: handleSelectionChange,
   });
 
   // Co-design store
@@ -181,7 +183,21 @@ const WorkflowCanvasInner = () => {
     requestAudit,
     recentChanges,
     addMessage,
-  } = useCodesignStore();
+  } = useCodesignStore(
+    useShallow((state) => ({
+      recordChange: state.recordChange,
+      pendingSuggestions: state.pendingSuggestions,
+      activeSuggestionId: state.activeSuggestionId,
+      setActiveSuggestion: state.setActiveSuggestion,
+      acceptSuggestion: state.acceptSuggestion,
+      rejectSuggestion: state.rejectSuggestion,
+      auditIssues: state.auditIssues,
+      requestSuggestions: state.requestSuggestions,
+      requestAudit: state.requestAudit,
+      recentChanges: state.recentChanges,
+      addMessage: state.addMessage,
+    }))
+  );
 
   // Calculate issue summary for ContextualSideRail
   const issueSummary = useMemo(() => ({
@@ -213,7 +229,14 @@ const WorkflowCanvasInner = () => {
       warnings,
       _warningsKey: warningsKey // 내부 비교용 키
     };
-  }, [nodes.length, edges.length, JSON.stringify(nodes.map(n => n.id).sort()), JSON.stringify(edges.map(e => `${e.source}-${e.target}`).sort())]);
+  }, [
+    nodes.length,
+    edges.length,
+    // 더 안정적인 비교: 노드 ID들의 정렬된 문자열
+    ...nodes.map(n => n.id).sort(),
+    // 엣지 연결들의 정렬된 문자열
+    ...edges.map(e => `${e.source}-${e.target}`).sort()
+  ]);
 
   // Wrap workflow actions to record changes for Co-design
   const addNodeWithTracking = useCallback((node: Node) => {

@@ -24,36 +24,14 @@ logger = logging.getLogger(__name__)
 # Schema Definitions
 # -----------------------------------------------------------------------------
 
-# 🛡️ [P2] 허용된 노드 타입 목록 - NODE_REGISTRY에 핸들러가 등록된 실행 가능한 타입들만 포함
-# ⚠️ 주의: branch, router, join, hitp, pause 등은 Edge로 처리되므로 노드 타입에서 제외
-ALLOWED_NODE_TYPES = {
-    # Core execution types
-    "operator", "operator_custom", "operator_official",
-    "llm_chat",
-    # Flow control (노드로 실행됨)
-    "parallel_group", "aggregator", "for_each", "nested_for_each",
-    # Subgraph
-    "subgraph",
-    # Infrastructure & Data
-    "api_call", "db_query",
-    # Multimodal & Skills
-    "vision", "video_chunker", "skill_executor",
-}
-
-# 🔗 Edge로 처리되는 타입들 (노드 타입으로 사용 불가)
-EDGE_HANDLED_TYPES = {"branch", "router", "join", "hitp", "pause"}
-
-# 📌 UI 전용 마커 노드 (실행되지 않음)
-UI_MARKER_TYPES = {"input", "output", "start", "end"}
-
-# 🔄 별칭(Alias) 매핑 - field_validator에서 정규 타입으로 변환됨
-NODE_TYPE_ALIASES = {
-    "code": "operator",      # 'code'는 'operator'의 별칭
-    "llm": "llm_chat",       # [Fix] standardize on llm_chat
-    "aimodel": "llm_chat",   # [Fix] support legacy/frontend type
-    "aiModel": "llm_chat",   # [Fix] case-sensitive match
-    "openai_chat": "llm_chat", # Support vendor specific type
-}
+# � Import constants from main.py (single source of truth)
+from src.handlers.core.main import (
+    ALLOWED_NODE_TYPES,
+    EDGE_HANDLED_TYPES,
+    UI_MARKER_TYPES,
+    TRIGGER_TYPE_MAPPING,
+    NODE_TYPE_ALIASES
+)
 
 class EdgeModel(BaseModel):
     source: constr(min_length=1, max_length=128)

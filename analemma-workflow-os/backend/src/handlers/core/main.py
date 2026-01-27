@@ -210,6 +210,8 @@ ALLOWED_NODE_TYPES = {
     "llm_chat",
     # Flow control (노드로 실행됨)
     "parallel_group", "aggregator", "for_each", "nested_for_each",
+    "loop",  # Convergence support (v3.8)
+    "route_draft_quality",  # Quality routing for draft detection
     # Subgraph (재귀적 워크플로우 실행)
     "subgraph",
     # Infrastructure & Data
@@ -228,28 +230,41 @@ EDGE_HANDLED_TYPES = {
 # 📌 UI 전용 마커 노드 - 실행되지 않음 (프론트엔드에서만 사용)
 # 이 타입들은 partition_service에서 무시되거나 passthrough됨
 UI_MARKER_TYPES = {
-    "input", "output", "start", "end",
+    "input", "output", "start", "end", "trigger",  # trigger 추가 (API request는 start로 매핑)
+}
+
+# 🚀 Trigger 노드 타입 매핑
+# - API request trigger → start (현재 구현됨)
+# - Time trigger → TODO: 구현 예정 (cron 기반 스케줄링)
+# - External event trigger → TODO: 구현 예정 (EventBridge/SNS 연동)
+TRIGGER_TYPE_MAPPING = {
+    "request": "start",          # API request trigger → start node로 매핑
+    "api_request": "start",     # 별칭
+    # "time": "time_trigger",    # TODO: 구현 예정
+    # "schedule": "time_trigger", # TODO: 구현 예정  
+    # "event": "event_trigger",  # TODO: 구현 예정
+    # "webhook": "event_trigger", # TODO: 구현 예정
 }
 
 #  별칭(Alias) 매핑 - field_validator에서 정규 타입으로 변환됨
 NODE_TYPE_ALIASES = {
     "code": "operator",      # 'code'는 'operator'의 별칭
-    "aimodel": "llm_chat",   # [Fix] map to canonical 'llm_chat'
-    "aiModel": "llm_chat",   # [Fix] map to canonical 'llm_chat'
+    "aimodel": "llm_chat",   # [Fix] map to canonical 'llm_chat' (lowercase variant)
     "llm": "llm_chat",       # [Fix] legacy support
     "chat": "llm_chat",
     "genai": "llm_chat",
     "gpt": "llm_chat",
     "claude": "llm_chat",
     "gemini": "llm_chat",
+    # Note: openai_chat not implemented yet (only Gemini/Bedrock supported)
     "function": "operator",
     "lambda": "operator",
     "task": "operator",
-    "parallel": "parallel_group",
+    # Note: The following aliases are registered directly in NODE_REGISTRY, not here:
+    # - safe_operator, aiModel, parallel, image_analysis
     "map": "for_each",
     "foreach": "for_each",
-    "loop": "for_each",
-    "image_analysis": "vision",
+    # Note: "loop" is a separate node type with loop_runner, not an alias
     "chunker": "video_chunker",
     "group": "subgraph",
     "map_in_map": "nested_for_each",
@@ -291,6 +306,7 @@ class NodeModel(BaseModel):
         🛡️ [P2] Validate and alias node types.
         - Aliases are converted to canonical types (e.g., 'code' -> 'operator')
         - Unknown types are rejected with clear error message
+        - trigger 노드는 trigger_type에 따라 start로 매핑됨 (API request만 현재 지원)
         """
         if not isinstance(v, str):
             raise ValueError(f"Node type must be string, got {type(v).__name__}")
@@ -1111,12 +1127,16 @@ def prepare_multimodal_content(prompt: str, state: Dict[str, Any]) -> Tuple[str,
     """
     Extract S3 URIs from prompt and prepare multimodal content for Gemini Vision API.
     
+    [v3.0] Now supports two modes:
+    1. Legacy: Extract S3 URIs from prompt text
+    2. Explicit: Use _explicit_media_inputs from state (image_inputs/video_inputs)
+    
     Gemini Vision API는 텍스트 + 이미지/비디오를 contents 리스트로 받아야 합니다.
-    이 함수는 프롬프트에서 S3 URI를 추출하고 invoke_with_images용 데이터를 준비합니다.
+    이 함수는 프롬프트에서 S3 URI를 추출하거나 명시적 media inputs를 처리합니다.
     
     Args:
         prompt: User prompt that may contain S3 URIs (e.g., "이 이미지 분석해줘 s3://bucket/image.jpg")
-        state: Execution state with potential hydrated binary data
+        state: Execution state with potential hydrated binary data or _explicit_media_inputs
     
     Returns:
         Tuple of (cleaned_prompt, multimodal_parts)
@@ -1128,7 +1148,92 @@ def prepare_multimodal_content(prompt: str, state: Dict[str, Any]) -> Tuple[str,
     
     multimodal_parts = []
     
-    # Pattern to detect S3 URIs in prompt
+    # [v3.0] Priority 1: Check for explicit media inputs
+    explicit_inputs = state.get("_explicit_media_inputs", [])
+    if explicit_inputs:
+        logger.info(f"🖼️ [Multimodal] Processing {len(explicit_inputs)} explicit media inputs")
+        
+        # MIME type mapping (Gemini 지원 형식)
+        MIME_TYPE_MAP = {
+            # Images
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+            ".heic": "image/heic",
+            ".heif": "image/heif",
+            ".bmp": "image/bmp",
+            # Videos
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
+            ".avi": "video/x-msvideo",
+            ".webm": "video/webm",
+            ".mkv": "video/x-matroska",
+            # Documents (Gemini 1.5+)
+            ".pdf": "application/pdf",
+        }
+        
+        def get_mime_type(uri: str) -> str:
+            """확장자에서 MIME 타입 추출"""
+            uri_lower = uri.lower()
+            for ext, mime in MIME_TYPE_MAP.items():
+                if uri_lower.endswith(ext):
+                    return mime
+            return "image/jpeg" if "image" in uri_lower else "video/mp4"  # smart default
+        
+        for media_item in explicit_inputs:
+            try:
+                source = media_item.get("source")
+                media_type = media_item.get("type", "image")
+                
+                if not source:
+                    continue
+                
+                # Determine MIME type
+                mime_type = get_mime_type(str(source))
+                
+                # Check if source is S3 URI and hydrated
+                if isinstance(source, str) and source.startswith("s3://"):
+                    s3_key = f"hydrated_{source.replace('s3://', '').replace('/', '_')}"
+                    
+                    if s3_key in state:
+                        # Binary data already hydrated
+                        binary_data = state[s3_key]
+                        multimodal_parts.append({
+                            "source": binary_data,
+                            "data": binary_data,
+                            "mime_type": mime_type,
+                            "source_uri": source,
+                            "hydrated": True
+                        })
+                        logger.info(f"  ✓ Hydrated {media_type}: {source} ({mime_type})")
+                    else:
+                        # Not hydrated - pass S3 URI
+                        multimodal_parts.append({
+                            "source": source,
+                            "mime_type": mime_type,
+                            "source_uri": source,
+                            "hydrated": False
+                        })
+                        logger.info(f"  ✓ S3 URI {media_type}: {source} ({mime_type})")
+                else:
+                    # Already bytes or other format
+                    multimodal_parts.append({
+                        "source": source,
+                        "mime_type": mime_type,
+                        "source_uri": str(source)[:100],  # truncate for logging
+                        "hydrated": isinstance(source, bytes)
+                    })
+                    logger.info(f"  ✓ Direct {media_type}: {mime_type}")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to process explicit media input: {e}")
+        
+        # Early return - explicit inputs take precedence
+        return prompt, multimodal_parts
+    
+    # [Legacy Mode] Pattern to detect S3 URIs in prompt
     s3_uri_pattern = r's3://[a-zA-Z0-9\-_.]+/[a-zA-Z0-9\-_./]+'
     s3_uris = re.findall(s3_uri_pattern, prompt)
     
@@ -1284,10 +1389,10 @@ def _hydrate_state_for_config(state: Dict[str, Any], config: Dict[str, Any]) -> 
 def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Standard LLM Chat Runner with Async detection and Retry/Hydration support."""
     
-    # [FIX] Handle both full node_def and nested config structure
-    # When called via NODE_REGISTRY from builder.py, config is full node_def: {id, type, config: {...}}
-    # When called directly, config may already be the inner config dict
-    # Normalize to always use the inner config if present
+    # [FIX] Support both config structures:
+    # 1. Flattened (from builder.py): {id, type, prompt, model, ...}
+    # 2. Nested (from for_each/loop): {id, type, config: {prompt, model, ...}}
+    # Use fallback pattern: check for nested config first, then use flat
     if 'config' in config and isinstance(config['config'], dict):
         node_id = config.get('id', 'llm')
         actual_config = config['config'].copy()
@@ -1304,6 +1409,49 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     # Converts to image_uri (s3://...) for Vision API
     if actual_config.get("vision_enabled", False):
         exec_state = _preprocess_image_inputs(exec_state)
+    
+    # [v3.0] Explicit Multimodal Inputs (vision_runner style)
+    # Support image_inputs and video_inputs arrays for better UX
+    # Allows declarative media specification instead of embedding URIs in prompt
+    explicit_media_inputs = []
+    
+    # Process image_inputs (same as vision_runner)
+    raw_image_inputs = actual_config.get("image_inputs", [])
+    if isinstance(raw_image_inputs, str):
+        raw_image_inputs = [raw_image_inputs]
+    
+    for img_input in raw_image_inputs:
+        resolved = _render_template(img_input, exec_state)
+        # Check if state key reference
+        if resolved and not resolved.startswith(("s3://", "gs://", "http://", "https://", "data:")):
+            state_val = exec_state.get(resolved)
+            if state_val:
+                resolved = state_val
+        
+        if resolved:
+            explicit_media_inputs.append({"type": "image", "source": resolved})
+    
+    # Process video_inputs (same as vision_runner)
+    raw_video_inputs = actual_config.get("video_inputs", [])
+    if isinstance(raw_video_inputs, str):
+        raw_video_inputs = [raw_video_inputs]
+    
+    for vid_input in raw_video_inputs:
+        resolved = _render_template(vid_input, exec_state)
+        # Check if state key reference
+        if resolved and not resolved.startswith(("s3://", "gs://", "http://", "https://")):
+            state_val = exec_state.get(resolved)
+            if state_val:
+                resolved = state_val
+        
+        if resolved:
+            explicit_media_inputs.append({"type": "video", "source": resolved})
+    
+    # If explicit inputs provided, inject into state for prepare_multimodal_content
+    if explicit_media_inputs:
+        logger.info(f"🖼️ [Multimodal] {len(explicit_media_inputs)} explicit media inputs detected")
+        # Inject as special state keys for prepare_multimodal_content to process
+        exec_state["_explicit_media_inputs"] = explicit_media_inputs
     
     # [FIX] Override MOCK_MODE from state if present (payload takes precedence over Lambda env var)
     # This allows LLM Simulator to force MOCK_MODE=false even when Lambda default is true
@@ -1363,6 +1511,33 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
             
             # Render prompts with current attempt count
             prompt_template = actual_config.get("prompt_content") or actual_config.get("user_prompt_template") or actual_config.get("prompt_template", "")
+            
+            # 🔧 [Workflow Chain Support] 프롬프트 템플릿이 없을 때 자동 생성
+            if not prompt_template.strip():
+                # 워크플로우 중간 노드를 위한 기본 프롬프트 템플릿 생성
+                node_id = actual_config.get('id', 'llm')
+                logger.warning(f"🔧 [Auto-Prompt] No prompt template for node {node_id}, generating default...")
+                
+                # 1. messages가 있는 경우 (chat 형태)
+                if 'messages' in current_attempt_state and isinstance(current_attempt_state['messages'], list):
+                    prompt_template = "Continue the conversation based on the previous messages: {{messages | tojson}}"
+                
+                # 2. 이전 노드의 출력이 있는 경우
+                elif any(k.endswith('_output') or k == 'previous_output' or k.startswith('output_') for k in current_attempt_state.keys()):
+                    output_keys = [k for k in current_attempt_state.keys() if k.endswith('_output') or k == 'previous_output' or k.startswith('output_')]
+                    main_output_key = output_keys[0] if output_keys else 'previous_output'
+                    prompt_template = f"Process and analyze the following input:\n\n{{{{ {main_output_key} }}}}"
+                
+                # 3. initial_state.user_prompt가 있는 경우 (첫 번째 노드)
+                elif 'initial_state' in current_attempt_state:
+                    prompt_template = "Analyze and process the following content:\n\n{{ initial_state.user_prompt }}"
+                
+                # 4. 기본 fallback
+                else:
+                    prompt_template = "Please provide a helpful response based on the available context: {{ __state_json }}"
+                
+                logger.info(f"🔧 [Auto-Prompt] Generated template for {node_id}: {prompt_template[:100]}...")
+            
             prompt = _render_template(prompt_template, current_attempt_state)
             
             # [DEBUG] Log rendered prompt for troubleshooting empty prompt issues
@@ -1410,7 +1585,15 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                 raise AsyncLLMRequiredException("Resource-intensive processing required")
 
             # 3. Invoke - Provider Selection (Gemini or Bedrock)
-            meta = {"model": model, "max_tokens": max_tokens, "attempt": attempt + 1, "provider": "gemini"}
+            meta = {
+                "model": model, 
+                "max_tokens": max_tokens, 
+                "attempt": attempt + 1, 
+                "provider": "gemini",
+                "multimodal": False,  # Will be updated if multimodal_parts detected
+                "image_count": 0,
+                "video_count": 0
+            }
             
             # [Fix] Manually trigger callbacks since we are using Boto3 directly
             callbacks = actual_config.get("callbacks", [])
@@ -1454,7 +1637,17 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
                     
                     # Use multimodal invocation if images/videos detected
                     if multimodal_parts:
-                        logger.info(f"Invoking Gemini Vision API with {len(multimodal_parts)} multimodal parts")
+                        # [v3.0] Update meta with multimodal info
+                        meta["multimodal"] = True
+                        for part in multimodal_parts:
+                            mime_type = part.get("mime_type", "")
+                            if mime_type.startswith("image/"):
+                                meta["image_count"] += 1
+                            elif mime_type.startswith("video/"):
+                                meta["video_count"] += 1
+                        
+                        logger.info(f"Invoking Gemini Vision API with {len(multimodal_parts)} multimodal parts "
+                                  f"({meta['image_count']} images, {meta['video_count']} videos)")
                         
                         # Extract sources from multimodal_parts using unified 'source' key
                         # source can be: bytes (hydrated) or S3 URI string
@@ -1815,6 +2008,8 @@ def llm_chat_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
 def aggregator_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Aggregates results from parallel branches or iterations, with special token usage aggregation."""
     node_id = config.get("id", "aggregator")
+    # [Fix] Support both flattened and nested config structures
+    inner_config = config.get("config") or config
     
     # [Token Aggregation] 여러 소스의 토큰 사용량 합산
     total_input_tokens = 0
@@ -2096,10 +2291,12 @@ def operator_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
 
 def api_call_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     node_id = config.get("id", "api_call")
+    # [Fix] Support both flattened and nested config structures
+    inner_config = config.get("config") or config
     # Hydrate potential S3 inputs first
-    exec_state = _hydrate_state_for_config(state, config)
+    exec_state = _hydrate_state_for_config(state, inner_config)
     
-    url_template = config.get("url")
+    url_template = inner_config.get("url")
     if not url_template: raise ValueError("api_call requires 'url'")
 
     def _validate_outbound_url(url: str) -> None:
@@ -2124,11 +2321,11 @@ def api_call_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
         return None
 
     url = _render_template(url_template, exec_state)
-    method = (_render_template(config.get("method") or "GET", exec_state)).upper()
-    headers = _render_template(config.get("headers"), exec_state) or {}
-    params = _render_template(config.get("params"), exec_state)
-    json_body = _render_template(config.get("json"), exec_state)
-    timeout = _render_template(config.get("timeout", 10), exec_state)
+    method = (_render_template(inner_config.get("method") or "GET", exec_state)).upper()
+    headers = _render_template(inner_config.get("headers"), exec_state) or {}
+    params = _render_template(inner_config.get("params"), exec_state)
+    json_body = _render_template(inner_config.get("json"), exec_state)
+    timeout = _render_template(inner_config.get("timeout", 10), exec_state)
 
     allowed_methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
     if method not in allowed_methods:
@@ -2169,6 +2366,8 @@ def db_query_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     Only allowed when ALLOW_DB_QUERY=true environment variable is set.
     """
     node_id = config.get("id", "db_query")
+    # [Fix] Support both flattened and nested config structures
+    inner_config = config.get("config") or config
     
     # Security: Block db_query in production unless explicitly allowed
     allow_db_query = os.getenv("ALLOW_DB_QUERY", "false").lower() in ("true", "1", "yes")
@@ -2178,16 +2377,16 @@ def db_query_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
         logger.warning(f"db_query node {node_id} blocked in production environment")
         return {f"{node_id}_error": "db_query is not allowed in production"}
     
-    query = config.get("query")
-    conn_str = _render_template(config.get("connection_string"), state)
+    query = inner_config.get("query")
+    conn_str = _render_template(inner_config.get("connection_string"), state)
     if not query or not conn_str: raise ValueError("db_query requires 'query' and 'connection_string'")
 
     try:
         from src.sqlalchemy import create_engine, text
         engine = create_engine(conn_str)
         with engine.connect() as conn:
-            result = conn.execute(text(query), config.get("params", {}))
-            fetch = config.get("fetch", "all")
+            result = conn.execute(text(query), inner_config.get("params", {}))
+            fetch = inner_config.get("fetch", "all")
             if fetch == "one":
                 row = result.fetchone()
                 res = dict(row) if row else None
@@ -2212,14 +2411,16 @@ def skill_executor_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict
     from datetime import datetime, timezone
     
     node_id = config.get("id", "skill_executor")
-    skill_ref = config.get("skill_ref")
-    tool_call = config.get("tool_call")
-    input_mapping = config.get("input_mapping", {})
-    output_key = config.get("output_key", f"{node_id}_result")
-    error_handling = config.get("error_handling", "fail")
+    # [Fix] Support both flattened and nested config structures
+    inner_config = config.get("config") or config
+    skill_ref = inner_config.get("skill_ref")
+    tool_call = inner_config.get("tool_call")
+    input_mapping = inner_config.get("input_mapping", {})
+    output_key = inner_config.get("output_key", f"{node_id}_result")
+    error_handling = inner_config.get("error_handling", "fail")
     
     # Hydrate potential inputs
-    exec_state = _hydrate_state_for_config(state, config)
+    exec_state = _hydrate_state_for_config(state, inner_config)
     
     # Validate required config
     if not skill_ref:
@@ -2336,8 +2537,10 @@ def skill_executor_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict
 def for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Executes sub-node for each item in list concurrently with multi-node support."""
     node_id = config.get("id", "for_each")
-    # [Fix] inner_config 추출을 최상단으로 이동하여 ReferenceError 방지
-    inner_config = config.get("config") or config 
+    # [Fix] Support both config structures with fallback pattern
+    # Flattened (builder): {id, type, input_list_key, ...}
+    # Nested (for_each/loop): {id, type, config: {input_list_key, ...}}
+    inner_config = config.get("config") or config
     
     # [Cancellation Check]
     execution_arn = state.get("execution_arn") or state.get("ExecutionArn")
@@ -2584,17 +2787,18 @@ def loop_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]
     🛡️ [v3.8] Stage 6 Support: Convergence & Iterative Intelligence
     """
     node_id = config.get("id", "loop")
-    inner_config = config.get("config") or {}
+    # [Fix] Support both config structures with fallback pattern
+    inner_config = config.get("config") or config
     
     # 1. Configuration
-    sub_nodes = inner_config.get("nodes") or config.get("nodes", [])
-    condition = inner_config.get("condition") or config.get("condition", "false")
-    max_iterations = inner_config.get("max_iterations") or config.get("max_iterations") or 5
-    loop_var = inner_config.get("loop_var") or config.get("loop_var", "loop_index")
+    sub_nodes = inner_config.get("nodes", [])
+    condition = inner_config.get("condition", "false")
+    max_iterations = inner_config.get("max_iterations", 5)
+    loop_var = inner_config.get("loop_var", "loop_index")
     
     # Convergence Support (Stage 6)
-    convergence_key = inner_config.get("convergence_key") or config.get("convergence_key")
-    target_score = inner_config.get("target_score") or config.get("target_score", 0.9)
+    convergence_key = inner_config.get("convergence_key")
+    target_score = inner_config.get("target_score", 0.9)
     
     logger.info(f"🔁 [Loop] Starting loop node {node_id} (max_iterations: {max_iterations})")
     
@@ -2735,13 +2939,15 @@ def nested_for_each_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dic
     }
     """
     node_id = config.get("id", "nested_foreach")
-    input_list_key = config.get("input_list_key", "")
-    # [Fix] None defense: config['nested_config'], config['metadata']가 None일 수 있음
-    nested_config = config.get("nested_config") or {}
-    output_key = config.get("output_key", "nested_results")
-    max_outer = config.get("max_outer_iterations", 10)
-    max_inner = config.get("max_inner_iterations", 5)
-    metadata = config.get("metadata") or {}
+    # [Fix] Support both flattened and nested config structures
+    inner_config = config.get("config") or config
+    input_list_key = inner_config.get("input_list_key", "")
+    # [Fix] None defense: nested_config, metadata가 None일 수 있음
+    nested_config = inner_config.get("nested_config") or {}
+    output_key = inner_config.get("output_key", "nested_results")
+    max_outer = inner_config.get("max_outer_iterations", 10)
+    max_inner = inner_config.get("max_inner_iterations", 5)
+    metadata = inner_config.get("metadata") or {}
     
     logger.info(f"🔄 Nested ForEach starting: {node_id}")
     
@@ -2975,7 +3181,7 @@ def route_draft_quality(state: Dict[str, Any]) -> str:
 def parallel_group_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
     """Enhanced Parallel Runner supporting sub_workflows in branches."""
     node_id = config.get("id", "parallel")
-    # [Fix] Support both nested config and direct config
+    # [Fix] Support both config structures with fallback pattern
     inner_config = config.get("config") or config
     branches = inner_config.get("branches", [])
     
@@ -3136,15 +3342,15 @@ def vision_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, An
             }
         }
     """
-    # 1. Hydrate state
-    exec_state = _hydrate_state_for_config(state, config)
+    # 1. Node ID and config extraction
     node_id = config.get("id", "vision")
     
     # [Fix] Config Extraction: Support nested 'config' dict (Workflow JSON standard) vs Flat dict (Test/Legacy)
     # Prioritize inner 'config' if present, otherwise fall back to root config
     vision_config = config.get("config", config) if isinstance(config.get("config"), dict) else config
     
-    # 2. Resolve media sources (Images & Videos)
+    # 2. Hydrate state
+    exec_state = _hydrate_state_for_config(state, vision_config)
     media_inputs = []
     
     # process image_inputs
@@ -3275,11 +3481,13 @@ def video_chunker_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[
     from src.services.media.video_chunker import VideoChunkerService
     
     node_id = config.get("id", "chunker")
-    exec_state = _hydrate_state_for_config(state, config)
+    # [Fix] Support both flattened and nested config structures
+    inner_config = config.get("config") or config
+    exec_state = _hydrate_state_for_config(state, inner_config)
     
-    video_uri = _render_template(config.get("video_uri", ""), exec_state)
-    segment_min = config.get("segment_length_min", 5)
-    output_key = config.get("output_key", "video_chunks")
+    video_uri = _render_template(inner_config.get("video_uri", ""), exec_state)
+    segment_min = inner_config.get("segment_length_min", 5)
+    output_key = inner_config.get("output_key", "video_chunks")
     
     if not video_uri:
         raise ValueError("video_chunker requires 'video_uri'")
@@ -3338,10 +3546,9 @@ def operator_official_runner(state: Dict[str, Any], config: Dict[str, Any]) -> D
     
     node_id = config.get("id", "operator_official")
     
-    # Extract config (support both flat and nested config)
-    # [Fix] None defense: config['config']가 None일 수 있음
-    inner_config = config.get("config") or {}
-    strategy = inner_config.get("strategy") or config.get("strategy")
+    # Extract config (support both flat and nested config with fallback)
+    inner_config = config.get("config") or config
+    strategy = inner_config.get("strategy")
     
     if not strategy:
         raise ValueError(
@@ -3350,8 +3557,8 @@ def operator_official_runner(state: Dict[str, Any], config: Dict[str, Any]) -> D
         )
     
     # Resolve input
-    input_template = inner_config.get("input") or config.get("input")
-    input_key = inner_config.get("input_key") or config.get("input_key")
+    input_template = inner_config.get("input")
+    input_key = inner_config.get("input_key")
     
     if input_template:
         # Render template against state
@@ -3364,7 +3571,7 @@ def operator_official_runner(state: Dict[str, Any], config: Dict[str, Any]) -> D
         input_value = state
     
     # Get strategy parameters
-    params = inner_config.get("params", {}) or config.get("params", {})
+    params = inner_config.get("params", {})
     
     # Render any templates in params
     if isinstance(params, dict):
@@ -3378,8 +3585,8 @@ def operator_official_runner(state: Dict[str, Any], config: Dict[str, Any]) -> D
         raise ValueError(f"Assertion failed in node '{node_id}': {e}")
     except Exception as e:
         # Check for fallback handling
-        error_handling = inner_config.get("error_handling") or config.get("error_handling", "fail")
-        fallback = inner_config.get("fallback") or config.get("fallback")
+        error_handling = inner_config.get("error_handling", "fail")
+        fallback = inner_config.get("fallback")
         
         if error_handling == "fallback" and fallback is not None:
             logger.warning(f"[operator_official] {node_id} failed, using fallback: {e}")
@@ -3391,7 +3598,7 @@ def operator_official_runner(state: Dict[str, Any], config: Dict[str, Any]) -> D
             raise
     
     # Build output
-    output_key = inner_config.get("output_key") or config.get("output_key") or f"{node_id}_result"
+    output_key = inner_config.get("output_key") or f"{node_id}_result"
     
     output = {output_key: result}
     
@@ -3417,7 +3624,6 @@ register_node("route_draft_quality", route_draft_quality)
 register_node("parallel_group", parallel_group_runner)
 register_node("parallel", parallel_group_runner)  # Alias for backward compat
 register_node("aggregator", aggregator_runner)
-register_node("aiModel", llm_chat_runner)  # aiModel은 llm_chat과 동일하게 처리
 register_node("skill_executor", skill_executor_runner)  # Skills integration
 register_node("nested_for_each", nested_for_each_runner)  # V3 Hyper-Stress: Nested Map-in-Map support
 register_node("vision", vision_runner)  # Gemini Vision multimodal analysis
@@ -3442,6 +3648,8 @@ def subgraph_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
     - output_mapping: 자식→부모 상태 매핑
     """
     node_id = config.get("id", "subgraph")
+    # [Fix] Support both flattened and nested config structures
+    inner_config = config.get("config") or config
     logger.info(f"📦 SubGraph 노드 실행: {node_id}")
     
     try:
@@ -3451,24 +3659,24 @@ def subgraph_runner(state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, 
         # 서브그래프 정의 해석
         subgraph_def = None
         
-        if config.get("subgraph_inline"):
-            subgraph_def = config["subgraph_inline"]
-        elif config.get("subgraph_ref"):
+        if inner_config.get("subgraph_inline"):
+            subgraph_def = inner_config["subgraph_inline"]
+        elif inner_config.get("subgraph_ref"):
             # subgraph_ref는 워크플로우 컨텍스트에서 해석되어야 함
             # 여기서는 state에서 subgraphs를 찾음
             subgraphs = state.get("_workflow_subgraphs", {})
-            ref = config["subgraph_ref"]
+            ref = inner_config["subgraph_ref"]
             if ref in subgraphs:
                 subgraph_def = subgraphs[ref]
             else:
                 logger.warning(f"SubGraph 참조 '{ref}'를 찾을 수 없습니다.")
                 return {"subgraph_error": f"SubGraph ref not found: {ref}"}
-        elif config.get("skill_ref"):
+        elif inner_config.get("skill_ref"):
             # Skill 기반 서브그래프
             try:
                 from src.services.skill_repository import get_skill_repository
                 repo = get_skill_repository()
-                skill = repo.get_latest_skill(config["skill_ref"])
+                skill = repo.get_latest_skill(inner_config["skill_ref"])
                 if skill and skill.get("skill_type") == "subgraph_based":
                     subgraph_def = skill.get("subgraph_config")
             except ImportError:
