@@ -13,10 +13,10 @@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Sparkles, ShieldAlert, Activity, XCircle } from 'lucide-react';
+import { ShieldAlert, Activity, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type RailTab = 'agents' | 'audit' | 'timeline';
+export type RailTab = 'audit' | 'timeline';
 
 interface ContextualSideRailProps {
   activeTab: RailTab;
@@ -39,14 +39,6 @@ export function ContextualSideRail({
 }: ContextualSideRailProps) {
   
   const tabs = [
-    {
-      id: 'agents' as RailTab,
-      icon: Sparkles,
-      label: 'AI Agents',
-      description: 'Design assistance and suggestions',
-      badge: null,
-      highlight: false
-    },
     {
       id: 'audit' as RailTab,
       icon: ShieldAlert,

@@ -29,15 +29,9 @@ import { SmartEdge } from './edges/SmartEdge';
 // Dialog/Modal/Panel components - static imports to avoid runtime initialization issues
 import { NodeEditorDialog } from './NodeEditorDialog';
 import { GroupNameDialog } from './GroupNameDialog';
-import { PlanBriefingModal } from './PlanBriefingModal';
-import { CheckpointTimeline } from './CheckpointTimeline';
 import { RollbackDialog } from './RollbackDialog';
 import { SuggestionOverlay } from './SuggestionOverlay';
-import { SuggestionList } from './SuggestionList';
-import { AuditPanel } from './AuditPanel';
 import { EmptyCanvasGuide } from './EmptyCanvasGuide';
-import { ContextualSideRail } from './ContextualSideRail';
-import type { RailTab } from './ContextualSideRail';
 
 import { Button } from './ui/button';
 import {
@@ -55,13 +49,13 @@ import { useCodesignStore } from '@/lib/codesignStore';
 import { useCanvasMode } from '@/hooks/useCanvasMode';
 import { useAutoValidation } from '@/hooks/useAutoValidation';
 import { WorkflowStatusIndicator } from './WorkflowStatusIndicator';
-import { usePlanBriefing, useCheckpoints, useTimeMachine } from '@/hooks/useBriefingAndCheckpoints';
+import { useTimeMachine } from '@/hooks/useBriefingAndCheckpoints';
 import { toast } from 'sonner';
 import type { TimelineItem, RollbackRequest } from '@/lib/types';
 import { createWorkflowNode, generateNodeId } from '@/lib/nodeFactory';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 
 const WorkflowCanvasInner = () => {
   // ==========================================
@@ -73,15 +67,13 @@ const WorkflowCanvasInner = () => {
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance<any, any> | null>(null);
   
-  // Right Panel System
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [activePanelTab, setActivePanelTab] = useState<RailTab>('timeline');
-  
-  // Plan Briefing & Time Machine state
-  const [briefingOpen, setBriefingOpen] = useState(false);
+  // Time Machine state (for rollback)
   const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState<TimelineItem | null>(null);
   const [currentExecutionId, setCurrentExecutionId] = useState<string | null>(null);
+  
+  // Empty Canvas Guide visibility
+  const [emptyGuideVisible, setEmptyGuideVisible] = useState(true);
 
   // ==========================================
   // 2. NODE/EDGE TYPES (useMemo)
@@ -188,36 +180,7 @@ const WorkflowCanvasInner = () => {
     edges,
     auditIssues,
     requestAudit,
-    onValidationComplete: (issueCount) => {
-      if (issueCount > 0 && !rightPanelOpen) {
-        // Auto-open audit panel if errors found
-        console.log(`[AutoValidation] Found ${issueCount} issues`);
-      }
-    }
   });
-
-  // Contextual Auto-switching: React to workflow state changes
-  useEffect(() => {
-    // Auto-switch to Timeline when execution starts
-    if (currentExecutionId && activePanelTab !== 'timeline') {
-      console.log('[ContextualRail] Execution started, switching to Timeline');
-      setActivePanelTab('timeline');
-      if (!rightPanelOpen) {
-        setRightPanelOpen(true);
-      }
-    }
-  }, [currentExecutionId, activePanelTab, rightPanelOpen]);
-
-  useEffect(() => {
-    // Auto-switch to Audit when critical errors are detected
-    if (validation.hasErrors && !currentExecutionId && activePanelTab !== 'audit') {
-      console.log('[ContextualRail] Critical errors detected, switching to Audit');
-      setActivePanelTab('audit');
-      if (!rightPanelOpen) {
-        setRightPanelOpen(true);
-      }
-    }
-  }, [validation.hasErrors, currentExecutionId, activePanelTab, rightPanelOpen]);
 
   // Wrap workflow actions to record changes for Co-design
   const addNodeWithTracking = useCallback((node: Node) => {
@@ -278,28 +241,13 @@ const WorkflowCanvasInner = () => {
   // ==========================================
   // 4. HOOKS FOR BRIEFING AND CHECKPOINTS
   // ==========================================
-  // Hooks for briefing and checkpoints
-  const planBriefing = usePlanBriefing({
-    onSuccess: () => {
-      toast.success('실행 계획이 생성되었습니다');
-    },
-    onError: (error) => {
-      toast.error(`미리보기 생성 실패: ${error.message}`);
-    },
-  });
-
-  const checkpoints = useCheckpoints({
-    executionId: currentExecutionId || undefined,
-    enabled: !!currentExecutionId && rightPanelOpen && activePanelTab === 'timeline',
-    refetchInterval: 5000,
-  });
-
+  // 4. HOOKS FOR TIME MACHINE
+  // ==========================================
   const timeMachine = useTimeMachine({
     executionId: currentExecutionId || '',
     onRollbackSuccess: (result) => {
       toast.success(`롤백 성공: 새 브랜치 ${result.branched_thread_id} 생성됨`);
       setRollbackDialogOpen(false);
-      checkpoints.refetch();
     },
     onRollbackError: (error) => {
       toast.error(`롤백 실패: ${error.message}`);
@@ -488,31 +436,6 @@ const WorkflowCanvasInner = () => {
     setSelectedNode(node);
   }, []);
 
-  // 미리보기 실행 핸들러
-  const handlePreviewExecution = useCallback(async () => {
-    try {
-      await planBriefing.generate({
-        workflow_config: {
-          name: 'Current Workflow',
-          nodes: nodes,
-          edges: edges,
-        },
-        initial_statebag: {},
-        use_llm: false,
-      });
-      setBriefingOpen(true);
-    } catch (error) {
-      console.error('Failed to generate preview:', error);
-    }
-  }, [planBriefing, nodes, edges]);
-
-  // 실행 확인 핸들러
-  const handleConfirmExecution = useCallback(async () => {
-    toast.success('워크플로우 실행이 시작됩니다');
-    setBriefingOpen(false);
-    // TODO: Connect real execution engine
-  }, []);
-
   // 롤백 핸들러
   const handleRollbackClick = useCallback((item: TimelineItem) => {
     setRollbackTarget(item);
@@ -540,9 +463,10 @@ const WorkflowCanvasInner = () => {
       <div className="h-full w-full relative flex overflow-hidden bg-[#121212]">
         {/* Main Canvas Area */}
         <div className="flex-1 relative" onDrop={onDrop} onDragOver={onDragOver}>
-          {canvasMode.isEmpty && (
+          {canvasMode.isEmpty && emptyGuideVisible && (
             <EmptyCanvasGuide
               onQuickStart={handleQuickStart}
+              onClose={() => setEmptyGuideVisible(false)}
               className="absolute inset-0 z-10 bg-background/95 backdrop-blur-sm"
             />
           )}
@@ -566,26 +490,8 @@ const WorkflowCanvasInner = () => {
                 issueCount={validation.issueCount}
                 hasErrors={validation.hasErrors}
                 hasWarnings={validation.hasWarnings}
-                onClick={() => {
-                  if (validation.issueCount > 0) {
-                    setRightPanelOpen(true);
-                    setActivePanelTab('audit');
-                  }
-                }}
               />
             )}
-
-            {/* Unified Run Button (with pre-flight check) */}
-            <Button 
-              variant="default" 
-              size="sm" 
-              onClick={handlePreviewExecution} 
-              disabled={planBriefing.isLoading || nodes.length === 0 || validation.hasErrors} 
-              className="gap-2 bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-600/20"
-            >
-              <Play className="w-4 h-4 fill-white" />
-              {planBriefing.isLoading ? 'Checking...' : 'Run'}
-            </Button>
           </div>
 
           {/* Breadcrumbs for Subgraphs */}
@@ -657,83 +563,6 @@ const WorkflowCanvasInner = () => {
           </div>
         </div>
 
-        {/* Contextual Side Rail (replaces Insight Centre button) */}
-        <ContextualSideRail
-          activeTab={activePanelTab}
-          onTabChange={setActivePanelTab}
-          issueCount={validation.issueCount}
-          hasErrors={validation.hasErrors}
-          isExecuting={!!currentExecutionId}
-          panelOpen={rightPanelOpen}
-          onTogglePanel={() => setRightPanelOpen(!rightPanelOpen)}
-        />
-
-        {/* Unified Sidebar Panel */}
-        <AnimatePresence>
-          {rightPanelOpen && (
-            <motion.div
-              initial={{ x: 400 }}
-              animate={{ x: 0 }}
-              exit={{ x: 400 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="w-96 border-l border-slate-800 bg-slate-950/50 backdrop-blur-xl z-20 flex flex-col"
-            >
-              <div className="p-6 pb-2">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-slate-100">
-                    {activePanelTab === 'timeline' && 'Execution Timeline'}
-                    {activePanelTab === 'audit' && 'Validation Results'}
-                    {activePanelTab === 'agents' && 'AI Design Agents'}
-                  </h3>
-                  <Button variant="ghost" size="icon" onClick={() => setRightPanelOpen(false)} className="h-8 w-8 text-slate-500 hover:text-white">
-                    <PanelRightClose className="w-4 h-4" />
-                  </Button>
-                </div>
-
-                <div className="flex-1 overflow-hidden">
-                  {activePanelTab === 'timeline' && (
-                    <div className="h-[calc(100vh-180px)] overflow-y-auto custom-scrollbar">
-                      {currentExecutionId ? (
-                        <CheckpointTimeline
-                          items={checkpoints.timeline}
-                          loading={checkpoints.isLoading}
-                          selectedId={timeMachine.selectedCheckpointId}
-                          compareId={timeMachine.compareCheckpointId}
-                          onRollback={handleRollbackClick}
-                          onCompare={(item) => {
-                            if (timeMachine.selectedCheckpointId && timeMachine.selectedCheckpointId !== item.checkpoint_id) {
-                              timeMachine.compare(timeMachine.selectedCheckpointId, item.checkpoint_id);
-                            }
-                          }}
-                          onPreview={(item) => checkpoints.getDetail(item.checkpoint_id)}
-                          compact
-                        />
-                      ) : (
-                        <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center">
-                          <History className="w-12 h-12 mb-4" />
-                          <p className="text-[10px] font-black uppercase">No active operations</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {activePanelTab === 'audit' && (
-                    <div className="h-[calc(100vh-180px)] overflow-y-auto">
-                      <AuditPanel standalone />
-                    </div>
-                  )}
-
-                  {activePanelTab === 'agents' && (
-                    <div className="h-[calc(100vh-180px)] overflow-y-auto">
-                      <SuggestionList />
-                    </div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         <SuggestionOverlay />
       </div>
 
@@ -755,15 +584,6 @@ const WorkflowCanvasInner = () => {
         onClose={() => setGroupDialogOpen(false)}
         onConfirm={handleGroupConfirm}
         nodeCount={selectedNodes.length}
-      />
-
-      <PlanBriefingModal
-        open={briefingOpen}
-        onOpenChange={setBriefingOpen}
-        briefing={planBriefing.briefing}
-        loading={planBriefing.isLoading}
-        onConfirm={handleConfirmExecution}
-        onCancel={() => setBriefingOpen(false)}
       />
 
       <RollbackDialog

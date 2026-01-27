@@ -85,9 +85,20 @@ def _safe_parse_int(value: Any, default: int, min_val: int = 1, max_val: int = 1
         return default
 
 
-async def lambda_handler(event, context):
-    """Task Manager API Lambda 핸들러"""
-    
+# Lambda 엔트리포인트는 동기 래퍼 사용
+# lambda_handler라는 이름으로 export되어야 Lambda가 호출 가능
+def lambda_handler(event, context):
+    """Lambda 엔트리포인트 - 동기 래퍼"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(handle_request(event, context))
+    finally:
+        loop.close()
+
+
+async def handle_request(event, context):
+    """실제 비동기 핸들러 로직"""
     # CORS preflight 처리
     http_method = event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method')
     if http_method == 'OPTIONS':
@@ -110,24 +121,11 @@ async def lambda_handler(event, context):
         
         # 라우팅
         if task_id:
-            if path.endswith('/outcomes'):
-                # GET /tasks/{id}/outcomes
-                if http_method == 'GET':
-                    return await handle_get_task_outcomes(task_service, task_id, owner_id, event)
-                else:
-                    return _response(405, {'error': f'Method {http_method} not allowed'})
-            elif path.endswith('/metrics'):
-                # GET /tasks/{id}/metrics
-                if http_method == 'GET':
-                    return await handle_get_task_metrics(task_service, task_id, owner_id, event)
-                else:
-                    return _response(405, {'error': f'Method {http_method} not allowed'})
+            # GET /tasks/{id} - Task 상세 조회
+            if http_method == 'GET':
+                return await handle_get_task_detail(task_service, task_id, owner_id, event)
             else:
-                # GET /tasks/{id} - Task 상세 조회
-                if http_method == 'GET':
-                    return await handle_get_task_detail(task_service, task_id, owner_id, event)
-                else:
-                    return _response(405, {'error': f'Method {http_method} not allowed'})
+                return _response(405, {'error': f'Method {http_method} not allowed'})
         else:
             # GET /tasks - Task 목록 조회
             if http_method == 'GET':
@@ -137,7 +135,7 @@ async def lambda_handler(event, context):
                 
     except Exception as e:
         logger.exception(f"Task API error: {e}")
-        return _response(500, {'error': 'Internal server error'})
+        return _response(500, {'error': 'Internal server error', 'details': str(e)})
 
 
 async def handle_list_tasks(
@@ -204,54 +202,3 @@ async def handle_get_task_detail(
     except Exception as e:
         logger.error(f"Failed to get task detail: {e}")
         return _response(500, {'error': 'Failed to retrieve task detail'})
-
-
-async def handle_get_task_outcomes(
-    task_service: TaskService,
-    task_id: str,
-    owner_id: str,
-    event: Dict
-) -> Dict:
-    """Task Outcomes 조회 핸들러"""
-    try:
-        outcomes = await task_service.get_task_outcomes(task_id, owner_id)
-        if not outcomes:
-            return _response(404, {'error': 'Task not found'})
-            
-        return _response(200, outcomes)
-    except Exception as e:
-        logger.error(f"Failed to get task outcomes: {e}")
-        return _response(500, {'error': 'Failed to retrieve task outcomes'})
-
-
-async def handle_get_task_metrics(
-    task_service: TaskService,
-    task_id: str,
-    owner_id: str,
-    event: Dict
-) -> Dict:
-    """Task Metrics 조회 핸들러"""
-    try:
-        metrics = await task_service.get_task_metrics(task_id, owner_id)
-        if not metrics:
-            return _response(404, {'error': 'Task not found'})
-            
-        return _response(200, metrics)
-    except Exception as e:
-        logger.error(f"Failed to get task metrics: {e}")
-        return _response(500, {'error': 'Failed to retrieve task metrics'})
-
-
-# 동기 래퍼 (Lambda는 비동기 핸들러를 직접 지원하지 않음)
-def lambda_handler_sync(event, context):
-    """동기 Lambda 핸들러 래퍼"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(lambda_handler(event, context))
-    finally:
-        loop.close()
-
-
-# Lambda 엔트리포인트
-lambda_handler = lambda_handler_sync

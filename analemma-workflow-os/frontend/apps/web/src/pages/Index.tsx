@@ -101,12 +101,12 @@ const Index = ({ signOut }: IndexProps) => {
 
   const handlePasswordSubmit = async () => {
     if (newPassword !== confirmPassword) {
-      toast.error('새 비밀번호가 일치하지 않습니다.');
+      toast.error('New passwords do not match.');
       return;
     }
 
     if (newPassword.length < 8) {
-      toast.error('비밀번호는 최소 8자 이상이어야 합니다.');
+      toast.error('Password must be at least 8 characters.');
       return;
     }
 
@@ -115,14 +115,14 @@ const Index = ({ signOut }: IndexProps) => {
         oldPassword,
         newPassword
       });
-      toast.success('비밀번호가 성공적으로 변경되었습니다.');
+      toast.success('Password changed successfully.');
       setIsPasswordDialogOpen(false);
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
     } catch (error: any) {
       console.error('Password change error:', error);
-      toast.error(error.message || '비밀번호 변경에 실패했습니다.');
+      toast.error(error.message || 'Failed to change password.');
     }
   };
 
@@ -157,22 +157,22 @@ const Index = ({ signOut }: IndexProps) => {
                   className="flex items-center gap-2"
                 >
                   <User className="w-4 h-4" />
-                  계정 관리
+                  Account
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={handleSignOut} className="flex items-center gap-2">
                   <LogOut className="w-4 h-4" />
-                  로그아웃
+                  Sign Out
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="flex items-center gap-2">
+                <DropdownMenuItem onClick={() => toast.info('Usage statistics coming soon')} className="flex items-center gap-2">
                   <BarChart3 className="w-4 h-4" />
-                  사용량
+                  Usage
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setIsPasswordDialogOpen(true)} className="flex items-center gap-2">
                   <Key className="w-4 h-4" />
-                  비밀번호 변경
+                  Change Password
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -181,15 +181,15 @@ const Index = ({ signOut }: IndexProps) => {
             <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
               <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
-                  <DialogTitle>비밀번호 변경</DialogTitle>
+                  <DialogTitle>Change Password</DialogTitle>
                   <DialogDescription>
-                    현재 비밀번호와 새 비밀번호를 입력하세요.
+                    Enter your current password and new password.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="old-password" className="text-right">
-                      현재 비밀번호
+                      Current Password
                     </Label>
                     <Input
                       id="old-password"
@@ -201,7 +201,7 @@ const Index = ({ signOut }: IndexProps) => {
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="new-password" className="text-right">
-                      새 비밀번호
+                      New Password
                     </Label>
                     <Input
                       id="new-password"
@@ -213,7 +213,7 @@ const Index = ({ signOut }: IndexProps) => {
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
                     <Label htmlFor="confirm-password" className="text-right">
-                      비밀번호 확인
+                      Confirm Password
                     </Label>
                     <Input
                       id="confirm-password"
@@ -226,7 +226,7 @@ const Index = ({ signOut }: IndexProps) => {
                 </div>
                 <DialogFooter>
                   <Button type="submit" onClick={handlePasswordSubmit}>
-                    변경하기
+                    Change Password
                   </Button>
                 </DialogFooter>
               </DialogContent>

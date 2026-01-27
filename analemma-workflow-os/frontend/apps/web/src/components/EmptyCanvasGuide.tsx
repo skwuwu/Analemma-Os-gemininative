@@ -13,15 +13,17 @@ import {
   Sparkles, 
   Lightbulb,
   MessageSquare,
-  Workflow
+  Workflow,
+  X
 } from 'lucide-react';
 
 interface EmptyCanvasGuideProps {
   onQuickStart?: (prompt: string, persona?: string, systemPrompt?: string) => void;
+  onClose?: () => void;
   className?: string;
 }
 
-export function EmptyCanvasGuide({ onQuickStart, className }: EmptyCanvasGuideProps) {
+export function EmptyCanvasGuide({ onQuickStart, onClose, className }: EmptyCanvasGuideProps) {
   const [customPrompt, setCustomPrompt] = useState('');
 
   const handleQuickStart = (prompt: string, persona?: string, systemPrompt?: string) => {
@@ -37,6 +39,18 @@ export function EmptyCanvasGuide({ onQuickStart, className }: EmptyCanvasGuidePr
 
   return (
     <div className={`flex items-center justify-center h-full p-8 ${className}`}>
+      {/* Close Button */}
+      {onClose && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onClose}
+          className="absolute top-4 right-4 z-20 h-8 w-8 rounded-full hover:bg-muted"
+        >
+          <X className="w-4 h-4" />
+        </Button>
+      )}
+      
       <div className="max-w-xl w-full space-y-4">
         {/* Header */}
         <div className="text-center space-y-2">

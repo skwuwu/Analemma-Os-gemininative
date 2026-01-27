@@ -1,8 +1,8 @@
 /**
  * Task Manager Page
  * 
- * 기존 WorkflowMonitor를 Task Manager로 리브랜딩한 페이지입니다.
- * 좌측 리스트와 우측 상세 정보(Bento Grid)로 구성된 2-Pane 레이아웃입니다.
+ * Rebranded from WorkflowMonitor to Task Manager.
+ * 2-Pane layout with left list and right detail panel (Bento Grid).
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
@@ -33,13 +33,20 @@ import {
   List,
   Bot,
   XCircle,
-  Slash
+  Slash,
+  PanelRightClose,
+  History
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // Components
 import { TaskBentoGrid } from '@/components/TaskBentoGrid';
 import { OutcomeManagerModal } from '@/components/OutcomeManagerModal';
+import { ContextualSideRail } from '@/components/ContextualSideRail';
+import type { RailTab } from '@/components/ContextualSideRail';
+import { CheckpointTimeline } from '@/components/CheckpointTimeline';
+import { AuditPanel } from '@/components/AuditPanel';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Progress } from '@/components/ui/progress';
 
@@ -47,7 +54,8 @@ import { Progress } from '@/components/ui/progress';
 import { useTaskManager } from '@/hooks/useTaskManager';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useWorkflowApi } from '@/hooks/useWorkflowApi';
-import type { TaskSummary, TaskStatus } from '@/lib/types';
+import { useCheckpoints, useTimeMachine } from '@/hooks/useBriefingAndCheckpoints';
+import type { TaskSummary, TaskStatus, TimelineItem } from '@/lib/types';
 
 interface TaskManagerProps {
   signOut?: () => void;
@@ -99,6 +107,13 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   const [outcomeModalOpen, setOutcomeModalOpen] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | undefined>(undefined);
   
+  // Right Panel System (from WorkflowCanvas)
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [activePanelTab, setActivePanelTab] = useState<RailTab>('timeline');
+  const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false);
+  const [rollbackTarget, setRollbackTarget] = useState<TimelineItem | null>(null);
+  const [currentExecutionId, setCurrentExecutionId] = useState<string | null>(null);
+  
   // 기존 notifications 훅 (WebSocket 연결 유지)
   const { notifications } = useNotifications();
   
@@ -111,6 +126,25 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   
   // API 훅
   const { resumeWorkflow } = useWorkflowApi();
+  
+  // Checkpoints and Time Machine hooks
+  const checkpoints = useCheckpoints({
+    executionId: currentExecutionId || undefined,
+    enabled: !!currentExecutionId && rightPanelOpen && activePanelTab === 'timeline',
+    refetchInterval: 5000,
+  });
+
+  const timeMachine = useTimeMachine({
+    executionId: currentExecutionId || '',
+    onRollbackSuccess: (result) => {
+      toast.success(`Rollback successful: New branch ${result.branched_thread_id} created`);
+      setRollbackDialogOpen(false);
+      checkpoints.refetch();
+    },
+    onRollbackError: (error) => {
+      toast.error(`Rollback failed: ${error.message}`);
+    },
+  });
   
   // 검색 필터링
   const filteredTasks = useMemo(() => {
@@ -132,6 +166,11 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   const handleArtifactClick = useCallback((artifactId: string) => {
     setSelectedArtifactId(artifactId);
     setOutcomeModalOpen(true);
+  }, []);
+  
+  const handleRollbackClick = useCallback((item: TimelineItem) => {
+    setRollbackTarget(item);
+    setRollbackDialogOpen(true);
   }, []);
   
   // 통계
@@ -161,7 +200,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
           {stats.pendingApproval > 0 && (
             <Badge variant="destructive" className="animate-pulse bg-red-600 text-white border-red-500">
               <Bell className="w-3 h-3 mr-1" />
-              {stats.pendingApproval} 승인 대기
+              {stats.pendingApproval} Pending Approval
             </Badge>
           )}
           
@@ -173,12 +212,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
             className="border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100 h-8"
           >
             <RefreshCw className={`w-3 h-3 mr-2 ${taskManager.isLoading ? 'animate-spin' : ''}`} />
-            새로고침
+            Refresh
           </Button>
           
           {signOut && (
             <Button variant="ghost" size="sm" onClick={signOut} className="text-slate-400 hover:text-slate-100 hover:bg-slate-800 h-8">
-              로그아웃
+              Sign Out
             </Button>
           )}
         </div>
@@ -191,7 +230,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                     <Input
-                        placeholder="작업 검색..."
+                        placeholder="Search tasks..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         className="pl-9 bg-slate-800 border-slate-700 text-slate-100 placeholder:text-slate-500 focus:border-slate-600 h-9 text-sm"
@@ -204,11 +243,11 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                             <SelectValue placeholder="상태" />
                         </SelectTrigger>
                         <SelectContent className="bg-slate-800 border-slate-700">
-                            <SelectItem value="all">모든 상태</SelectItem>
-                            <SelectItem value="in_progress">진행 중</SelectItem>
-                            <SelectItem value="pending_approval">승인 대기</SelectItem>
-                            <SelectItem value="completed">완료</SelectItem>
-                            <SelectItem value="failed">실패</SelectItem>
+                            <SelectItem value="all">All Status</SelectItem>
+                            <SelectItem value="in_progress">In Progress</SelectItem>
+                            <SelectItem value="pending_approval">Pending Approval</SelectItem>
+                            <SelectItem value="completed">Completed</SelectItem>
+                            <SelectItem value="failed">Failed</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
@@ -222,7 +261,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                         ))
                     ) : filteredTasks.length === 0 ? (
                         <div className="text-center py-10 text-slate-500 text-sm">
-                            작업이 없습니다.
+                            No tasks available.
                         </div>
                     ) : (
                         filteredTasks.map((task) => (
@@ -248,10 +287,10 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     <StatusIcon status={task.status} />
                                 </div>
                                 <h4 className="text-sm font-medium text-slate-100 mb-1 line-clamp-1">
-                                    {task.task_summary || '작업 진행 중'}
+                                    {task.task_summary || 'Task in progress'}
                                 </h4>
                                 <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2">
-                                    <span>{task.current_step_name || '대기 중'}</span>
+                                    <span>{task.current_step_name || 'Waiting'}</span>
                                     <span>{task.progress_percentage}%</span>
                                 </div>
                                 <Progress value={task.progress_percentage} className="h-1 mt-1 bg-slate-700" />
@@ -289,12 +328,82 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
             ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-500">
                     <LayoutGrid className="w-16 h-16 mb-4 opacity-20" />
-                    <p className="text-lg font-medium">작업을 선택하여 상세 정보를 확인하세요</p>
-                    <p className="text-sm opacity-60">좌측 목록에서 작업을 클릭하면 대시보드가 표시됩니다.</p>
+                    <p className="text-lg font-medium">Select a task to view details</p>
+                    <p className="text-sm opacity-60">Click a task from the left panel to display the dashboard.</p>
                 </div>
             )}
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      {/* Contextual Side Rail */}
+      <ContextualSideRail
+        activeTab={activePanelTab}
+        onTabChange={setActivePanelTab}
+        issueCount={0}
+        hasErrors={false}
+        isExecuting={!!currentExecutionId}
+        panelOpen={rightPanelOpen}
+        onTogglePanel={() => setRightPanelOpen(!rightPanelOpen)}
+      />
+
+      {/* Unified Sidebar Panel */}
+      <AnimatePresence>
+        {rightPanelOpen && (
+          <motion.div
+            initial={{ x: 400 }}
+            animate={{ x: 0 }}
+            exit={{ x: 400 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="absolute right-0 top-14 bottom-0 w-96 border-l border-slate-800 bg-slate-950/50 backdrop-blur-xl z-30 flex flex-col"
+          >
+            <div className="p-6 pb-2">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-sm font-black uppercase tracking-widest text-slate-100">
+                  {activePanelTab === 'timeline' && 'Execution Timeline'}
+                  {activePanelTab === 'audit' && 'Validation Results'}
+                </h3>
+                <Button variant="ghost" size="icon" onClick={() => setRightPanelOpen(false)} className="h-8 w-8 text-slate-500 hover:text-white">
+                  <PanelRightClose className="w-4 h-4" />
+                </Button>
+              </div>
+
+              <div className="flex-1 overflow-hidden">
+                {activePanelTab === 'timeline' && (
+                  <div className="h-[calc(100vh-180px)] overflow-y-auto custom-scrollbar">
+                    {currentExecutionId ? (
+                      <CheckpointTimeline
+                        items={checkpoints.timeline}
+                        loading={checkpoints.isLoading}
+                        selectedId={timeMachine.selectedCheckpointId}
+                        compareId={timeMachine.compareCheckpointId}
+                        onRollback={handleRollbackClick}
+                        onCompare={(item) => {
+                          if (timeMachine.selectedCheckpointId && timeMachine.selectedCheckpointId !== item.checkpoint_id) {
+                            timeMachine.compare(timeMachine.selectedCheckpointId, item.checkpoint_id);
+                          }
+                        }}
+                        onPreview={(item) => checkpoints.getDetail(item.checkpoint_id)}
+                        compact
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center">
+                        <History className="w-12 h-12 mb-4" />
+                        <p className="text-[10px] font-black uppercase">No active operations</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activePanelTab === 'audit' && (
+                  <div className="h-[calc(100vh-180px)] overflow-y-auto">
+                    <AuditPanel standalone />
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {taskManager.selectedTask && (
         <OutcomeManagerModal 
