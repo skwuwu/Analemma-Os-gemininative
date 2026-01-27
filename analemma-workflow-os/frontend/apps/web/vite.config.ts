@@ -36,6 +36,22 @@ export default defineConfig(({ mode }) => ({
       },
       output: {
         manualChunks(id) {
+          // 0. d3 libraries - CRITICAL: separate to avoid circular dependency issues
+          // d3 packages have internal circular deps that cause runtime initialization errors
+          if (id.includes('node_modules/d3-selection') ||
+              id.includes('node_modules/d3-transition') ||
+              id.includes('node_modules/d3-interpolate') ||
+              id.includes('node_modules/d3-dispatch') ||
+              id.includes('node_modules/d3-timer') ||
+              id.includes('node_modules/d3-ease')) {
+            return 'd3-vendor';
+          }
+          
+          // JSON viewer - also has circular dep issues
+          if (id.includes('node_modules/@uiw/react-json-view')) {
+            return 'json-viewer';
+          }
+          
           // 1. Zustand stores - must load before app code
           if (id.includes('src/lib/workflowStore') || 
               id.includes('src/lib/codesignStore') ||
@@ -57,7 +73,7 @@ export default defineConfig(({ mode }) => ({
             return 'zustand-vendor';
           }
           
-          // 4. XYFlow - separate heavy library
+          // 4. XYFlow - separate heavy library (may use d3 internally)
           if (id.includes('node_modules/@xyflow')) {
             return 'xyflow';
           }
