@@ -174,7 +174,7 @@ const WorkflowCanvasInner = () => {
   // Auto-validation (background linter)
   // Pass store values directly to avoid module initialization order issues
   const validation = useAutoValidation({
-    enabled: canvasMode !== 'agentic',
+    enabled: canvasMode.mode !== 'agentic-designer',
     debounceMs: 1500,
     nodes,
     edges,
@@ -536,7 +536,8 @@ const WorkflowCanvasInner = () => {
             className="bg-[#121212]"
             deleteKeyCode={null}
             panOnDrag={true}
-            panOnScroll={true}
+            zoomOnScroll={true}
+            panOnScroll={false}
           >
             <Background color="#222" gap={20} size={1} variant={BackgroundVariant.Dots} style={{ opacity: 0.4 }} />
           </ReactFlow>
@@ -593,7 +594,10 @@ const WorkflowCanvasInner = () => {
         loading={timeMachine.isPreviewLoading}
         onPreview={handleRollbackPreview}
         onExecute={handleRollbackExecute}
-        onSuccess={() => checkpoints.refetch()}
+        onSuccess={() => {
+          // 롤백 성공 시 자동으로 onRollbackSuccess 콜백이 호출됨
+          setRollbackDialogOpen(false);
+        }}
       />
     </>
   );

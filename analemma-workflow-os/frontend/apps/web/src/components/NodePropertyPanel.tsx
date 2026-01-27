@@ -150,6 +150,31 @@ const ControlSettings = ({ data, updateField }: any) => {
           </motion.div>
         )}
 
+        {controlType === 'aggregator' && (
+          <motion.div key="aggregator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3 pt-1">
+            <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-100/50 text-[10px] text-blue-700 leading-normal flex gap-2">
+              <Activity className="w-4 h-4 shrink-0 text-blue-400" />
+              <span>병렬 브랜치나 반복 작업의 결과를 병합하고 토큰 사용량을 집계합니다.</span>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold text-slate-400">Aggregation Strategy</Label>
+              <Select value={data.strategy || 'auto'} onValueChange={(val) => updateField('strategy', val)}>
+                <SelectTrigger className="h-9 bg-white"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto (자동 감지)</SelectItem>
+                  <SelectItem value="merge">Merge (병합)</SelectItem>
+                  <SelectItem value="concat">Concat (연결)</SelectItem>
+                  <SelectItem value="sum">Sum (합산)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold text-slate-400">Output Key</Label>
+              <Input value={data.output_key || 'aggregated_result'} onChange={(e) => updateField('output_key', e.target.value)} placeholder="aggregated_result" className="h-8 text-xs bg-white" />
+            </div>
+          </motion.div>
+        )}
+
         {controlType === 'while' && (
           <motion.div key="while" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3 pt-1">
             <div className="space-y-1.5">
@@ -359,6 +384,7 @@ const NodeForm = ({
     items_path: node?.data.items_path || 'state.items',
     item_key: node?.data.item_key || 'item',
     output_key: node?.data.output_key || 'results',
+    strategy: node?.data.strategy || 'auto',
     approval_message: node?.data.approval_message || '',
   }));
 
@@ -396,6 +422,9 @@ const NodeForm = ({
           updates.item_key = formData.item_key;
           updates.output_key = formData.output_key;
           updates.max_iterations = Number(formData.maxIterations);
+        } else if (formData.controlType === 'aggregator') {
+          updates.strategy = formData.strategy || 'auto';
+          updates.output_key = formData.output_key || 'aggregated_result';
         } else if (formData.controlType === 'human') {
           updates.approval_message = formData.approval_message;
         }

@@ -23,6 +23,7 @@ interface AIModelNodeProps {
   data: {
     label: string;
     modelName?: string;
+    model?: string; // Added for compatibility with NodeEditorDialog
     temperature?: number;
     toolsCount?: number;
     status?: 'idle' | 'running' | 'failed' | 'completed';
@@ -107,7 +108,7 @@ export const AIModelNode = ({ data, id, onDelete, selected }: AIModelNodeProps) 
       <div className="grid grid-cols-2 gap-1.5 mb-3">
         <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/40 text-[10px] text-muted-foreground border border-white/5 truncate">
           <Settings2 className="w-3 h-3 opacity-60" />
-          {data.modelName || 'GPT-4o'}
+          {data.modelName || data.model || 'GPT-4o'}
         </div>
         {formattedCost && (
           <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-green-500/5 text-[10px] text-green-500 border border-green-500/10 truncate font-mono">

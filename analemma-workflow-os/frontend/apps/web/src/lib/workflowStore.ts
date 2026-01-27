@@ -10,6 +10,7 @@ import {
   applyNodeChanges,
   applyEdgeChanges,
 } from '@xyflow/react';
+import { toast } from 'sonner';
 
 // 서브그래프 정의
 interface SubgraphDefinition {
@@ -148,7 +149,26 @@ export const useWorkflowStore = create<WorkflowState>()(
 
       onEdgesChange: (changes) => set((state) => ({ edges: applyEdgeChanges(changes, state.edges) })),
 
-      onConnect: (connection) =>
+      onConnect: (connection) => {
+        const state = get();
+        
+        // 1. Self-loop 차단: 노드가 자기 자신에게 연결되는 것 방지
+        if (connection.source === connection.target) {
+          toast.error('노드를 자기 자신에게 연결할 수 없습니다.');
+          return;
+        }
+        
+        // 2. 중복 edge 차단: 동일한 source → target 연결이 이미 존재하는지 확인
+        const isDuplicate = state.edges.some(
+          (edge) => edge.source === connection.source && edge.target === connection.target
+        );
+        
+        if (isDuplicate) {
+          toast.error('이미 동일한 연결이 존재합니다.');
+          return;
+        }
+        
+        // 검증 통과: 새 엣지 추가
         set((state) => ({
           edges: addEdge(
             {
@@ -158,7 +178,8 @@ export const useWorkflowStore = create<WorkflowState>()(
             },
             state.edges
           ),
-        })),
+        }));
+      },
 
       // 선택된 노드들을 그룹(서브그래프)으로 묶기
       groupNodes: (nodeIds: string[], groupName: string) => {

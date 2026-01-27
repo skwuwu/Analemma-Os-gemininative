@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Brain, Clock, Webhook, Zap, MessageSquare, Globe, Database, Search, GripVertical, ChevronDown, ChevronRight, Repeat, GitFork, CheckCircle2, FolderOpen, type LucideIcon } from 'lucide-react';
+import { Brain, Clock, Webhook, Zap, MessageSquare, Globe, Database, Search, GripVertical, ChevronDown, ChevronRight, Repeat, GitFork, CheckCircle2, FolderOpen, Merge, type LucideIcon } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -43,10 +43,8 @@ export const BLOCK_CATEGORIES: { title: string; type: BlockType; items: Omit<Blo
     title: 'Operators',
     type: 'operator',
     items: [
-      { id: 'custom-operator', label: 'Custom Operator', icon: Globe, description: '사용자 정의 코드/설정으로 동작하는 커스텀 연산자', defaultData: { operatorType: 'custom', operatorVariant: 'custom', action: 'Custom Action' } },
-      { id: 'api_call', label: 'API Call', icon: Globe, description: 'HTTP API 요청 실행 (REST API, webhook 등)', defaultData: { operatorType: 'api_call', operatorVariant: 'official', action: 'API Request', url: '', method: 'GET' } },
-      { id: 'database', label: 'Database Query', icon: Database, description: 'SQL 쿼리 실행 및 데이터 조작', defaultData: { operatorType: 'database', operatorVariant: 'official', action: 'Query Data', query: '' } },
-      { id: 'safe_operator', label: 'Safe Transform', icon: Zap, description: '50+ 내장 변환 전략 (list_filter, json_parse, string_template 등)', defaultData: { operatorType: 'safe_operator', operatorVariant: 'official', action: 'Transform Data', strategy: 'list_filter' } },
+      { id: 'api_call', label: 'API Call', icon: Globe, description: 'Execute HTTP API requests (GET, POST, PUT, DELETE) with template rendering support', defaultData: { operatorType: 'api_call', action: 'API Request', url: '', method: 'GET' } },
+      { id: 'safe_operator', label: 'Safe Transform', icon: Zap, description: '50+ built-in transformation strategies (list_filter, json_parse, string_template, etc.)', defaultData: { operatorType: 'safe_operator', action: 'Transform Data', strategy: 'list_filter' } },
     ]
   },
   {
@@ -55,6 +53,7 @@ export const BLOCK_CATEGORIES: { title: string; type: BlockType; items: Omit<Blo
     items: [
       { id: 'for_each', label: 'For Each Loop', icon: Repeat, description: 'Iterate over a list of items and execute sub-workflow for each', defaultData: { controlType: 'for_each', items_path: 'state.items', item_key: 'item', output_key: 'results', max_iterations: 20 } },
       { id: 'parallel', label: 'Parallel Branches', icon: GitFork, description: 'Execute multiple branches concurrently', defaultData: { controlType: 'parallel', branches: [] } },
+      { id: 'aggregator', label: 'Aggregator', icon: Merge, description: 'Merge and aggregate results from parallel branches or iterations (includes token usage)', defaultData: { controlType: 'aggregator', strategy: 'auto', sources: [], output_key: 'aggregated_result' } },
       { id: 'while', label: 'While Loop', icon: Clock, description: 'Repeat workflow steps while a condition is true', defaultData: { controlType: 'loop', condition: 'count < 5' } },
       { id: 'confirmation', label: 'User Intervention', icon: MessageSquare, description: 'Pause workflow execution for human approval or input', defaultData: { controlType: 'human', condition: 'approval_required' } },
     ]

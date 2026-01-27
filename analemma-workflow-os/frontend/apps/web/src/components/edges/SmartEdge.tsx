@@ -1,13 +1,71 @@
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, useReactFlow, EdgeProps } from '@xyflow/react';
-import { Activity } from 'lucide-react';
+import { Activity, ChevronDown, ArrowRight, RefreshCw, GitBranch, Hand, Pause } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
+import { useState, useCallback } from 'react';
+
+// 백엔드 엣지 타입 정의
+export type BackendEdgeType = 'edge' | 'if' | 'while' | 'hitp' | 'conditional_edge' | 'pause';
+
+// 엣지 타입별 설정
+const EDGE_TYPE_CONFIG: Record<BackendEdgeType, { 
+  label: string; 
+  icon: React.ComponentType<{ className?: string }>; 
+  color: string;
+  description: string;
+  needsCondition?: boolean;
+}> = {
+  edge: { 
+    label: 'Normal', 
+    icon: ArrowRight, 
+    color: 'hsl(263 70% 60%)',
+    description: '일반 연결 (항상 진행)'
+  },
+  if: { 
+    label: 'Conditional', 
+    icon: GitBranch, 
+    color: 'hsl(142 76% 36%)',
+    description: '조건이 참일 때만 진행',
+    needsCondition: true
+  },
+  while: { 
+    label: 'While Loop', 
+    icon: RefreshCw, 
+    color: 'hsl(38 92% 50%)',
+    description: '조건이 참인 동안 반복',
+    needsCondition: true
+  },
+  hitp: { 
+    label: 'Human Approval', 
+    icon: Hand, 
+    color: 'hsl(280 70% 50%)',
+    description: '사람의 승인 후 진행'
+  },
+  conditional_edge: { 
+    label: 'Multi-Branch', 
+    icon: GitBranch, 
+    color: 'hsl(200 70% 50%)',
+    description: '라우터 함수로 분기 결정',
+    needsCondition: true
+  },
+  pause: { 
+    label: 'Pause', 
+    icon: Pause, 
+    color: 'hsl(0 70% 50%)',
+    description: '일시 정지 후 재개'
+  },
+};
 
 // Edge 데이터 타입 정의 - Edge 인터페이스 확장
 interface SmartEdgeData extends Record<string, unknown> {
   label?: string;           // 조건 라벨 (예: "Yes", "Tool Call")
   active?: boolean;         // 현재 실행 중인지 여부 (애니메이션 트리거)
   stateDelta?: string;      // 전달되는 상태 데이터 요약 (JSON string)
+  edgeType?: BackendEdgeType; // 백엔드 엣지 타입
+  condition?: string;       // 조건식 (if, while용)
+  max_iterations?: number;  // while 최대 반복 횟수
 }
 
 export const SmartEdge = ({
@@ -23,9 +81,44 @@ export const SmartEdge = ({
   data,
 }: EdgeProps) => {
   const { setEdges } = useReactFlow();
+  const [isEditing, setIsEditing] = useState(false);
+  const [conditionInput, setConditionInput] = useState('');
 
   // 타입 단언으로 data를 SmartEdgeData로 처리
   const edgeData = data as SmartEdgeData | undefined;
+  const currentType: BackendEdgeType = (edgeData?.edgeType as BackendEdgeType) || 'edge';
+  const typeConfig = EDGE_TYPE_CONFIG[currentType];
+
+  // 엣지 타입 변경 핸들러
+  const handleTypeChange = useCallback((newType: BackendEdgeType) => {
+    setEdges((edges) =>
+      edges.map((edge) =>
+        edge.id === id
+          ? { 
+              ...edge, 
+              data: { 
+                ...edge.data, 
+                edgeType: newType,
+                // 조건이 필요 없는 타입으로 변경 시 조건 제거
+                condition: EDGE_TYPE_CONFIG[newType].needsCondition ? edge.data?.condition : undefined,
+              } 
+            }
+          : edge
+      )
+    );
+  }, [id, setEdges]);
+
+  // 조건 저장 핸들러
+  const handleConditionSave = useCallback(() => {
+    setEdges((edges) =>
+      edges.map((edge) =>
+        edge.id === id
+          ? { ...edge, data: { ...edge.data, condition: conditionInput } }
+          : edge
+      )
+    );
+    setIsEditing(false);
+  }, [id, conditionInput, setEdges]);
 
   // 1. 베지에 곡선 경로 계산
   const [edgePath, labelX, labelY] = getBezierPath({
@@ -33,14 +126,19 @@ export const SmartEdge = ({
     targetX, targetY, targetPosition,
   });
 
-  // 2. 활성 상태일 때 애니메이션 스타일 적용
+  // 2. 타입에 따른 스타일 적용
   const edgeStyle = {
     ...(style as Record<string, unknown>),
-    stroke: edgeData?.active ? '#3b82f6' : '#94a3b8', // 활성: 파랑, 비활성: 회색
-    strokeWidth: edgeData?.active ? 2 : 1.5,
-    animation: edgeData?.active ? 'dashdraw 0.5s linear infinite' : 'none',
-    strokeDasharray: edgeData?.active ? '5' : '0',
+    stroke: edgeData?.active ? '#3b82f6' : typeConfig.color,
+    strokeWidth: edgeData?.active ? 2.5 : 2,
+    animation: edgeData?.active ? 'dashdraw 0.5s linear infinite' : 
+               currentType === 'while' ? 'dashdraw 2s linear infinite' : 'none',
+    strokeDasharray: edgeData?.active ? '5' : 
+                     currentType === 'while' ? '8 4' : 
+                     currentType === 'if' ? '4 2' : '0',
   };
+
+  const IconComponent = typeConfig.icon;
 
   return (
     <>
@@ -59,45 +157,119 @@ export const SmartEdge = ({
           style={{
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-            pointerEvents: 'all', // 이게 있어야 엣지 위 버튼 클릭 가능
-            zIndex: 10, // 라벨이 선 위에 표시되도록 z-index 추가
+            pointerEvents: 'all',
+            zIndex: 10,
           }}
           className="nodrag nopan"
         >
           <div className="flex flex-col items-center gap-1">
-            {/* A. 조건 라벨 (분기 조건 표시) */}
-            {edgeData?.label && (
-              <Badge
-                variant="outline"
-                className="bg-background text-[10px] px-1.5 py-0 h-5 border-muted-foreground/30 shadow-sm whitespace-nowrap"
-              >
-                {edgeData.label}
-              </Badge>
+            {/* A. 엣지 타입 선택 드롭다운 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-background border shadow-sm hover:bg-muted transition-colors text-xs"
+                  style={{ borderColor: typeConfig.color }}
+                >
+                  <IconComponent className="w-3 h-3" style={{ color: typeConfig.color }} />
+                  <span className="font-medium" style={{ color: typeConfig.color }}>
+                    {typeConfig.label}
+                  </span>
+                  <ChevronDown className="w-3 h-3 text-muted-foreground" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="center" className="w-48">
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  Edge Type
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {Object.entries(EDGE_TYPE_CONFIG).map(([type, config]) => {
+                  const Icon = config.icon;
+                  return (
+                    <DropdownMenuItem
+                      key={type}
+                      onClick={() => handleTypeChange(type as BackendEdgeType)}
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <Icon className="w-4 h-4" style={{ color: config.color }} />
+                      <div className="flex flex-col">
+                        <span className="font-medium">{config.label}</span>
+                        <span className="text-[10px] text-muted-foreground">{config.description}</span>
+                      </div>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* B. 조건 입력 (if, while, conditional_edge 타입일 때) */}
+            {typeConfig.needsCondition && (
+              isEditing ? (
+                <div className="flex gap-1">
+                  <Input
+                    value={conditionInput}
+                    onChange={(e) => setConditionInput(e.target.value)}
+                    placeholder="예: state.count < 10"
+                    className="h-6 text-xs w-32"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleConditionSave();
+                      if (e.key === 'Escape') setIsEditing(false);
+                    }}
+                  />
+                  <button
+                    onClick={handleConditionSave}
+                    className="px-2 h-6 text-xs bg-primary text-primary-foreground rounded"
+                  >
+                    저장
+                  </button>
+                </div>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="bg-background text-[10px] px-1.5 py-0 h-5 border-muted-foreground/30 shadow-sm whitespace-nowrap cursor-pointer hover:bg-muted"
+                  onClick={() => {
+                    setConditionInput((edgeData?.condition as string) || '');
+                    setIsEditing(true);
+                  }}
+                >
+                  {edgeData?.condition || edgeData?.label || '조건 입력 클릭'}
+                </Badge>
+              )
             )}
 
-            {/* B. 데이터 검사 버튼 (호버 시 데이터 표시) */}
+            {/* C. 데이터 검사 버튼 (호버 시 데이터 표시) */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <div
                   className="flex items-center justify-center w-5 h-5 rounded-full bg-background border cursor-pointer hover:bg-muted transition-colors shadow-sm"
-                  onClick={(e) => e.stopPropagation()} // 이벤트 전파 방지
+                  onClick={(e) => e.stopPropagation()}
                 >
-                   {/* 데이터가 있으면 Activity 아이콘, 없으면 단순 연결점 */}
                    <Activity className={`w-3 h-3 ${edgeData?.stateDelta ? 'text-blue-500' : 'text-muted-foreground'}`} />
                 </div>
               </TooltipTrigger>
 
-              {/* C. 전달 데이터 툴팁 */}
-              {edgeData?.stateDelta && (
-                <TooltipContent className="max-w-[300px] p-2">
-                  <div className="space-y-1">
-                    <h4 className="font-medium leading-none text-xs text-muted-foreground mb-2">State Update</h4>
+              {/* D. 전달 데이터 툴팁 */}
+              <TooltipContent className="max-w-[300px] p-2">
+                <div className="space-y-1">
+                  <h4 className="font-medium leading-none text-xs text-muted-foreground mb-2">
+                    {currentType === 'while' && 'While Loop 설정'}
+                    {currentType === 'if' && '조건부 분기'}
+                    {currentType === 'edge' && 'State Update'}
+                    {currentType === 'hitp' && '사람 승인 대기'}
+                  </h4>
+                  {edgeData?.condition && (
+                    <p className="text-xs"><strong>조건:</strong> {edgeData.condition as string}</p>
+                  )}
+                  {edgeData?.max_iterations && (
+                    <p className="text-xs"><strong>최대 반복:</strong> {edgeData.max_iterations as number}회</p>
+                  )}
+                  {edgeData?.stateDelta && (
                     <pre className="text-[10px] bg-muted p-2 rounded overflow-auto max-h-32 font-mono whitespace-pre-wrap">
                       {edgeData.stateDelta}
                     </pre>
-                  </div>
-                </TooltipContent>
-              )}
+                  )}
+                </div>
+              </TooltipContent>
             </Tooltip>
           </div>
         </div>

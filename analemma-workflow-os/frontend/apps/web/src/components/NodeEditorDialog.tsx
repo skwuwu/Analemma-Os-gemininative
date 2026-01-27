@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useState, useMemo, useCallback } from 'react';
-import { ArrowRight, ArrowLeft, Trash2, Plug, Settings2, Info } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Trash2, Plug, Settings2, Info, AlertCircle } from 'lucide-react';
 import { BLOCK_CATEGORIES } from './BlockLibrary';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -29,13 +29,16 @@ interface NodeData {
   model?: string;
   max_tokens?: number;
   operatorType?: string;
-  operatorVariant?: string;
+  strategy?: string;
+  url?: string;
+  method?: string;
   triggerType?: string;
   triggerHour?: number;
   triggerMinute?: number;
   controlType?: string;
   whileCondition?: string;
   maxIterations?: number;
+  output_key?: string;
   [key: string]: any;
 }
 
@@ -56,6 +59,24 @@ const AI_MODELS = BLOCK_CATEGORIES.find(cat => cat.type === 'aiModel')?.items ||
 const OPERATORS = BLOCK_CATEGORIES.find(cat => cat.type === 'operator')?.items || [];
 const TRIGGERS = BLOCK_CATEGORIES.find(cat => cat.type === 'trigger')?.items || [];
 const CONTROLS = BLOCK_CATEGORIES.find(cat => cat.type === 'control')?.items || [];
+
+// Safe Transform Strategies (from backend OperatorStrategy enum)
+const SAFE_TRANSFORM_STRATEGIES = [
+  { value: 'list_filter', label: 'List Filter', description: 'Filter list items by condition' },
+  { value: 'list_map', label: 'List Map', description: 'Transform each list item' },
+  { value: 'json_parse', label: 'JSON Parse', description: 'Parse JSON string to object' },
+  { value: 'json_stringify', label: 'JSON Stringify', description: 'Convert object to JSON string' },
+  { value: 'deep_get', label: 'Deep Get', description: 'Get nested value from object' },
+  { value: 'deep_set', label: 'Deep Set', description: 'Set nested value in object' },
+  { value: 'string_template', label: 'String Template', description: 'Render string template' },
+  { value: 'regex_extract', label: 'Regex Extract', description: 'Extract text using regex' },
+  { value: 'merge_objects', label: 'Merge Objects', description: 'Merge multiple objects' },
+  { value: 'pick_fields', label: 'Pick Fields', description: 'Select specific fields from object' },
+  { value: 'to_int', label: 'To Integer', description: 'Convert value to integer' },
+  { value: 'to_string', label: 'To String', description: 'Convert value to string' },
+  { value: 'if_else', label: 'If/Else', description: 'Conditional value selection' },
+  { value: 'default_value', label: 'Default Value', description: 'Provide fallback value' },
+];
 
 // --- SUB-COMPONENTS ---
 
@@ -120,30 +141,64 @@ const OperatorSettings = ({ data, onChange }: { data: NodeData, onChange: (key: 
     className="space-y-4 border border-slate-700 rounded-2xl p-5 bg-slate-900/50"
   >
     <div className="space-y-2">
-      <Label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 pl-1">Operator Blueprint</Label>
+      <Label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 pl-1">Operator Type</Label>
       <Select value={data.operatorType} onValueChange={(val) => onChange('operatorType', val)}>
         <SelectTrigger className="h-10 bg-slate-800 border-slate-700 text-slate-100"><SelectValue /></SelectTrigger>
         <SelectContent>
           {OPERATORS.map(op => <SelectItem key={op.id} value={op.id}>{op.label}</SelectItem>)}
         </SelectContent>
       </Select>
-    </div>
-    <div className="space-y-2">
-      <Label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 pl-1">Execution Mode</Label>
-      <Select value={data.operatorVariant} onValueChange={(val) => onChange('operatorVariant', val)}>
-        <SelectTrigger className="h-10 bg-slate-800 border-slate-700 text-slate-100"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="official">Standard (Validated)</SelectItem>
-          <SelectItem value="custom">Edge (Experimental)</SelectItem>
-        </SelectContent>
-      </Select>
-      <div className="flex gap-2 p-3 bg-blue-50/50 border border-blue-100 rounded-xl mt-2">
+      <div className="flex gap-2 p-3 bg-slate-800/50 border border-slate-700 rounded-xl mt-2">
         <Info className="w-4 h-4 text-blue-400 shrink-0" />
-        <p className="text-[10px] text-blue-600/80 leading-snug">
-          Standard 모드는 Gmail/Notion 등 검증된 API 연동을 제공하며, Edge 모드는 커스텀 훅이나 스크립트 실행에 최적화되어 있습니다.
+        <p className="text-[10px] text-slate-300 leading-snug">
+          All operators are production-ready with dedicated backend runners: api_call and safe_operator.
         </p>
       </div>
     </div>
+
+    {/* Safe Transform Strategy Selection */}
+    {data.operatorType === 'safe_operator' && (
+      <div className="space-y-2 animate-in slide-in-from-top-2">
+        <Label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 pl-1">Transformation Strategy</Label>
+        <Select value={data.strategy} onValueChange={(val) => onChange('strategy', val)}>
+          <SelectTrigger className="h-10 bg-slate-800 border-slate-700 text-slate-100"><SelectValue placeholder="Select strategy..." /></SelectTrigger>
+          <SelectContent>
+            {SAFE_TRANSFORM_STRATEGIES.map(s => (
+              <SelectItem key={s.value} value={s.value}>
+                <div className="flex flex-col">
+                  <span>{s.label}</span>
+                  <span className="text-[9px] text-slate-400">{s.description}</span>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[9px] text-slate-400 pl-1">50+ built-in strategies available. Required field.</p>
+      </div>
+    )}
+
+    {/* API Call Configuration */}
+    {data.operatorType === 'api_call' && (
+      <div className="space-y-4 animate-in slide-in-from-top-2">
+        <div className="space-y-2">
+          <Label className="text-[10px] text-slate-400 pl-1 font-bold">API Endpoint URL</Label>
+          <Input value={data.url} onChange={(e) => onChange('url', e.target.value)} placeholder="https://api.example.com/endpoint" className="bg-slate-800 border-slate-700 text-slate-100" />
+        </div>
+        <div className="space-y-2">
+          <Label className="text-[10px] text-slate-400 pl-1 font-bold">HTTP Method</Label>
+          <Select value={data.method} onValueChange={(val) => onChange('method', val)}>
+            <SelectTrigger className="h-10 bg-slate-800 border-slate-700 text-slate-100"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="GET">GET</SelectItem>
+              <SelectItem value="POST">POST</SelectItem>
+              <SelectItem value="PUT">PUT</SelectItem>
+              <SelectItem value="DELETE">DELETE</SelectItem>
+              <SelectItem value="PATCH">PATCH</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    )}
   </motion.div>
 );
 
@@ -175,11 +230,11 @@ const TriggerSettings = ({ data, onChange }: { data: NodeData, onChange: (key: s
         >
           <div className="space-y-2">
             <Label className="text-[10px] text-slate-400 pl-1 font-bold">Hour (24h)</Label>
-            <Input type="number" min={0} max={23} value={data.triggerHour} onChange={(e) => onChange('triggerHour', parseInt(e.target.value))} className="bg-white" />
+            <Input type="number" min={0} max={23} value={data.triggerHour} onChange={(e) => onChange('triggerHour', parseInt(e.target.value))} className="bg-slate-800 border-slate-700 text-slate-100" />
           </div>
           <div className="space-y-2">
             <Label className="text-[10px] text-slate-400 pl-1 font-bold">Minute (mm)</Label>
-            <Input type="number" min={0} max={59} value={data.triggerMinute} onChange={(e) => onChange('triggerMinute', parseInt(e.target.value))} className="bg-white" />
+            <Input type="number" min={0} max={59} value={data.triggerMinute} onChange={(e) => onChange('triggerMinute', parseInt(e.target.value))} className="bg-slate-800 border-slate-700 text-slate-100" />
           </div>
         </motion.div>
       )}
@@ -214,6 +269,29 @@ const ControlSettings = ({ data, onChange }: { data: NodeData, onChange: (key: s
         <div className="space-y-2">
           <Label className="text-[10px] text-slate-400 pl-1 font-bold">Max Iteration Guard</Label>
           <Input type="number" value={data.maxIterations} onChange={(e) => onChange('maxIterations', parseInt(e.target.value))} className="bg-white" />
+        </div>
+      </div>
+    )}
+    {data.controlType === 'aggregator' && (
+      <div className="space-y-4 pt-2 animate-in slide-in-from-top-2">
+        <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-300 leading-relaxed">
+          병렬 브랜치나 반복 작업의 결과를 병합하고 토큰 사용량을 집계합니다.
+        </div>
+        <div className="space-y-2">
+          <Label className="text-[10px] text-slate-400 pl-1 font-bold">Aggregation Strategy</Label>
+          <Select value={data.strategy || 'auto'} onValueChange={(val) => onChange('strategy', val)}>
+            <SelectTrigger className="h-10 bg-slate-800 border-slate-700 text-slate-100"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto (자동 감지)</SelectItem>
+              <SelectItem value="merge">Merge (병합)</SelectItem>
+              <SelectItem value="concat">Concat (연결)</SelectItem>
+              <SelectItem value="sum">Sum (합산)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label className="text-[10px] text-slate-400 pl-1 font-bold">Output Key</Label>
+          <Input value={data.output_key || 'aggregated_result'} onChange={(e) => onChange('output_key', e.target.value)} placeholder="aggregated_result" className="bg-white" />
         </div>
       </div>
     )}
@@ -352,14 +430,17 @@ export const NodeEditorDialog = ({
     temperature: node?.data.temperature ?? 0.7,
     model: node?.data.model || (nodeType === 'aiModel' ? 'gpt-4' : ''),
     max_tokens: node?.data.max_tokens || node?.data.maxTokens || 2000,
-    operatorType: node?.data.operatorType || (nodeType === 'operator' ? 'email' : ''),
-    operatorVariant: node?.data.operatorVariant || 'official',
+    operatorType: node?.data.operatorType || (nodeType === 'operator' ? 'api_call' : ''),
+    strategy: node?.data.strategy || 'list_filter',
+    url: node?.data.url || '',
+    method: node?.data.method || 'GET',
     triggerType: node?.data.triggerType || (nodeType === 'trigger' ? (node?.data.blockId as string || 'request') : ''),
     triggerHour: node?.data.triggerHour ?? 9,
     triggerMinute: node?.data.triggerMinute ?? 0,
     controlType: node?.data.controlType || (nodeType === 'control' ? 'while' : ''),
     whileCondition: node?.data.whileCondition || '',
     maxIterations: node?.data.max_iterations || node?.data.maxIterations || 10,
+    output_key: node?.data.output_key || 'aggregated_result',
   }));
 
   const updateField = useCallback((key: string, value: any) => {
@@ -376,14 +457,17 @@ export const NodeEditorDialog = ({
       const { prompt_content, temperature, model, max_tokens } = formData;
       Object.assign(updates, { prompt_content, temperature, model, max_tokens: Number(max_tokens) });
     } else if (nodeType === 'operator') {
-      const { operatorType, operatorVariant } = formData;
-      Object.assign(updates, { operatorType, operatorVariant });
+      const { operatorType, strategy, url, method } = formData;
+      Object.assign(updates, { operatorType, strategy, url, method });
     } else if (nodeType === 'trigger') {
       const { triggerType, triggerHour, triggerMinute } = formData;
       Object.assign(updates, { triggerType, triggerHour: Number(triggerHour || 0), triggerMinute: Number(triggerMinute || 0) });
     } else if (nodeType === 'control') {
-      const { controlType, whileCondition, maxIterations } = formData;
+      const { controlType, whileCondition, maxIterations, strategy, output_key } = formData;
       Object.assign(updates, { controlType, whileCondition, maxIterations: Number(maxIterations || 0) });
+      if (controlType === 'aggregator') {
+        Object.assign(updates, { strategy: strategy || 'auto', output_key: output_key || 'aggregated_result' });
+      }
     }
 
     onSave(node.id, updates);
