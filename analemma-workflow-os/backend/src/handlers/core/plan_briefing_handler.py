@@ -183,13 +183,13 @@ async def handle_generate_preview(owner_id: str, event: Dict) -> Dict:
         return _response(400, {'error': 'workflow_config is required'})
     
     try:
-        service = PlanBriefingService()
-        briefing = await service.generate_briefing(
-            workflow_config=workflow_config,
-            initial_statebag=body.get('initial_statebag', {}),
-            user_context=body.get('user_context'),
-            use_llm=body.get('use_llm', True)
-        )
+        async with PlanBriefingService() as service:
+            briefing = await service.generate_briefing(
+                workflow_config=workflow_config,
+                initial_statebag=body.get('initial_statebag', {}),
+                user_context=body.get('user_context'),
+                use_llm=body.get('use_llm', True)
+            )
         
         # Pydantic 모델을 dict로 변환
         briefing_dict = briefing.dict() if hasattr(briefing, 'dict') else briefing

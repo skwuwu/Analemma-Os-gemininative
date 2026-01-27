@@ -24,17 +24,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# LLM 클라이언트 (OpenAI 또는 다른 프로바이더)
+# LLM 클라이언트 (Gemini via Vertex AI)
 try:
-    from openai import AsyncOpenAI
-    HAS_OPENAI = True
+    from src.services.llm.gemini_service import GeminiService, GeminiConfig, GeminiModel
+    HAS_GEMINI = True
 except ImportError:
-    try:
-        import openai
-        HAS_OPENAI = True
-    except ImportError:
-        HAS_OPENAI = False
-    logger.warning("OpenAI not available, using mock briefing generation")
+    GeminiService = None
+    GeminiConfig = None
+    GeminiModel = None
+    HAS_GEMINI = False
+    logger.warning("Gemini service not available, using mock briefing generation")
 
 
 class PlanBriefingService:
@@ -49,22 +48,32 @@ class PlanBriefingService:
     - 예상 결과물 초안
     """
     
-    def __init__(self, openai_api_key: Optional[str] = None):
+    def __init__(self, gemini_api_key: Optional[str] = None):
         """
         Args:
-            openai_api_key: OpenAI API 키 (없으면 환경변수에서 로드)
+            gemini_api_key: Gemini API 키 (없으면 환경변수에서 로드)
         """
-        self.api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
-        if HAS_OPENAI and self.api_key:
+        self.gemini_service = None
+        if HAS_GEMINI:
             try:
-                # AsyncOpenAI 클라이언트 사용 (v1.0+)
-                self.client = AsyncOpenAI(api_key=self.api_key)
-            except NameError:
-                # 구버전 호환성 유지
-                openai.api_key = self.api_key
-                self.client = None
+                self.gemini_service = GeminiService(api_key=gemini_api_key)
+            except Exception as e:
+                logger.warning(f"Failed to initialize Gemini service: {e}")
     
-    SYSTEM_PROMPT = """You are an expert workflow analyst. 
+    async def close(self):
+        """리소스 정리"""
+        if self.gemini_service and hasattr(self.gemini_service, 'close'):
+            await self.gemini_service.close()
+    
+    async def __aenter__(self):
+        """컨텍스트 매니저 진입"""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """컨텍스트 매니저 종료 - 리소스 정리"""
+        await self.close()
+    
+    SYSTEM_INSTRUCTION = """You are an expert workflow analyst. 
 Your job is to analyze a workflow configuration and predict:
 1. The exact execution order of nodes
 2. What each node will do with the given inputs
@@ -123,13 +132,13 @@ If the workflow is in Korean, respond in Korean. If in English, respond in Engli
         workflow_id = workflow_config.get('id', 'unknown')
         workflow_name = workflow_config.get('name', 'Unnamed Workflow')
         
-        if use_llm and HAS_OPENAI and self.api_key:
+        if use_llm and HAS_GEMINI and self.gemini_service:
             try:
                 return await self._generate_with_llm(
                     workflow_config, initial_statebag, user_context
                 )
             except Exception as e:
-                logger.warning(f"LLM briefing generation failed, falling back to rule-based: {e}")
+                logger.warning(f"Gemini briefing generation failed, falling back to rule-based: {e}")
         
         # 규칙 기반 브리핑 생성 (폴백 또는 LLM 비활성화 시)
         return self._generate_rule_based(
@@ -142,7 +151,7 @@ If the workflow is in Korean, respond in Korean. If in English, respond in Engli
         initial_statebag: Dict[str, Any],
         user_context: Optional[Dict[str, Any]]
     ) -> PlanBriefing:
-        """LLM을 사용한 상세 브리핑 생성"""
+        """Gemini를 사용한 상세 브리핑 생성"""
         
         analysis_prompt = self._build_analysis_prompt(
             workflow_config.get('nodes', []),
@@ -151,32 +160,23 @@ If the workflow is in Korean, respond in Korean. If in English, respond in Engli
             user_context
         )
         
-        if hasattr(self, 'client') and self.client:
-            # AsyncOpenAI 클라이언트 사용 (v1.0+)
-            response = await self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": analysis_prompt}
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=2000,
-                temperature=0.3  # 일관된 분석을 위해 낮은 temperature
-            )
-        else:
-            # 구버전 호환성 유지
-            response = await openai.ChatCompletion.acreate(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": analysis_prompt}
-                ],
-                response_format={"type": "json_object"},
-                max_tokens=2000,
-                temperature=0.3  # 일관된 분석을 위해 낮은 temperature
-            )
+        # Gemini 설정
+        config = GeminiConfig(
+            model=GeminiModel.GEMINI_2_0_FLASH,
+            max_output_tokens=4096,
+            temperature=0.3,  # 일관된 분석을 위해 낮은 temperature
+            response_mime_type="application/json",
+            system_instruction=self.SYSTEM_INSTRUCTION,
+            enable_thinking=False  # 빠른 응답을 위해 thinking 모드 비활성화
+        )
         
-        analysis = json.loads(response.choices[0].message.content)
+        # Gemini API 호출
+        response_text = await self.gemini_service.generate_content(
+            prompt=analysis_prompt,
+            config=config
+        )
+        
+        analysis = json.loads(response_text)
         
         return self._build_briefing_from_analysis(workflow_config, analysis)
 

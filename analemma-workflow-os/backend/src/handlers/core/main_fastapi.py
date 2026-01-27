@@ -350,13 +350,13 @@ async def preview_workflow(req: PreviewRequest):
         "confirmation_token": "uuid"
     }
     """
-    service = PlanBriefingService()
-    briefing = await service.generate_briefing(
-        workflow_config=req.workflow_config,
-        initial_statebag=req.initial_statebag,
-        user_context=req.user_context,
-        use_llm=req.use_llm
-    )
+    async with PlanBriefingService() as service:
+        briefing = await service.generate_briefing(
+            workflow_config=req.workflow_config,
+            initial_statebag=req.initial_statebag,
+            user_context=req.user_context,
+            use_llm=req.use_llm
+        )
     
     return briefing.dict()
 
