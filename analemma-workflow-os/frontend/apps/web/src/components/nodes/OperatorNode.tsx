@@ -1,5 +1,7 @@
 import { Handle, Position } from '@xyflow/react';
 import {
+  Globe,
+  Database,
   X,
   CheckCircle2,
   AlertCircle,
@@ -11,6 +13,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { OPERATOR_CONFIG, type OperatorType } from '@/lib/nodeConstants';
+
+// Icon name to component mapping
+const ICON_MAP = {
+  Globe,
+  Database,
+  CheckCircle2,
+  AlertCircle,
+  Loader2
+} as const;
 
 interface OperatorNodeProps {
   data: {
@@ -30,7 +41,7 @@ interface OperatorNodeProps {
 export const OperatorNode = ({ data, id, onDelete, selected }: OperatorNodeProps) => {
   const config = OPERATOR_CONFIG[data.operatorType as keyof typeof OPERATOR_CONFIG] || OPERATOR_CONFIG.default;
   const status = data.status || 'idle';
-  const Icon = config.icon;
+  const Icon = ICON_MAP[config.iconName as keyof typeof ICON_MAP] || Globe;
 
   const statusIcons = {
     running: <Loader2 className="w-3 h-3 animate-spin" />,

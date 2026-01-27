@@ -1,10 +1,17 @@
 import { Handle, Position } from '@xyflow/react';
-import { X, Play } from 'lucide-react';
+import { Clock, Webhook, Zap, X, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { TRIGGER_CONFIG, type TriggerType } from '@/lib/nodeConstants';
+
+// Icon name to component mapping
+const ICON_MAP = {
+  Clock,
+  Webhook,
+  Zap
+} as const;
 
 interface TriggerNodeProps {
   data: {
@@ -20,7 +27,7 @@ interface TriggerNodeProps {
 
 export const TriggerNode = ({ data, id, onDelete, selected }: TriggerNodeProps) => {
   const config = TRIGGER_CONFIG[data.triggerType || 'default'] || TRIGGER_CONFIG.default;
-  const Icon = config.icon;
+  const Icon = ICON_MAP[config.iconName as keyof typeof ICON_MAP] || Zap;
 
   return (
     <div
