@@ -547,26 +547,28 @@ const WorkflowCanvasInner = () => {
               )}
             </AnimatePresence>
 
-            {/* Status Indicator using graphAnalysis */}
+            {/* Status Indicator using graphAnalysis - Opens Audit Panel */}
             {nodes.length > 0 && (
-              <WorkflowStatusIndicator
-                issueCount={validation.issueCount}
-                hasErrors={validation.hasErrors}
-                hasWarnings={validation.hasWarnings}
-                warnings={validation.warnings}
-                onNodeClick={(nodeId) => {
-                  const node = nodes.find(n => n.id === nodeId);
-                  if (node && reactFlowInstance) {
-                    reactFlowInstance.fitView({
-                      nodes: [node],
-                      duration: 400,
-                      padding: 0.5
-                    });
-                    setSelectedNode(node);
-                    setEditorOpen(true);
-                  }
-                }}
-              />
+              <div onClick={() => setAuditPanelOpen(true)} className="cursor-pointer">
+                <WorkflowStatusIndicator
+                  issueCount={validation.issueCount}
+                  hasErrors={validation.hasErrors}
+                  hasWarnings={validation.hasWarnings}
+                  warnings={validation.warnings}
+                  onNodeClick={(nodeId) => {
+                    const node = nodes.find(n => n.id === nodeId);
+                    if (node && reactFlowInstance) {
+                      reactFlowInstance.fitView({
+                        nodes: [node],
+                        duration: 400,
+                        padding: 0.5
+                      });
+                      setSelectedNode(node);
+                      setEditorOpen(true);
+                    }
+                  }}
+                />
+              </div>
             )}
           </div>
 
@@ -647,41 +649,7 @@ const WorkflowCanvasInner = () => {
         <SuggestionOverlay />
       </div>
 
-      {/* Audit Toggle Button */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setAuditPanelOpen(!auditPanelOpen)}
-            className={cn(
-              "fixed top-1/2 right-6 -translate-y-1/2 z-30 h-12 w-12 rounded-xl border-2 transition-all shadow-lg",
-              auditPanelOpen ? "bg-slate-800 border-blue-400 text-blue-400" : "bg-slate-900/80 border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-600",
-              issueSummary.errors > 0 && !auditPanelOpen && "border-red-500/50 text-red-400 animate-pulse"
-            )}
-          >
-            <div className="relative">
-              <Layers className="w-5 h-5" />
-              {issueSummary.total > 0 && (
-                <span className={cn(
-                  "absolute -top-2 -right-2 min-w-[18px] h-[18px] rounded-full text-[10px] font-bold flex items-center justify-center",
-                  issueSummary.errors > 0 ? "bg-red-500 text-white" : "bg-blue-500 text-white"
-                )}>
-                  {issueSummary.total}
-                </span>
-              )}
-            </div>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="left" className="bg-slate-900 border-slate-800">
-          <p className="font-semibold">Workflow Validation</p>
-          <p className="text-xs text-slate-400">
-            {issueSummary.total === 0 ? "No issues" : `${issueSummary.errors} errors, ${issueSummary.warnings} warnings`}
-          </p>
-        </TooltipContent>
-      </Tooltip>
-
-      {/* Audit Panel Sidebar */}
+      {/* Audit Panel Sidebar - Triggered by Status Indicator */}
       <AnimatePresence>
         {auditPanelOpen && (
           <motion.div
