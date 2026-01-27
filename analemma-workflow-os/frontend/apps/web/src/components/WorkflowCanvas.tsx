@@ -57,20 +57,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const nodeTypes: NodeTypes = {
-  aiModel: AIModelNode,
-  operator: OperatorNode,
-  trigger: TriggerNode,
-  control: ControlNode,
-  group: GroupNode,
-};
-
-const edgeTypes = {
-  smart: SmartEdge,
-};
-
 const WorkflowCanvasInner = () => {
-  // 1. Store 최적화: nodes/edges만 shallow 비교로 구독
+  // Define node and edge types inside component to prevent hoisting issues
+  const nodeTypes: NodeTypes = useMemo(() => ({
+    aiModel: AIModelNode,
+    operator: OperatorNode,
+    trigger: TriggerNode,
+    control: ControlNode,
+    group: GroupNode,
+  }), []);
+
+  const edgeTypes = useMemo(() => ({
+    smart: SmartEdge,
+  }), []);
+
+  // 1. Store optimization: Subscribe to nodes/edges with shallow comparison
   const { nodes, edges, subgraphs, navigationPath } = useWorkflowStore(
     useShallow((state) => ({
       nodes: state.nodes,
