@@ -323,13 +323,22 @@ export const useCodesignStore = create<CodesignState>((set, get) => ({
       };
 
       const result = await callCoDesignAssistantSync('audit', body, authToken);
-      if (result.issues) {
+      console.log('Audit API response:', result);
+      
+      if (result && result.issues && Array.isArray(result.issues)) {
         get().setAuditIssues(result.issues);
+      } else if (result && Array.isArray(result)) {
+        // 응답이 배열 자체인 경우
+        get().setAuditIssues(result);
+      } else {
+        console.error('Unexpected audit response format:', result);
+        get().setAuditIssues([]);
       }
       set({ syncStatus: 'idle', lastSyncTime: Date.now() });
     } catch (error) {
       console.error('Audit request failed:', error);
       set({ syncStatus: 'error' });
+      get().setAuditIssues([]);
     }
   },
 
