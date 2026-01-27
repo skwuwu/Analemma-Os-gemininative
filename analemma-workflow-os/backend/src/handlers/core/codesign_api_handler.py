@@ -518,6 +518,9 @@ def _generate_initial_workflow_stream(user_request: str, owner_id: str, session_
 
 async def handle_codesign_stream(owner_id: str, event: Dict):
     """협업 워크플로우 설계 스트리밍 (Canvas 상태에 따른 자동 모드 전환)"""
+    # Initialize generator early to avoid UnboundLocalError
+    generator = None
+    
     body, error = _parse_body(event)
     if error:
         yield json.dumps(_response(400, {'error': error})['body'], ensure_ascii=False) + "\n"
@@ -586,7 +589,7 @@ async def handle_codesign_stream(owner_id: str, event: Dict):
             )
             logger.info(f"Using model for Co-design: {selected_model_id}")
             
-            generator = await stream_codesign_response(
+            generator = stream_codesign_response(
                 user_request=user_request,
                 current_workflow=current_workflow,
                 recent_changes=recent_changes,
@@ -858,6 +861,9 @@ async def _lambda_handler_streaming_async(event, response_stream, context):
             recent_changes = body.get('recent_changes', [])
             session_id = body.get('session_id') or _generate_session_id(owner_id)
             
+            # Initialize generator early to avoid UnboundLocalError
+            generator = None
+            
             nodes = current_workflow.get('nodes', [])
             edges = current_workflow.get('edges', [])
             is_physically_empty = len(nodes) == 0 and len(edges) == 0
@@ -874,7 +880,7 @@ async def _lambda_handler_streaming_async(event, response_stream, context):
                     session_id=session_id
                 )
             else:
-                generator = await stream_codesign_response(
+                generator = stream_codesign_response(
                     user_request=user_request,
                     current_workflow=current_workflow,
                     recent_changes=recent_changes,
