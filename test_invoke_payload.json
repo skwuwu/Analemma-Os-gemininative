@@ -1,7 +1,0 @@
-{
-  "httpMethod": "POST",
-  "headers": {
-    "Authorization": "Bearer eyJraWQiOiJ0ZXN0Iiwic3ViIjoidGVzdC11c2VyLTEyMyJ9.eyJzdWIiOiJ0ZXN0LXVzZXItMTIzIn0.test"
-  },
-  "body": "{\"workflow_id\":\"test-123\",\"workflow\":{\"name\":\"Test\",\"states\":[]}}"
-}
