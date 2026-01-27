@@ -11,7 +11,6 @@ import {
   useReactFlow,
   useOnSelectionChange,
   SelectionMode,
-  OnSelectionChangeParams,
   NodeChange,
   EdgeChange,
 } from '@xyflow/react';
@@ -146,12 +145,21 @@ const WorkflowCanvasInner = () => {
     setSelectedNodeId,
   } = useWorkflowStore();
 
+  // Handle selection changes for both single and multi-node selection
   useOnSelectionChange({
     onChange: ({ nodes }) => {
-      if (nodes.length > 0) {
+      // Update selectedNodes state for grouping functionality
+      setSelectedNodes(nodes);
+      
+      // Update store for single node selection (property panel)
+      if (nodes.length === 1) {
         setSelectedNodeId(nodes[0].id);
-      } else {
+      } else if (nodes.length === 0) {
         setSelectedNodeId(null);
+      }
+      // For multi-selection, keep the first node as active in property panel
+      else if (nodes.length > 1) {
+        setSelectedNodeId(nodes[0].id);
       }
     },
   });
@@ -263,17 +271,12 @@ const WorkflowCanvasInner = () => {
     },
   });
 
-  // Handle multi-selection changes
-  const onSelectionChange = useCallback((params: OnSelectionChangeParams) => {
-    setSelectedNodes(params.nodes);
-  }, []);
-
   const handleGroupConfirm = useCallback((groupName: string) => {
     const nodeIds = selectedNodes.map(n => n.id);
     groupNodes(nodeIds, groupName);
     setGroupDialogOpen(false);
     setSelectedNodes([]);
-    toast.success(`${nodeIds.length}개 노드가 "${groupName}"으로 그룹화됨`);
+    // toast.success는 이제 groupNodes 내부에서 처리됨
   }, [selectedNodes, groupNodes]);
 
   const onDrop = useCallback(
@@ -480,13 +483,14 @@ const WorkflowCanvasInner = () => {
       <div className="h-full w-full relative flex overflow-hidden bg-[#121212]">
         {/* Main Canvas Area */}
         <div className="flex-1 relative" onDrop={onDrop} onDragOver={onDragOver}>
-          {canvasMode.isEmpty && emptyGuideVisible && (
+          {/* EmptyCanvasGuide 비활성화됨 */}
+          {/* {canvasMode.isEmpty && emptyGuideVisible && (
             <EmptyCanvasGuide
               onQuickStart={handleQuickStart}
               onClose={() => setEmptyGuideVisible(false)}
               className="absolute inset-0 z-10 bg-background/95 backdrop-blur-sm"
             />
-          )}
+          )} */}
 
           {/* Contextual Toolbar */}
           <div className="absolute top-4 right-4 z-10 flex gap-2">
@@ -580,7 +584,6 @@ const WorkflowCanvasInner = () => {
             onNodeClick={onNodeClick}
             onNodeDoubleClick={onNodeDoubleClick}
             onInit={setReactFlowInstance}
-            onSelectionChange={onSelectionChange}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             fitView

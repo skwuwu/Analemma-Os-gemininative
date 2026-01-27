@@ -186,7 +186,10 @@ export const useWorkflowStore = create<WorkflowState>()(
         const state = get();
         const nodesToGroup = state.nodes.filter((n) => nodeIds.includes(n.id));
 
-        if (nodesToGroup.length < 2) return;
+        if (nodesToGroup.length < 2) {
+          toast.error('서브그래프 생성 실패: 최소 2개 이상의 노드가 필요합니다');
+          return;
+        }
 
         // 그룹화할 노드들 간의 내부 엣지 찾기
         const internalEdges = state.edges.filter(
@@ -198,6 +201,110 @@ export const useWorkflowStore = create<WorkflowState>()(
           (e) => (nodeIds.includes(e.source) && !nodeIds.includes(e.target)) ||
             (!nodeIds.includes(e.source) && nodeIds.includes(e.target))
         );
+
+        // ═══════════════════════════════════════════════════════════════
+        // 서브그래프 검증 로직
+        // ═══════════════════════════════════════════════════════════════
+        
+        // 1. 진입 엣지 검증 (외부 → 서브그래프)
+        const entryEdges = externalEdges.filter(
+          (e) => !nodeIds.includes(e.source) && nodeIds.includes(e.target)
+        );
+        
+        // 2. 탈출 엣지 검증 (서브그래프 → 외부)
+        const exitEdges = externalEdges.filter(
+          (e) => nodeIds.includes(e.source) && !nodeIds.includes(e.target)
+        );
+
+        // 3. 진입점이 정확히 1개인지 검증
+        if (entryEdges.length === 0) {
+          toast.error('서브그래프 생성 실패: 외부에서 들어오는 진입 엣지가 없습니다');
+          return;
+        }
+        if (entryEdges.length > 1) {
+          toast.error(`서브그래프 생성 실패: 진입 엣지는 1개여야 하지만 ${entryEdges.length}개 발견됨`);
+          return;
+        }
+
+        // 4. 탈출점이 정확히 1개인지 검증
+        if (exitEdges.length === 0) {
+          toast.error('서브그래프 생성 실패: 외부로 나가는 탈출 엣지가 없습니다');
+          return;
+        }
+        if (exitEdges.length > 1) {
+          toast.error(`서브그래프 생성 실패: 탈출 엣지는 1개여야 하지만 ${exitEdges.length}개 발견됨`);
+          return;
+        }
+
+        // 5. 진입 노드와 탈출 노드 식별
+        const entryNodeId = entryEdges[0].target;
+        const exitNodeId = exitEdges[0].source;
+
+        // 6. 진입 노드와 탈출 노드가 다른지 검증 (단일 노드 서브그래프 방지)
+        if (entryNodeId === exitNodeId && nodesToGroup.length === 1) {
+          toast.error('서브그래프 생성 실패: 단일 노드는 진입/탈출 노드가 동일할 수 없습니다');
+          return;
+        }
+
+        // 7. 내부 연결성 검증 (모든 노드가 연결되어 있는지)
+        const connectedNodes = new Set<string>();
+        const queue = [entryNodeId];
+        connectedNodes.add(entryNodeId);
+
+        while (queue.length > 0) {
+          const current = queue.shift()!;
+          const outgoingEdges = internalEdges.filter(e => e.source === current);
+          
+          for (const edge of outgoingEdges) {
+            if (!connectedNodes.has(edge.target) && nodeIds.includes(edge.target)) {
+              connectedNodes.add(edge.target);
+              queue.push(edge.target);
+            }
+          }
+        }
+
+        const disconnectedNodes = nodesToGroup.filter(n => !connectedNodes.has(n.id));
+        if (disconnectedNodes.length > 0) {
+          toast.error(`서브그래프 생성 실패: ${disconnectedNodes.length}개 노드가 진입점에서 도달 불가능합니다`);
+          return;
+        }
+
+        // 8. 순환 참조 검증 (내부에 사이클이 있는지)
+        const hasCycle = () => {
+          const visited = new Set<string>();
+          const recStack = new Set<string>();
+
+          const detectCycle = (nodeId: string): boolean => {
+            visited.add(nodeId);
+            recStack.add(nodeId);
+
+            const outgoingEdges = internalEdges.filter(e => e.source === nodeId);
+            for (const edge of outgoingEdges) {
+              if (!visited.has(edge.target)) {
+                if (detectCycle(edge.target)) return true;
+              } else if (recStack.has(edge.target)) {
+                return true;
+              }
+            }
+
+            recStack.delete(nodeId);
+            return false;
+          };
+
+          return detectCycle(entryNodeId);
+        };
+
+        if (hasCycle()) {
+          toast.warning('경고: 서브그래프 내부에 순환 참조가 감지되었습니다. 실행 시 무한 루프가 발생할 수 있습니다');
+          // 경고만 표시하고 계속 진행 (일부 워크플로우는 의도적으로 루프를 사용할 수 있음)
+        }
+
+        // 9. 그룹 노드 타입 검증 (이미 그룹 노드는 중첩 불가)
+        const hasGroupNode = nodesToGroup.some(n => n.type === 'group');
+        if (hasGroupNode) {
+          toast.error('서브그래프 생성 실패: 서브그래프를 중첩할 수 없습니다');
+          return;
+        }
 
         // 그룹 노드의 위치 계산 (묶인 노드들의 중심점)
         const avgX = nodesToGroup.reduce((sum, n) => sum + n.position.x, 0) / nodesToGroup.length;
@@ -257,6 +364,14 @@ export const useWorkflowStore = create<WorkflowState>()(
             [subgraphId]: subgraph,
           },
         });
+
+        // 성공 메시지 (진입/탈출 노드 정보 포함)
+        const entryNode = nodesToGroup.find(n => n.id === entryNodeId);
+        const exitNode = nodesToGroup.find(n => n.id === exitNodeId);
+        toast.success(
+          `서브그래프 "${groupName}" 생성 완료\n` +
+          `진입: ${entryNode?.data?.label || entryNodeId} → 탈출: ${exitNode?.data?.label || exitNodeId}`
+        );
       },
 
       // 그룹 노드를 해제하여 개별 노드로 복원
