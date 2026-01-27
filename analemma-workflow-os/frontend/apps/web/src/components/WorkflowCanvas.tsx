@@ -55,7 +55,7 @@ import type { TimelineItem, RollbackRequest } from '@/lib/types';
 import { createWorkflowNode, generateNodeId } from '@/lib/nodeFactory';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const WorkflowCanvasInner = () => {
   // ==========================================
