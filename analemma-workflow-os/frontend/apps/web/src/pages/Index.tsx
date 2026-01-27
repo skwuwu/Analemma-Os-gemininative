@@ -5,6 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { WorkflowCanvas } from '@/components/WorkflowCanvas.tsx';
 import { BlockLibrary } from '@/components/BlockLibrary.tsx';
 import { SavedWorkflows } from '@/components/SavedWorkflows.tsx';
+import { WorkflowChat } from '@/components/WorkflowChat';
 import { ActiveWorkflowIndicator } from '@/components/ActiveWorkflowIndicator.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Badge } from '@/components/ui/badge';
@@ -244,12 +245,20 @@ const Index = ({ signOut }: IndexProps) => {
             <WorkflowCanvas />
           </div>
 
-          {/* Right: SavedWorkflows (includes CRUD & AI Chat) */}
+          {/* Right: CRUD Operations (60%) + AI Chat (40%) */}
           <div className="w-[350px] flex-shrink-0 border-l border-border flex flex-col bg-background z-10">
-            <SavedWorkflows
-              currentWorkflow={currentWorkflow}
-              onLoadWorkflow={handleLoadWorkflow}
-            />
+            {/* Top: Saved Workflows CRUD */}
+            <div className="h-[60%] border-b border-border overflow-hidden">
+              <SavedWorkflows
+                currentWorkflow={currentWorkflow}
+                onLoadWorkflow={handleLoadWorkflow}
+              />
+            </div>
+            
+            {/* Bottom: AI Codesigner Chat */}
+            <div className="h-[40%] overflow-hidden">
+              <WorkflowChat />
+            </div>
           </div>
         </div>
       </div>

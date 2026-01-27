@@ -2,7 +2,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { FileJson, Trash2, Play, Loader2, Eye, ChevronRight, Activity, Upload, X, Image, Film, FileText } from 'lucide-react';
 import { toast } from 'sonner';
-import { WorkflowChat } from './WorkflowChat';
 import { CloneInstructionsDialog } from './CloneInstructionsDialog';
 import { useWorkflowStore } from '@/lib/workflowStore';
 import { useWorkflowApi } from '@/hooks/useWorkflowApi';
@@ -447,10 +446,6 @@ export const SavedWorkflows = ({
           </ScrollArea>
         </div>
       )}
-
-
-
-      <div className="h-64 border-t border-border"><WorkflowChat onWorkflowUpdate={onLoadWorkflow} /></div>
 
       {/* 1. Preview Dialog (새로 추가됨) */}
       <AlertDialog open={showPreviewDialog} onOpenChange={setShowPreviewDialog}>
