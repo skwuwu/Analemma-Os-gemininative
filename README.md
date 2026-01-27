@@ -243,7 +243,55 @@ sam build && sam deploy --guided
 
 ---
 
-## 📚 Documentation
+## � UI Response Debugging
+
+When UI doesn't display responses despite successful backend processing, use the built-in response logging to verify backend functionality:
+
+### CloudWatch Logs (Production)
+The system automatically logs detailed response analysis to CloudWatch:
+
+```
+INFO: Streaming response generated: 12 chunks, 2456 bytes, nodes=5, edges=4, errors=0, status=3
+INFO: [abc12345] Chunk #1: type=status, size=45 bytes
+INFO: [abc12345] Node: id=node_1, type=llm
+INFO: [abc12345] Edge: node_1 -> node_2
+INFO: [abc12345] Streaming completed: 12 chunks, nodes=5, edges=4, errors=0
+```
+
+### Browser Developer Tools (Production)
+Check response headers in browser Network tab:
+
+```
+X-Debug-Chunk-Count: 12
+X-Debug-Node-Count: 5
+X-Debug-Edge-Count: 4
+X-Debug-Error-Count: 0
+X-Payload-Size: 2456
+X-Payload-Truncated: false
+```
+
+### Debug Response Files (Development Only)
+When `DEBUG_MODE=true`, response files are saved locally:
+
+```bash
+# Check recent debug files
+ls -la backend/debug_responses/
+
+# View response content
+cat backend/debug_responses/response_[session_id]_[timestamp].jsonl
+```
+
+### Log Analysis
+- **Chunk Count**: Total number of JSONL chunks generated
+- **Content Types**: Breakdown of nodes, edges, status messages, errors
+- **Response Size**: Payload size for performance analysis
+- **Truncation**: Whether response was cut off due to size limits
+
+This ensures you can always verify backend correctness even when UI display issues occur.
+
+---
+
+## �📚 Documentation
 
 | Document | Description |
 |----------|-------------|

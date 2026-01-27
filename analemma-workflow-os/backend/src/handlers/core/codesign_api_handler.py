@@ -16,6 +16,7 @@ import logging
 import os
 import asyncio
 import uuid
+import time
 from typing import Dict, Any, Optional, Generator, Callable, AsyncGenerator
 from functools import wraps
 
@@ -44,7 +45,7 @@ try:
     # 시스템 프롬프트 (prompts.py에서 import)
     from src.services.design.prompts import SYSTEM_PROMPT
     # 모델 라우터 및 인증
-    from src.common.model_router import get_model_for_canvas_mode
+    from src.common.model_router import select_optimal_model
     from src.common.auth_utils import extract_owner_id_from_event
     _IMPORTS_OK = True
 except ImportError as e:
@@ -308,9 +309,24 @@ def _streaming_response(generator: Generator[str, None, None]) -> Dict:
     total_size = 0
     truncated = False
     
+    # Add initial status message to indicate streaming has started
+    chunks.append(json.dumps({"type": "status", "data": "started"}) + "\n")
+    total_size += len(chunks[0].encode('utf-8'))
+    
     try:
         for chunk in generator:
-            chunk_size = len(chunk.encode('utf-8'))
+            # Validate JSON before adding to response
+            try:
+                # Remove trailing newline and parse JSON
+                json_str = chunk.rstrip('\n')
+                json.loads(json_str)  # Validate JSON
+                validated_chunk = json_str + "\n"
+            except json.JSONDecodeError as json_error:
+                logger.error(f"Invalid JSON chunk: {chunk[:100]}... Error: {json_error}")
+                # Skip invalid chunks instead of breaking the stream
+                continue
+            
+            chunk_size = len(validated_chunk.encode('utf-8'))
             
             # 페이로드 크기 체크
             if total_size + chunk_size > HARD_LIMIT:
@@ -326,7 +342,7 @@ def _streaming_response(generator: Generator[str, None, None]) -> Dict:
             if total_size > MAX_PAYLOAD_SIZE:
                 logger.warning(f"Payload exceeded 5MB: {total_size / 1024 / 1024:.2f}MB")
             
-            chunks.append(chunk)
+            chunks.append(validated_chunk)
             total_size += chunk_size
             
     except Exception as e:
@@ -341,6 +357,54 @@ def _streaming_response(generator: Generator[str, None, None]) -> Dict:
     
     response_body = ''.join(chunks)
     
+    # Debug logging for response analysis (Production-ready)
+    debug_info = {}
+    try:
+        chunk_lines = [line for line in response_body.split('\n') if line.strip()]
+        chunk_count = len(chunk_lines)
+        response_size = len(response_body)
+        
+        # Analyze response content
+        node_count = sum(1 for line in chunk_lines if '"type": "node"' in line)
+        edge_count = sum(1 for line in chunk_lines if '"type": "edge"' in line)
+        error_count = sum(1 for line in chunk_lines if '"type": "error"' in line)
+        status_count = sum(1 for line in chunk_lines if '"type": "status"' in line)
+        
+        debug_info = {
+            "chunk_count": chunk_count,
+            "response_size_bytes": response_size,
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "error_count": error_count,
+            "status_count": status_count,
+            "truncated": truncated
+        }
+        
+        # CloudWatch logging (production)
+        logger.info(f"Streaming response generated: {chunk_count} chunks, {response_size} bytes, "
+                   f"nodes={node_count}, edges={edge_count}, errors={error_count}, status={status_count}")
+        
+        # Save debug response file (development only)
+        if os.getenv("DEBUG_MODE", "false").lower() == "true":
+            try:
+                debug_dir = os.path.join(os.getcwd(), 'debug_responses')
+                os.makedirs(debug_dir, exist_ok=True)
+                
+                debug_file = os.path.join(debug_dir, f'fallback_response_{int(time.time())}.jsonl')
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(response_body)
+                
+                logger.info(f"Debug response saved to: {debug_file}")
+                
+            except Exception as save_error:
+                logger.warning(f"Failed to save debug response: {save_error}")
+        
+        if truncated:
+            logger.warning("Response was truncated due to payload size limits")
+            
+    except Exception as log_error:
+        logger.warning(f"Failed to analyze response: {log_error}")
+    
     return {
         'statusCode': 200,
         'headers': {
@@ -349,7 +413,12 @@ def _streaming_response(generator: Generator[str, None, None]) -> Dict:
             'Access-Control-Allow-Headers': 'Content-Type,Authorization',
             'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
             'X-Payload-Truncated': 'true' if truncated else 'false',
-            'X-Payload-Size': str(total_size),
+            'X-Payload-Size': str(len(response_body)),
+            # Add debug info to headers for browser inspection
+            'X-Debug-Chunk-Count': str(debug_info.get('chunk_count', 0)),
+            'X-Debug-Node-Count': str(debug_info.get('node_count', 0)),
+            'X-Debug-Edge-Count': str(debug_info.get('edge_count', 0)),
+            'X-Debug-Error-Count': str(debug_info.get('error_count', 0)),
         },
         'body': response_body
     }
@@ -416,7 +485,7 @@ async def _lambda_handler_async(event, context):
                 chunks = []
                 async for chunk in handle_codesign_stream(owner_id, event):
                     chunks.append(chunk)
-                # Return all chunks concatenated
+                # Return all chunks as array - each chunk is a JSON string
                 return _response(200, {'chunks': chunks})
             else:
                 return _response(405, {'error': f'Method {http_method} not allowed'})
@@ -509,11 +578,13 @@ async def _generate_initial_workflow_stream(user_request: str, owner_id: str, se
                 from src.services.llm.gemini_service import GeminiService, GeminiConfig, GeminiModel
                 
                 # GeminiModel enum 매핑
-                gemini_model = GeminiModel.FLASH  # 기본값
+                gemini_model = GeminiModel.GEMINI_1_5_FLASH  # 기본값
                 if "pro" in selected_model_id.lower():
-                    gemini_model = GeminiModel.PRO
+                    gemini_model = GeminiModel.GEMINI_1_5_PRO
                 elif "8b" in selected_model_id.lower():
-                    gemini_model = GeminiModel.FLASH_8B
+                    gemini_model = GeminiModel.GEMINI_1_5_FLASH_8B
+                elif "2.0" in selected_model_id.lower():
+                    gemini_model = GeminiModel.GEMINI_2_0_FLASH
                 
                 config = GeminiConfig(model=gemini_model, temperature=0.1, max_output_tokens=4096)
                 service = GeminiService(config=config)
@@ -597,9 +668,7 @@ async def handle_codesign_stream(owner_id: str, event: Dict):
                    f"changes={len(recent_changes)}, mode={canvas_mode}")
         
         if canvas_mode == "agentic-designer":
-            # [Refactor] Send mode metadata first
-            yield json.dumps({"type": "metadata", "data": {"mode": canvas_mode}}) + "\n"
-            
+            # Removed metadata message to fix UI display issues
             logger.info(f"Empty canvas detected - switching to Agentic Designer mode")
             generator = _generate_initial_workflow_stream(
                 user_request=user_request,
@@ -607,33 +676,105 @@ async def handle_codesign_stream(owner_id: str, event: Dict):
                 session_id=session_id
             )
         else:
-            # [Refactor] Send mode metadata first
-            yield json.dumps({"type": "metadata", "data": {"mode": canvas_mode}}) + "\n"
-            
+            # Removed metadata message to fix UI display issues
             logger.info(f"Using Co-design mode (canvas_mode={canvas_mode})")
             
             # Co-design 모드용 모델 선택
-            selected_model_id = get_model_for_canvas_mode(
-                canvas_mode="co-design",
-                current_workflow=current_workflow,
-                user_request=user_request,
-                recent_changes=recent_changes
-            )
-            logger.info(f"Using model for Co-design: {selected_model_id}")
+            try:
+                from src.common.model_router import select_optimal_model
+                selected_model_config = select_optimal_model(
+                    canvas_mode="co-design",
+                    current_workflow=current_workflow,
+                    user_request=user_request,
+                    recent_changes=recent_changes
+                )
+                selected_model_id = selected_model_config.model_id
+                logger.info(f"Using model for Co-design: {selected_model_id}")
+            except Exception as e:
+                logger.error(f"Failed to select model for Co-design: {e}")
+                selected_model_id = "gemini-1.5-flash"  # fallback
+                logger.info(f"Using fallback model: {selected_model_id}")
             
-            generator = stream_codesign_response(
-                user_request=user_request,
-                current_workflow=current_workflow,
-                recent_changes=recent_changes,
-                session_id=session_id,
-                connection_ids=None,  # WebSocket 연결 ID는 별도 처리
-                model_id=selected_model_id
-            )
+            try:
+                generator = stream_codesign_response(
+                    user_request=user_request,
+                    current_workflow=current_workflow,
+                    recent_changes=recent_changes,
+                    session_id=session_id,
+                    connection_ids=None,  # WebSocket 연결 ID는 별도 처리
+                    model_id=selected_model_id
+                )
+                logger.info(f"Created generator for session {session_id[:8]}...")
+            except Exception as e:
+                logger.error(f"Failed to create generator: {e}")
+                yield json.dumps({"type": "error", "data": f"Failed to initialize: {str(e)}"}) + "\n"
+                return
         
         logger.info(f"Started workflow streaming for session {session_id[:8]}...")
+        
+        # Send initial status message
+        yield json.dumps({"type": "status", "data": "started"}) + "\n"
+        
+        # Initialize response logging
+        response_chunks = []
+        chunk_count = 0
+        
         # Stream all responses from generator
         async for chunk in generator:
+            chunk_count += 1
+            response_chunks.append(chunk)
+            
+            # Log each chunk for debugging
+            try:
+                chunk_data = json.loads(chunk.strip())
+                logger.info(f"[{session_id[:8]}] Chunk #{chunk_count}: type={chunk_data.get('type', 'unknown')}, "
+                           f"size={len(chunk)} bytes")
+                
+                # Log node/edge data for debugging
+                if chunk_data.get('type') in ['node', 'edge']:
+                    data = chunk_data.get('data', {})
+                    if chunk_data['type'] == 'node':
+                        logger.info(f"[{session_id[:8]}] Node: id={data.get('id')}, type={data.get('type')}")
+                    elif chunk_data['type'] == 'edge':
+                        logger.info(f"[{session_id[:8]}] Edge: {data.get('source')} -> {data.get('target')}")
+                        
+            except json.JSONDecodeError:
+                logger.warning(f"[{session_id[:8]}] Chunk #{chunk_count}: Invalid JSON: {chunk[:100]}...")
+            
             yield chunk
+        
+        # Final response analysis (CloudWatch)
+        try:
+            response_body = ''.join(response_chunks)
+            chunk_lines = [line for line in response_body.split('\n') if line.strip()]
+            final_chunk_count = len(chunk_lines)
+            
+            # Analyze final response content
+            node_count = sum(1 for line in chunk_lines if '"type": "node"' in line)
+            edge_count = sum(1 for line in chunk_lines if '"type": "edge"' in line)
+            error_count = sum(1 for line in chunk_lines if '"type": "error"' in line)
+            status_count = sum(1 for line in chunk_lines if '"type": "status"' in line)
+            
+            logger.info(f"[{session_id[:8]}] Streaming completed: {final_chunk_count} chunks, "
+                       f"nodes={node_count}, edges={edge_count}, errors={error_count}")
+            
+            # Save complete response for debugging (development only)
+            if os.getenv("DEBUG_MODE", "false").lower() == "true":
+                try:
+                    debug_dir = os.path.join(os.getcwd(), 'debug_responses')
+                    os.makedirs(debug_dir, exist_ok=True)
+                    
+                    debug_file = os.path.join(debug_dir, f'response_{session_id}_{int(time.time())}.jsonl')
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        f.write(response_body)
+                    
+                    logger.info(f"[{session_id[:8]}] Complete response saved to: {debug_file}")
+                    
+                except Exception as save_error:
+                    logger.warning(f"[{session_id[:8]}] Failed to save debug response: {save_error}")
+            
+        except Exception as log_error:
+            logger.warning(f"[{session_id[:8]}] Failed to analyze final response: {log_error}")
         
     except Exception as e:
         logger.error(f"Failed to start workflow streaming: {e}")

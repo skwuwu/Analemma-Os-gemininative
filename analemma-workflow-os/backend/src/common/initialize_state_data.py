@@ -574,7 +574,23 @@ def lambda_handler(event, context):
     # 2. Partition Map Offloading (distributed mode)
     # 🚨 [Critical Fix] Optimize partition_map size in distributed mode
     # Check size FIRST to determine if we need to enter distributed/offloaded mode
-    partition_map_json = json.dumps(partition_map, ensure_ascii=False)
+    if DecimalEncoder:
+        partition_map_json = json.dumps(partition_map, cls=DecimalEncoder, ensure_ascii=False)
+    else:
+        # Fallback: try to convert decimals manually
+        def convert_decimals(obj):
+            if isinstance(obj, dict):
+                return {k: convert_decimals(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_decimals(v) for v in obj]
+            elif hasattr(obj, '__class__') and 'Decimal' in obj.__class__.__name__:
+                return float(obj) if '.' in str(obj) else int(obj)
+            else:
+                return obj
+        
+        converted_map = convert_decimals(partition_map)
+        partition_map_json = json.dumps(converted_map, ensure_ascii=False)
+    
     partition_map_size_kb = len(partition_map_json.encode('utf-8')) / 1024
     
     # Offload if segments > 300 OR payload > 100KB (Safety margin for 256KB limit)
