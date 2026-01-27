@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, useEffect, Fragment } from 'react';
+import { useCallback, useState, useMemo, useEffect, Fragment, lazy, Suspense } from 'react';
 import {
   ReactFlow,
   Background,
@@ -18,12 +18,12 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 import '@xyflow/react/dist/style.css';
 
-// Node components
-import { AIModelNode } from './nodes/AIModelNode';
-import { OperatorNode } from './nodes/OperatorNode';
-import { TriggerNode } from './nodes/TriggerNode';
-import { ControlNode } from './nodes/ControlNode';
-import { GroupNode } from './nodes/GroupNode';
+// Node components - lazy loaded to break circular dependencies and control execution order
+const AIModelNode = lazy(() => import('./nodes/AIModelNode').then(m => ({ default: m.AIModelNode })));
+const OperatorNode = lazy(() => import('./nodes/OperatorNode').then(m => ({ default: m.OperatorNode })));
+const TriggerNode = lazy(() => import('./nodes/TriggerNode').then(m => ({ default: m.TriggerNode })));
+const ControlNode = lazy(() => import('./nodes/ControlNode').then(m => ({ default: m.ControlNode })));
+const GroupNode = lazy(() => import('./nodes/GroupNode').then(m => ({ default: m.GroupNode })));
 import { SmartEdge } from './edges/SmartEdge';
 
 // Dialog/Modal/Panel components - static imports to avoid runtime initialization issues
@@ -64,13 +64,34 @@ import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const WorkflowCanvasInner = () => {
-  // Define node and edge types inside component to prevent hoisting issues
+  // Wrap lazy-loaded nodes with Suspense to control execution order
+  // This prevents "Cannot access X before initialization" errors
   const nodeTypes: NodeTypes = useMemo(() => ({
-    aiModel: AIModelNode,
-    operator: OperatorNode,
-    trigger: TriggerNode,
-    control: ControlNode,
-    group: GroupNode,
+    aiModel: (props: any) => (
+      <Suspense fallback={<div className="p-4 bg-muted/50 animate-pulse rounded-lg border border-border" />}>
+        <AIModelNode {...props} />
+      </Suspense>
+    ),
+    operator: (props: any) => (
+      <Suspense fallback={<div className="p-4 bg-muted/50 animate-pulse rounded-lg border border-border" />}>
+        <OperatorNode {...props} />
+      </Suspense>
+    ),
+    trigger: (props: any) => (
+      <Suspense fallback={<div className="p-4 bg-muted/50 animate-pulse rounded-lg border border-border" />}>
+        <TriggerNode {...props} />
+      </Suspense>
+    ),
+    control: (props: any) => (
+      <Suspense fallback={<div className="p-4 bg-muted/50 animate-pulse rounded-lg border border-border" />}>
+        <ControlNode {...props} />
+      </Suspense>
+    ),
+    group: (props: any) => (
+      <Suspense fallback={<div className="p-4 bg-muted/50 animate-pulse rounded-lg border border-border" />}>
+        <GroupNode {...props} />
+      </Suspense>
+    ),
   }), []);
 
   const edgeTypes = useMemo(() => ({
