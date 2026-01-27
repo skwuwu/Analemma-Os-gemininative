@@ -591,17 +591,17 @@ export const SavedWorkflows = ({
             </div>
             <div>
               <label className="text-sm font-semibold mb-2 block">Initial Prompt</label>
-              <Textarea placeholder='e.g. "내 구글 드라이브 요약해줘"' value={initialStateText} onChange={(e) => setInitialStateText(e.target.value)} className="min-h-[120px] w-full text-sm" />
+              <Textarea placeholder='e.g. "Summarize my Google Drive documents"' value={initialStateText} onChange={(e) => setInitialStateText(e.target.value)} className="min-h-[120px] w-full text-sm" />
             </div>
 
-            {/* 📁 미디어 업로드 섹션 */}
+            {/* 📁 Media Upload Section */}
             <div className="border-t pt-4">
               <label className="text-sm font-semibold mb-2 block">📁 Media Attachments (Optional)</label>
               <p className="text-xs text-muted-foreground mb-3">
-                이미지, 비디오, PDF 파일을 첨부하면 워크플로우에서 분석할 수 있습니다. (최대 {MAX_FILE_SIZE_MB}MB)
+                Attach images, videos, or PDF files for workflow analysis. (Max {MAX_FILE_SIZE_MB}MB)
               </p>
 
-              {/* 업로드 버튼 */}
+              {/* Upload Button */}
               <input
                 type="file"
                 ref={fileInputRef}
@@ -620,17 +620,17 @@ export const SavedWorkflows = ({
                 {isUploading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    업로드 중... {uploadProgress}%
+                    Uploading... {uploadProgress}%
                   </>
                 ) : (
                   <>
                     <Upload className="w-4 h-4 mr-2" />
-                    파일 첨부하기
+                    Attach File
                   </>
                 )}
               </Button>
 
-              {/* 업로드된 파일 목록 */}
+              {/* Uploaded Files List */}
               {uploadedMedia.length > 0 && (
                 <div className="space-y-2">
                   {uploadedMedia.map((media, index) => (
@@ -660,20 +660,6 @@ export const SavedWorkflows = ({
                   ))}
                 </div>
               )}
-            </div>
-
-            <div>
-              <h4 className="text-sm font-semibold mb-2">Supported Test Keywords</h4>
-              <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto">
-                {BUILD_TIME_TEST_KEYWORDS.map((keyword) => (
-                  <div key={keyword} className="flex justify-between items-center p-2 bg-secondary rounded text-sm">
-                    <code className="font-mono text-primary">{keyword}</code>
-                    <span className="text-muted-foreground text-xs ml-2">
-                      {TEST_KEYWORD_DESCRIPTIONS[keyword as keyof typeof TEST_KEYWORD_DESCRIPTIONS] || '테스트 키워드'}
-                    </span>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
           <AlertDialogFooter>
