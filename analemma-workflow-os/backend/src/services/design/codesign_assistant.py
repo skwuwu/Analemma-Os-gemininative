@@ -14,13 +14,14 @@ Gemini Native 통합:
 
 Updated: 2026-01-23 - CI trigger test
 """
+import asyncio
 import json
 import logging
 import os
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Generator, Iterator, List, Optional
+from typing import Any, AsyncGenerator, Dict, Generator, Iterator, List, Optional
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 🚨 [Critical Fix] Import 경로 수정
@@ -778,14 +779,14 @@ Confidence 레벨 분류:
 # 핵심 기능: 스트리밍 응답 생성 (Gemini Native 통합)
 # ──────────────────────────────────────────────────────────────
 
-def stream_codesign_response(
+async def stream_codesign_response(
     user_request: str,
     current_workflow: Dict[str, Any],
     recent_changes: List[Dict[str, Any]] = None,
     session_id: str = None,
     connection_ids: List[str] = None,
     use_gemini_long_context: bool = True
-) -> Generator[str, None, None]:
+) -> AsyncGenerator[str, None]:
     """
     Co-design 스트리밍 응답 생성 (Gemini Native 우선)
     
@@ -820,7 +821,8 @@ def stream_codesign_response(
     
     # Mock 모드 처리
     if _is_mock_mode():
-        yield from _mock_codesign_response(user_request, current_workflow)
+        async for chunk in _mock_codesign_response(user_request, current_workflow):
+            yield chunk
         return
     
     # ──────────────────────────────────────────────────────────
@@ -850,20 +852,22 @@ def stream_codesign_response(
             # ──────────────────────────────────────────────────────
             # Gemini Native 스트리밍 (초장기 컨텍스트 활용)
             # ──────────────────────────────────────────────────────
-            yield from _stream_gemini_codesign(
+            async for chunk in _stream_gemini_codesign(
                 user_request=user_request,
                 context=context,
                 connection_ids=connection_ids
-            )
+            ):
+                yield chunk
         else:
             # ──────────────────────────────────────────────────────
             # Bedrock (Claude) Fallback
             # ──────────────────────────────────────────────────────
-            yield from _stream_bedrock_codesign(
+            async for chunk in _stream_bedrock_codesign(
                 user_request=user_request,
                 context=context,
                 connection_ids=connection_ids
-            )
+            ):
+                yield chunk
             
     except Exception as e:
         logger.exception(f"Codesign streaming error: {e}")
@@ -921,14 +925,14 @@ def stream_codesign_response(
         _broadcast_to_connections(connection_ids, done_obj)
 
 
-def _stream_gemini_codesign(
+async def _stream_gemini_codesign(
     user_request: str,
     context: 'CodesignContext',
     connection_ids: List[str] = None,
     max_self_correction_attempts: int = 2,
     enable_thinking: bool = True,  # Thinking Mode 기본 활성화
     enable_context_caching: bool = True  # Context Caching 활성화
-) -> Generator[str, None, None]:
+) -> AsyncGenerator[str, None]:
     """
     Gemini Native Co-design 스트리밍 (Multi-stage Validation 적용)
     
@@ -1409,11 +1413,11 @@ def _attempt_self_correction(
     return corrected_nodes
 
 
-def _stream_bedrock_codesign(
+async def _stream_bedrock_codesign(
     user_request: str,
     context: 'CodesignContext',
     connection_ids: List[str] = None
-) -> Generator[str, None, None]:
+) -> AsyncGenerator[str, None]:
     """
     Bedrock (Claude) Co-design 스트리밍 (Fallback)
     
@@ -1644,10 +1648,10 @@ def _summarize_workflow(workflow: Dict[str, Any], max_nodes: int = 10) -> str:
     return json.dumps(summary, ensure_ascii=False)
 
 
-def _mock_codesign_response(
+async def _mock_codesign_response(
     user_request: str, 
     current_workflow: Dict[str, Any]
-) -> Generator[str, None, None]:
+) -> AsyncGenerator[str, None]:
     """Mock 모드에서의 응답 생성"""
     ui_delay = float(os.environ.get("STREAMING_UI_DELAY", "0.1"))
     
@@ -1661,7 +1665,7 @@ def _mock_codesign_response(
         "data": f"[Mock] 요청을 분석했습니다: {user_request[:50]}..."
     }
     yield json.dumps(text_obj) + "\n"
-    time.sleep(ui_delay)
+    await asyncio.sleep(ui_delay)
     
     # 새 노드 추가 (mock)
     new_node = {
@@ -1676,7 +1680,7 @@ def _mock_codesign_response(
         }
     }
     yield json.dumps(new_node) + "\n"
-    time.sleep(ui_delay)
+    await asyncio.sleep(ui_delay)
     
     # 제안 생성 (mock)
     if existing_nodes >= 3:
@@ -1692,7 +1696,7 @@ def _mock_codesign_response(
             }
         }
         yield json.dumps(suggestion) + "\n"
-        time.sleep(ui_delay)
+        await asyncio.sleep(ui_delay)
     
     # 완료
     yield json.dumps({"type": "status", "data": "done"}) + "\n"
