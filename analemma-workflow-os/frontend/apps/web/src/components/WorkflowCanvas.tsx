@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo, useEffect, Fragment, lazy } from 'react';
+import { useCallback, useState, useMemo, useEffect, Fragment, lazy, Suspense } from 'react';
 import {
   ReactFlow,
   Background,
@@ -18,23 +18,29 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 import '@xyflow/react/dist/style.css';
 
-// Lazy load node components to prevent bundler hoisting issues
+// Node components - keep synchronous for ReactFlow nodeTypes
 import { AIModelNode } from './nodes/AIModelNode';
 import { OperatorNode } from './nodes/OperatorNode';
 import { TriggerNode } from './nodes/TriggerNode';
 import { ControlNode } from './nodes/ControlNode';
 import { GroupNode } from './nodes/GroupNode';
 import { SmartEdge } from './edges/SmartEdge';
-import { NodeEditorDialog } from './NodeEditorDialog';
-import { GroupNameDialog } from './GroupNameDialog';
-import { PlanBriefingModal } from './PlanBriefingModal';
-import { CheckpointTimeline } from './CheckpointTimeline';
-import { RollbackDialog } from './RollbackDialog';
-import { SuggestionOverlay } from './SuggestionOverlay';
-import { SuggestionList } from './SuggestionList';
-import { AuditPanel } from './AuditPanel';
-import { EmptyCanvasGuide } from './EmptyCanvasGuide';
-import { ContextualSideRail, RailTab } from './ContextualSideRail';
+
+// Lazy load heavy dialog/modal/panel components to break circular deps
+const NodeEditorDialog = lazy(() => import('./NodeEditorDialog').then(m => ({ default: m.NodeEditorDialog })));
+const GroupNameDialog = lazy(() => import('./GroupNameDialog').then(m => ({ default: m.GroupNameDialog })));
+const PlanBriefingModal = lazy(() => import('./PlanBriefingModal').then(m => ({ default: m.PlanBriefingModal })));
+const CheckpointTimeline = lazy(() => import('./CheckpointTimeline').then(m => ({ default: m.CheckpointTimeline })));
+const RollbackDialog = lazy(() => import('./RollbackDialog').then(m => ({ default: m.RollbackDialog })));
+const SuggestionOverlay = lazy(() => import('./SuggestionOverlay').then(m => ({ default: m.SuggestionOverlay })));
+const SuggestionList = lazy(() => import('./SuggestionList').then(m => ({ default: m.SuggestionList })));
+const AuditPanel = lazy(() => import('./AuditPanel').then(m => ({ default: m.AuditPanel })));
+const EmptyCanvasGuide = lazy(() => import('./EmptyCanvasGuide').then(m => ({ default: m.EmptyCanvasGuide })));
+const ContextualSideRail = lazy(() => import('./ContextualSideRail').then(m => ({ default: m.ContextualSideRail })));
+
+// Import types separately
+import type { RailTab } from './ContextualSideRail';
+
 import { Button } from './ui/button';
 import {
   Keyboard,
@@ -499,10 +505,12 @@ const WorkflowCanvasInner = () => {
         {/* Main Canvas Area */}
         <div className="flex-1 relative" onDrop={onDrop} onDragOver={onDragOver}>
           {canvasMode.isEmpty && (
-            <EmptyCanvasGuide
-              onQuickStart={handleQuickStart}
-              className="absolute inset-0 z-10 bg-background/95 backdrop-blur-sm"
-            />
+            <Suspense fallback={<div className="absolute inset-0 z-10 bg-background/95 backdrop-blur-sm flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" /></div>}>
+              <EmptyCanvasGuide
+                onQuickStart={handleQuickStart}
+                className="absolute inset-0 z-10 bg-background/95 backdrop-blur-sm"
+              />
+            </Suspense>
           )}
 
           {/* Contextual Toolbar */}
@@ -616,15 +624,17 @@ const WorkflowCanvasInner = () => {
         </div>
 
         {/* Contextual Side Rail (replaces Insight Centre button) */}
-        <ContextualSideRail
-          activeTab={activePanelTab}
-          onTabChange={setActivePanelTab}
-          issueCount={validation.issueCount}
-          hasErrors={validation.hasErrors}
-          isExecuting={!!currentExecutionId}
-          panelOpen={rightPanelOpen}
-          onTogglePanel={() => setRightPanelOpen(!rightPanelOpen)}
-        />
+        <Suspense fallback={<div className="w-12" />}>
+          <ContextualSideRail
+            activeTab={activePanelTab}
+            onTabChange={setActivePanelTab}
+            issueCount={validation.issueCount}
+            hasErrors={validation.hasErrors}
+            isExecuting={!!currentExecutionId}
+            panelOpen={rightPanelOpen}
+            onTogglePanel={() => setRightPanelOpen(!rightPanelOpen)}
+          />
+        </Suspense>
 
         {/* Unified Sidebar Panel */}
         <AnimatePresence>
@@ -652,20 +662,22 @@ const WorkflowCanvasInner = () => {
                   {activePanelTab === 'timeline' && (
                     <div className="h-[calc(100vh-180px)] overflow-y-auto custom-scrollbar">
                       {currentExecutionId ? (
-                        <CheckpointTimeline
-                          items={checkpoints.timeline}
-                          loading={checkpoints.isLoading}
-                          selectedId={timeMachine.selectedCheckpointId}
-                          compareId={timeMachine.compareCheckpointId}
-                          onRollback={handleRollbackClick}
-                          onCompare={(item) => {
-                            if (timeMachine.selectedCheckpointId && timeMachine.selectedCheckpointId !== item.checkpoint_id) {
-                              timeMachine.compare(timeMachine.selectedCheckpointId, item.checkpoint_id);
-                            }
-                          }}
-                          onPreview={(item) => checkpoints.getDetail(item.checkpoint_id)}
-                          compact
-                        />
+                        <Suspense fallback={<div className="flex items-center justify-center py-8"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" /></div>}>
+                          <CheckpointTimeline
+                            items={checkpoints.timeline}
+                            loading={checkpoints.isLoading}
+                            selectedId={timeMachine.selectedCheckpointId}
+                            compareId={timeMachine.compareCheckpointId}
+                            onRollback={handleRollbackClick}
+                            onCompare={(item) => {
+                              if (timeMachine.selectedCheckpointId && timeMachine.selectedCheckpointId !== item.checkpoint_id) {
+                                timeMachine.compare(timeMachine.selectedCheckpointId, item.checkpoint_id);
+                              }
+                            }}
+                            onPreview={(item) => checkpoints.getDetail(item.checkpoint_id)}
+                            compact
+                          />
+                        </Suspense>
                       ) : (
                         <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center">
                           <History className="w-12 h-12 mb-4" />
@@ -677,13 +689,17 @@ const WorkflowCanvasInner = () => {
 
                   {activePanelTab === 'audit' && (
                     <div className="h-[calc(100vh-180px)] overflow-y-auto">
-                      <AuditPanel standalone />
+                      <Suspense fallback={<div className="flex items-center justify-center py-8"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" /></div>}>
+                        <AuditPanel standalone />
+                      </Suspense>
                     </div>
                   )}
 
                   {activePanelTab === 'agents' && (
                     <div className="h-[calc(100vh-180px)] overflow-y-auto">
-                      <SuggestionList />
+                      <Suspense fallback={<div className="flex items-center justify-center py-8"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" /></div>}>
+                        <SuggestionList />
+                      </Suspense>
                     </div>
                   )}
                 </div>
@@ -692,48 +708,58 @@ const WorkflowCanvasInner = () => {
           )}
         </AnimatePresence>
 
-        <SuggestionOverlay />
+        <Suspense fallback={null}>
+          <SuggestionOverlay />
+        </Suspense>
       </div>
 
-      <NodeEditorDialog
-        node={selectedNode as any}
-        open={editorOpen}
-        onClose={() => setEditorOpen(false)}
-        onSave={handleNodeUpdate}
-        onDelete={handleNodeDelete}
-        incomingConnections={dialogConnectionData?.incoming}
-        outgoingConnections={dialogConnectionData?.outgoing}
-        availableTargets={dialogConnectionData?.available}
-        onEdgeDelete={handleEdgeDeleteInDialog}
-        onEdgeCreate={handleEdgeCreateInDialog}
-      />
+      <Suspense fallback={null}>
+        <NodeEditorDialog
+          node={selectedNode as any}
+          open={editorOpen}
+          onClose={() => setEditorOpen(false)}
+          onSave={handleNodeUpdate}
+          onDelete={handleNodeDelete}
+          incomingConnections={dialogConnectionData?.incoming}
+          outgoingConnections={dialogConnectionData?.outgoing}
+          availableTargets={dialogConnectionData?.available}
+          onEdgeDelete={handleEdgeDeleteInDialog}
+          onEdgeCreate={handleEdgeCreateInDialog}
+        />
+      </Suspense>
 
-      <GroupNameDialog
-        open={groupDialogOpen}
-        onClose={() => setGroupDialogOpen(false)}
-        onConfirm={handleGroupConfirm}
-        nodeCount={selectedNodes.length}
-      />
+      <Suspense fallback={null}>
+        <GroupNameDialog
+          open={groupDialogOpen}
+          onClose={() => setGroupDialogOpen(false)}
+          onConfirm={handleGroupConfirm}
+          nodeCount={selectedNodes.length}
+        />
+      </Suspense>
 
-      <PlanBriefingModal
-        open={briefingOpen}
-        onOpenChange={setBriefingOpen}
-        briefing={planBriefing.briefing}
-        loading={planBriefing.isLoading}
-        onConfirm={handleConfirmExecution}
-        onCancel={() => setBriefingOpen(false)}
-      />
+      <Suspense fallback={null}>
+        <PlanBriefingModal
+          open={briefingOpen}
+          onOpenChange={setBriefingOpen}
+          briefing={planBriefing.briefing}
+          loading={planBriefing.isLoading}
+          onConfirm={handleConfirmExecution}
+          onCancel={() => setBriefingOpen(false)}
+        />
+      </Suspense>
 
-      <RollbackDialog
-        open={rollbackDialogOpen}
-        onOpenChange={setRollbackDialogOpen}
-        targetCheckpoint={rollbackTarget}
-        preview={timeMachine.preview}
-        loading={timeMachine.isPreviewLoading}
-        onPreview={handleRollbackPreview}
-        onExecute={handleRollbackExecute}
-        onSuccess={() => checkpoints.refetch()}
-      />
+      <Suspense fallback={null}>
+        <RollbackDialog
+          open={rollbackDialogOpen}
+          onOpenChange={setRollbackDialogOpen}
+          targetCheckpoint={rollbackTarget}
+          preview={timeMachine.preview}
+          loading={timeMachine.isPreviewLoading}
+          onPreview={handleRollbackPreview}
+          onExecute={handleRollbackExecute}
+          onSuccess={() => checkpoints.refetch()}
+        />
+      </Suspense>
     </>
   );
 }
