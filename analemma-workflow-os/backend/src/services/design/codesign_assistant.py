@@ -86,7 +86,7 @@ from src.handlers.core.logical_auditor import audit_workflow, LogicalAuditor
 
 # Gemini 서비스 import
 try:
-    from src.services.design.llm.gemini_service import (
+    from src.services.llm.gemini_service import (
         GeminiService,
         GeminiConfig,
         GeminiModel,
@@ -94,13 +94,14 @@ try:
         get_gemini_pro_service,
         get_gemini_codesign_service,
     )
-    from src.services.design.llm.structure_tools import (
+    from src.services.llm.structure_tools import (
         get_all_structure_tools,
         get_gemini_system_instruction,
         validate_structure_node,
     )
     GEMINI_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    logger.warning(f"Gemini services not available: {e}")
     GEMINI_AVAILABLE = False
     GeminiService = None
     GeminiConfig = None

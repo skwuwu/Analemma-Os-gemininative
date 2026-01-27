@@ -187,16 +187,11 @@ def invoke_bedrock_stream(
         yield json.dumps({"type": "status", "data": "done"}) + "\n"
         return
     
-    # Gemini 모델 우선 시도
+    # Note: Gemini 모델은 상위 레이어(codesign_assistant)에서 직접 gemini_service 호출
+    # bedrock_client는 Claude fallback 전용
     if "gemini" in model_to_use.lower():
-        try:
-            logger.info(f"Using Gemini model: {model_to_use}")
-            from src.services.llm.gemini_client import invoke_gemini_stream
-            yield from invoke_gemini_stream(system_prompt, user_request, model_to_use)
-            return
-        except Exception as e:
-            logger.warning(f"Gemini stream failed, falling back to Claude: {e}")
-            model_to_use = MODEL_SONNET  # Claude Sonnet으로 폴백
+        logger.warning(f"Gemini model requested in bedrock_client (unexpected). Falling back to Claude.")
+        model_to_use = MODEL_SONNET
     
     # Claude (Bedrock) 호출
     logger.info(f"Using Bedrock Claude model: {model_to_use}")

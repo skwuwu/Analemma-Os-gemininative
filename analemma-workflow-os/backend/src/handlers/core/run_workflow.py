@@ -519,22 +519,17 @@ def lambda_handler(event, context):
         if quota_reservation_id:
             payload['quota_reservation_id'] = quota_reservation_id
         
-        # Initialize workflow_config (will be populated by orchestrator selection or fallback)
-        workflow_config = None
-        
         # 테스트 설정이 있으면 Step Functions payload에 추가
         if test_config_to_inject:
             payload['test_workflow_config'] = test_config_to_inject
             logger.info("🧪 MOCK_MODE: test_workflow_config injected, will bypass DynamoDB")
-            workflow_config = test_config_to_inject  # Store for potential use
-        elif workflow_config:
-            # 실제 워크플로우 설정을 payload에 추가 (이미 로드됨)
-            # Ensure config is serializable (Decimal conversion)
-            config = _convert_floats_to_decimals(workflow_config)
-            payload['workflow_config'] = config
-            logger.info(f"✅ Real workflow_config injected for {workflow_id}")
-        else:
-            # [FALLBACK] 워크플로우 설정을 찾을 수 없는 경우 캐시를 사용한 DB 재시도
+        
+        # NOTE: workflow_config는 orchestrator selection 섹션에서 로드되어 payload에 추가됩니다
+        # 여기서는 payload 기본 구조만 설정하고, 실제 config 로딩은 아래 orchestrator selection에서 수행
+        
+        # [LEGACY FALLBACK - 사용하지 않음] 워크플로우 설정을 찾을 수 없는 경우 캐시를 사용한 DB 재시도
+        # 이 로직은 orchestrator selection 섹션으로 이동되었습니다
+        if False:  # Disabled - handled by orchestrator selection
             try:
                 from src.services.workflow.cache_manager import cached_get_workflow_config
                 
