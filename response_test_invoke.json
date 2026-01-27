@@ -1,0 +1,1 @@
+{"errorMessage": "'functools.partial' object does not support the context manager protocol", "errorType": "TypeError", "requestId": "ebb697db-f544-44aa-9651-5df3da4e0ef4", "stackTrace": ["  File \"/var/task/src/common/logging_utils.py\", line 134, in wrapper\n    with logger.inject_lambda_context(\n"]}

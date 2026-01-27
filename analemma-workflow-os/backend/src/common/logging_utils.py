@@ -128,7 +128,14 @@ def log_execution_context(func):
     @functools.wraps(func)
     def wrapper(event, context):
         _ensure_powertools_loaded()  # Lazy load
-        logger = get_logger(func.__module__)
+        
+        # 직접 Logger 생성 (lazy import 회피)
+        log_level = os.getenv("LOG_LEVEL", "INFO")
+        logger = _Logger(
+            service=os.getenv("AWS_LAMBDA_FUNCTION_NAME", "analemma-backend"),
+            level=log_level,
+            child=True if func.__module__ != __name__ else False
+        )
         
         # Lambda 컨텍스트 정보 자동 주입
         with logger.inject_lambda_context(

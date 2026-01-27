@@ -133,7 +133,6 @@ def _convert_floats_to_decimals(obj):
     return obj
 
 
-@log_execution_context
 def lambda_handler(event, context):
     # NOTE: background push worker logic removed. This Lambda now only acts as
     # the API "gatekeeper": authenticate, check quota/idempotency and start
