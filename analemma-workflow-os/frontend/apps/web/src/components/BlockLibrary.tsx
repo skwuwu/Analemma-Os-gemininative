@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Brain, Clock, Webhook, Zap, MessageSquare, Globe, Database, Search, GripVertical, ChevronDown, ChevronRight, Repeat, GitFork, CheckCircle2, type LucideIcon } from 'lucide-react';
+import { Brain, Clock, Webhook, Zap, MessageSquare, Globe, Database, Search, GripVertical, ChevronDown, ChevronRight, Repeat, GitFork, CheckCircle2, FolderOpen, type LucideIcon } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';

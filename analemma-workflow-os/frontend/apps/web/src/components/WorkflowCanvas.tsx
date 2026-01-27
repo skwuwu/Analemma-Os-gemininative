@@ -35,15 +35,12 @@ import { EmptyCanvasGuide } from './EmptyCanvasGuide';
 import { ContextualSideRail, RailTab } from './ContextualSideRail';
 import { Button } from './ui/button';
 import {
-  Trash2,
   Keyboard,
   Layers,
   ChevronRight,
   Play,
   History,
   PanelRightClose,
-  ShieldAlert,
-  Menu
 } from 'lucide-react';
 import { TooltipProvider } from './ui/tooltip';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';

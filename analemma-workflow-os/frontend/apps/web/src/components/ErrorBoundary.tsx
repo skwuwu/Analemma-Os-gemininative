@@ -107,10 +107,10 @@ class ErrorBoundary extends Component<Props, State> {
             </div>
             <div className="space-y-1">
               <h4 className="text-sm font-bold text-foreground">
-                {featureName || '컴포넌트'} 로딩 오류
+                {featureName || 'Component'} Error
               </h4>
               <p className="text-xs text-muted-foreground max-w-[200px]">
-                이 섹션에서 문제가 발생했습니다. 다른 기능은 계속 사용할 수 있습니다.
+                An issue occurred in this section. Other features continue to work.
               </p>
             </div>
             <Button
@@ -121,7 +121,7 @@ class ErrorBoundary extends Component<Props, State> {
               className="h-8 gap-2 bg-background"
             >
               <RefreshCw className={cn("w-3 h-3", isRecovering && "animate-spin")} />
-              다시 시도
+              Retry
             </Button>
           </div>
         );
@@ -144,11 +144,11 @@ class ErrorBoundary extends Component<Props, State> {
 
             <div className="space-y-3">
               <h1 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
-                시스템 로딩 임계치 초과
+                System Error
               </h1>
               <p className="text-lg text-muted-foreground leading-relaxed">
-                에이전트 실행 중 예상치 못한 격절이 발생했습니다. <br className="hidden sm:block" />
-                현재 상태를 복구하거나 시스템을 초기화해 주세요.
+                An unexpected error occurred during execution. <br className="hidden sm:block" />
+                Please try resetting the application state.
               </p>
             </div>
 
@@ -178,7 +178,7 @@ class ErrorBoundary extends Component<Props, State> {
                 className="gap-2 h-12 px-6 rounded-xl hover:bg-accent/50"
               >
                 <Home className="w-5 h-5 text-muted-foreground" />
-                홈으로 이동
+                Go Home
               </Button>
 
               <Button
@@ -187,20 +187,12 @@ class ErrorBoundary extends Component<Props, State> {
                 className="gap-2 h-12 px-8 rounded-xl bg-primary hover:bg-primary/90 shadow-xl shadow-primary/20 text-md font-bold"
               >
                 <RefreshCw className={cn("w-5 h-5", isRecovering && "animate-spin")} />
-                시스템 자동 복구 시도
-              </Button>
-
-              <Button
-                variant="outline"
-                onClick={this.handleReload}
-                className="gap-2 h-12 px-6 rounded-xl border-muted-foreground/20 hover:bg-background/80"
-              >
-                페이지 강제 새로고침
+                Reset Application
               </Button>
             </div>
 
             <p className="text-sm text-muted-foreground/60 italic font-medium">
-              Tip: 복구가 되지 않는다면 브라우저 캐시를 삭제 후 다시 시도해 주세요.
+              Tip: If the issue persists, try clearing your browser cache.
             </p>
           </div>
         </div>
