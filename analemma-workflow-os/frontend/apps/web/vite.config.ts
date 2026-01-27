@@ -18,13 +18,8 @@ export default defineConfig(({ mode }) => ({
   build: {
     // Chunk size warning threshold (KB)
     chunkSizeWarningLimit: 500,
-    // Increase memory and optimize for large projects
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: mode === 'production',
-      },
-    },
+    // Use esbuild (default, faster than terser)
+    minify: 'esbuild',
     // Optimize dependencies to prevent circular dependency crashes
     commonjsOptions: {
       transformMixedEsModules: true,
