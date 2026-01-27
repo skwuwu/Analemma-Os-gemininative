@@ -3,7 +3,7 @@
     "private": true,
     "version": "0.0.1",
     "type": "module",
-    "//": "Trigger deployment - WebSocket endpoint enabled",
+    "//": "Trigger deployment - Frontend rebuild with Cognito configuration",
     "scripts": {
         "dev": "vite",
         "build": "vite build",
