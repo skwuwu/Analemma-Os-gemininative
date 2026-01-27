@@ -8,24 +8,42 @@
  * - Circuit design DRC (Design Rule Check)
  * 
  * Eliminates the need for manual "Simulate Run" button.
+ * 
+ * NOTE: This hook receives store values via props to avoid module-level
+ * store imports that can cause bundler initialization order issues.
  */
 import { useEffect, useRef } from 'react';
-import { useWorkflowStore } from '@/lib/workflowStore';
-import { useCodesignStore } from '@/lib/codesignStore';
+import { Node, Edge } from '@xyflow/react';
+
+export interface AuditIssue {
+  level: 'error' | 'warning' | 'info';
+  type: string;
+  message: string;
+  affectedNodes: string[];
+  suggestion?: string;
+}
 
 interface UseAutoValidationOptions {
   enabled?: boolean;
   debounceMs?: number;
   onValidationComplete?: (issueCount: number) => void;
+  // Store values passed from component to avoid circular import issues
+  nodes: Node[];
+  edges: Edge[];
+  auditIssues: AuditIssue[];
+  requestAudit: (workflow: { nodes: Node[]; edges: Edge[] }, authToken?: string) => Promise<void>;
 }
 
-export function useAutoValidation(options: UseAutoValidationOptions = {}) {
-  const { enabled = true, debounceMs = 1500, onValidationComplete } = options;
-  
-  const nodes = useWorkflowStore((state) => state.nodes);
-  const edges = useWorkflowStore((state) => state.edges);
-  const auditIssues = useCodesignStore((state) => state.auditIssues);
-  const requestAudit = useCodesignStore((state) => state.requestAudit);
+export function useAutoValidation(options: UseAutoValidationOptions) {
+  const { 
+    enabled = true, 
+    debounceMs = 1500, 
+    onValidationComplete,
+    nodes,
+    edges,
+    auditIssues,
+    requestAudit
+  } = options;
   
   const timeoutRef = useRef<NodeJS.Timeout>();
   const prevWorkflowHashRef = useRef<string>('');

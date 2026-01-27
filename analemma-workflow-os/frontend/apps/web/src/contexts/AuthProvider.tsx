@@ -58,7 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const { isSignedIn, nextStep } = await amplifySignIn({ username: email, password: pass });
 
             if (isSignedIn) {
-                toast({ title: "로그인 성공", description: "환영합니다!" });
+                toast({ title: "Login successful", description: "Welcome!" });
                 await checkUser();
             } else {
                 console.log('Login next step:', nextStep);
@@ -66,7 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
         } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-            toast({ title: "로그인 실패", description: errorMessage, variant: "destructive" });
+            toast({ title: "Login failed", description: errorMessage, variant: "destructive" });
             throw error;
         } finally {
             setIsLoading(false);
