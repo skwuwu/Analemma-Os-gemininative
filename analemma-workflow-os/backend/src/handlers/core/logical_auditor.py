@@ -538,3 +538,52 @@ def get_workflow_analysis(workflow: Dict[str, Any]) -> Dict[str, Any]:
         "edge_count": len(auditor.edges),
         "is_valid": error_count == 0
     }
+
+
+def lambda_handler(event, context):
+    """Lambda 핸들러: 워크플로우 검증 API"""
+    import json
+    
+    try:
+        # HTTP API Gateway 이벤트에서 body 파싱
+        body = event.get('body', '{}')
+        if isinstance(body, str):
+            body = json.loads(body)
+        
+        workflow = body.get('workflow', {})
+        
+        if not workflow:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({'error': 'workflow is required'})
+            }
+        
+        # 워크플로우 분석 실행
+        analysis = get_workflow_analysis(workflow)
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps(analysis, ensure_ascii=False)
+        }
+        
+    except Exception as e:
+        logger.exception(f"Audit failed: {e}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'error': 'Internal server error',
+                'message': str(e)
+            })
+        }

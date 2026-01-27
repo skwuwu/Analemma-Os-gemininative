@@ -511,18 +511,20 @@ def _generate_initial_workflow_stream(user_request: str, owner_id: str, session_
         yield json.dumps(error_response, ensure_ascii=False) + "\n"
 
 
-async def handle_codesign_stream(owner_id: str, event: Dict) -> Dict:
+async def handle_codesign_stream(owner_id: str, event: Dict):
     """협업 워크플로우 설계 스트리밍 (Canvas 상태에 따른 자동 모드 전환)"""
     body, error = _parse_body(event)
     if error:
-        return _response(400, {'error': error})
+        yield json.dumps(_response(400, {'error': error})['body'], ensure_ascii=False) + "\n"
+        return
     
     # 필수 필드 검증
     user_request = body.get('user_request')
     current_workflow = body.get('current_workflow', {"nodes": [], "edges": []})
     
     if not user_request:
-        return _response(400, {'error': 'user_request is required'})
+        yield json.dumps(_response(400, {'error': 'user_request is required'})['body'], ensure_ascii=False) + "\n"
+        return
     
     try:
         # Canvas 상태 확인 - 비어있는지 판단 (개선된 로직)
@@ -588,11 +590,19 @@ async def handle_codesign_stream(owner_id: str, event: Dict) -> Dict:
             )
         
         logger.info(f"Started workflow streaming for session {session_id[:8]}...")
-        return _streaming_response(generator)
+        # Stream all responses from generator
+        async for chunk in generator:
+            yield chunk
         
     except Exception as e:
         logger.error(f"Failed to start workflow streaming: {e}")
-        return _error_response(e)
+        error_info = classify_and_format_error(e)
+        yield json.dumps({
+            "type": "error",
+            "error_code": error_info["error_code"],
+            "data": error_info["message"],
+            "user_action": error_info.get("user_action")
+        }, ensure_ascii=False) + "\n"
 
 
 async def handle_explain_workflow(owner_id: str, event: Dict) -> Dict:

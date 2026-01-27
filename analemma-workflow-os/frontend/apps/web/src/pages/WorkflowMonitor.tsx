@@ -602,7 +602,7 @@ export const WorkflowMonitor: React.FC<WorkflowMonitorProps> = ({ signOut }) => 
               </Button>
               {!workflowGraphData && showGraphView && (
                 <span className="text-xs text-muted-foreground">
-                  (워크플로우 데이터 로딩 중...)
+                  (Loading workflow data...)
                 </span>
               )}
             </div>

@@ -173,7 +173,7 @@ export const WelcomeDialog = ({ open, onWorkflowGenerated, onClose }: WelcomeDia
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && !isGenerating && onClose()}>
-      <DialogContent className="sm:max-w-xl p-0 overflow-hidden bg-slate-950 border-slate-800 shadow-2xl rounded-3xl">
+      <DialogContent className="sm:max-w-xl max-w-[calc(100vw-260px-350px-2rem)] left-[calc(50%+130px)] p-0 overflow-hidden bg-slate-950 border-slate-800 shadow-2xl rounded-3xl">
         <div className="relative p-8">
           {/* Background Decorative Sparkle */}
           <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">

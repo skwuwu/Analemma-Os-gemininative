@@ -98,7 +98,7 @@ interface PageLoadingProps {
  * Suspense fallback으로 사용됩니다.
  */
 export const PageLoading: React.FC<PageLoadingProps> = ({
-  message = '로딩 중...',
+  message = 'Loading...',
 }) => {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-4">

@@ -52,7 +52,7 @@ function AppContent() {
 
       {user ? (
         <ErrorBoundary>
-          <Suspense fallback={<PageLoading message="페이지 로딩 중..." />}>
+          <Suspense fallback={<PageLoading message="Loading page..." />}>
             <Routes>
               <Route path="/" element={<Index signOut={signOut} />} />
               {/* /workflows → /tasks 리다이렉트 (Task Manager 통합) */}
