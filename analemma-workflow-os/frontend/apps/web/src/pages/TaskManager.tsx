@@ -34,26 +34,32 @@ import {
   Bot,
   XCircle,
   Slash,
-  PanelRightClose,
-  History
+  History,
+  GitBranch,
+  Box,
+  Play,
+  Square
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 // Components
 import { TaskBentoGrid } from '@/components/TaskBentoGrid';
 import { OutcomeManagerModal } from '@/components/OutcomeManagerModal';
-import { TimelineSideRail } from '@/components/TimelineSideRail';
 import { CheckpointTimeline } from '@/components/CheckpointTimeline';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Progress } from '@/components/ui/progress';
+import { WorkflowGraphViewer } from '@/components/WorkflowGraphViewer';
+import { NodeDetailPanel } from '@/components/NodeDetailPanel';
 
 // Hooks
 import { useTaskManager } from '@/hooks/useTaskManager';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useWorkflowApi } from '@/hooks/useWorkflowApi';
 import { useCheckpoints, useTimeMachine } from '@/hooks/useBriefingAndCheckpoints';
-import type { TaskSummary, TaskStatus, TimelineItem } from '@/lib/types';
+import { useNodeExecutionStatus } from '@/hooks/useNodeExecutionStatus';
+import { useExecutionTimeline } from '@/hooks/useExecutionTimeline';
+import type { TaskSummary, TaskStatus, TimelineItem, NotificationItem, HistoryEntry, ResumeWorkflowRequest } from '@/lib/types';
 
 interface TaskManagerProps {
   signOut?: () => void;
@@ -100,16 +106,21 @@ const StatusBadge = ({ status }: { status: string }) => {
 
 export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   const navigate = useNavigate();
+  const API_BASE = import.meta.env.VITE_API_BASE_URL;
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [outcomeModalOpen, setOutcomeModalOpen] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | undefined>(undefined);
   
-  // Right Panel System (Timeline only)
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  // Rollback state (for Timeline sub-tab)
   const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState<TimelineItem | null>(null);
-  const [currentExecutionId, setCurrentExecutionId] = useState<string | null>(null);
+  
+  // Detail View Tab State (Business vs Technical)
+  const [detailViewTab, setDetailViewTab] = useState<'business' | 'technical'>('business');
+  const [technicalSubTab, setTechnicalSubTab] = useState<'graph' | 'timeline' | 'nodes'>('graph');
+  const [responseText, setResponseText] = useState('');
   
   // 기존 notifications 훅 (WebSocket 연결 유지)
   const { notifications } = useNotifications();
@@ -122,17 +133,20 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   });
   
   // API 훅
-  const { resumeWorkflow } = useWorkflowApi();
+  const { resumeWorkflow, stopExecution, isStopping, isResuming } = useWorkflowApi();
+  
+  // ExecutionTimeline 훅
+  const { executionTimelines, fetchExecutionTimeline } = useExecutionTimeline(notifications, API_BASE);
   
   // Checkpoints and Time Machine hooks
   const checkpoints = useCheckpoints({
-    executionId: currentExecutionId || undefined,
-    enabled: !!currentExecutionId && rightPanelOpen,
+    executionId: taskManager.selectedTask?.task_id,
+    enabled: !!taskManager.selectedTask?.task_id,
     refetchInterval: 5000,
   });
 
   const timeMachine = useTimeMachine({
-    executionId: currentExecutionId || '',
+    executionId: taskManager.selectedTask?.task_id || '',
     onRollbackSuccess: (result) => {
       toast.success(`Rollback successful: New branch ${result.branched_thread_id} created`);
       setRollbackDialogOpen(false);
@@ -142,6 +156,52 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
       toast.error(`Rollback failed: ${error.message}`);
     },
   });
+  
+  // Workflow Graph Data (기술 탭용)
+  const workflowGraphData = useMemo(() => {
+    if (!taskManager.selectedTask) return null;
+    
+    // workflow_config 추출
+    const config = (taskManager.selectedTask as any)?.workflow_config;
+    if (!config || !config.nodes) return null;
+
+    const nodes = (config.nodes || []).map((node: any, idx: number) => ({
+      id: node.id,
+      type: node.type || 'operator',
+      position: node.position || { x: 150 * (idx % 4), y: 150 * Math.floor(idx / 4) },
+      data: { label: node.config?.label || node.id, ...node.config },
+    }));
+
+    const edges = (config.edges || []).map((edge: any, idx: number) => ({
+      id: edge.id || `edge-${idx}`,
+      source: edge.source,
+      target: edge.target,
+      animated: true,
+      style: { stroke: 'hsl(263 70% 60%)', strokeWidth: 2 },
+    }));
+
+    return { nodes, edges };
+  }, [taskManager.selectedTask]);
+
+  // History entries for node status
+  const historyEntriesForGraph = useMemo((): HistoryEntry[] => {
+    if (!taskManager.selectedTask) return [];
+    const stateHistory = (taskManager.selectedTask as any)?.state_history || [];
+    return Array.isArray(stateHistory) ? stateHistory : [];
+  }, [taskManager.selectedTask]);
+
+  const nodeStatus = useNodeExecutionStatus(historyEntriesForGraph);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  
+  // Selected timeline
+  const selectedWorkflowTimeline = useMemo(() => {
+    if (!taskManager.selectedTaskId) return [] as NotificationItem[];
+    return executionTimelines[taskManager.selectedTaskId] || [];
+  }, [executionTimelines, taskManager.selectedTaskId]);
+
+  const latestStatus = selectedWorkflowTimeline.length > 0 
+    ? selectedWorkflowTimeline[selectedWorkflowTimeline.length - 1] 
+    : null;
   
   // 검색 필터링
   const filteredTasks = useMemo(() => {
@@ -169,6 +229,30 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
     setRollbackTarget(item);
     setRollbackDialogOpen(true);
   }, []);
+  
+  const handleResumeWorkflow = useCallback(async () => {
+    if (!taskManager.selectedTask || !responseText.trim()) {
+      toast.error('응답을 입력해주세요');
+      return;
+    }
+    
+    try {
+      const payload: ResumeWorkflowRequest = {
+        conversation_id: taskManager.selectedTask.task_id,
+        execution_id: taskManager.selectedTask.task_id,
+        user_input: {
+          response: responseText.trim(),
+        },
+      };
+      
+      await resumeWorkflow(payload);
+      setResponseText('');
+      toast.success('워크플로우를 재개했습니다');
+      taskManager.refreshList();
+    } catch (error) {
+      toast.error('워크플로우 재개에 실패했습니다');
+    }
+  }, [taskManager, responseText, resumeWorkflow]);
   
   // 통계
   const stats = useMemo(() => ({
@@ -300,27 +384,215 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
         
         <ResizableHandle className="bg-slate-800" />
         
-        {/* 우측 패널: 상세 정보 (Bento Grid) */}
+        {/* 우측 패널: 상세 정보 (탭 시스템) */}
         <ResizablePanel defaultSize={75} className="bg-slate-950">
             {taskManager.selectedTask ? (
                 <div className="h-full flex flex-col">
+                    {/* 헤더 with Action Buttons */}
                     <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/30">
                         <div>
                             <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
                                 {taskManager.selectedTask.task_summary}
                                 <StatusBadge status={taskManager.selectedTask.status} />
+                                {taskManager.selectedTask.is_interruption && (
+                                  <Badge variant="destructive" className="animate-pulse">
+                                    <AlertCircle className="w-3 h-3 mr-1" />
+                                    응답 대기 중
+                                  </Badge>
+                                )}
                             </h2>
                             <p className="text-sm text-slate-400 mt-1">
-                                ID: {taskManager.selectedTask.task_id} • Workflow: {taskManager.selectedTask.workflow_name}
+                                ID: {taskManager.selectedTask.task_id.substring(0, 16)}... • Workflow: {taskManager.selectedTask.workflow_name}
                             </p>
                         </div>
                         <div className="flex gap-2">
-                            {/* Action Buttons can go here */}
+                            {/* Resume Button (HITP 상태) */}
+                            {taskManager.selectedTask.is_interruption && (
+                              <Button 
+                                size="sm" 
+                                onClick={() => {
+                                  setDetailViewTab('technical');
+                                  toast.info('응답을 입력하려면 기술 탭에서 입력하세요');
+                                }}
+                                className="bg-amber-600 hover:bg-amber-700"
+                              >
+                                <Play className="w-4 h-4 mr-2" />
+                                Resume
+                              </Button>
+                            )}
+                            {/* Stop Button (진행 중) */}
+                            {taskManager.selectedTask.status === 'in_progress' && (
+                              <Button 
+                                size="sm" 
+                                variant="destructive"
+                                onClick={() => {
+                                  if (taskManager.selectedTask) {
+                                    stopExecution(taskManager.selectedTask.task_id);
+                                  }
+                                }}
+                                disabled={isStopping}
+                              >
+                                <Square className="w-4 h-4 mr-2" />
+                                Stop
+                              </Button>
+                            )}
                         </div>
                     </div>
-                    <ScrollArea className="flex-1 bg-slate-950/50">
-                        <TaskBentoGrid task={taskManager.selectedTask} onArtifactClick={handleArtifactClick} />
-                    </ScrollArea>
+                    
+                    {/* 탭 시스템 */}
+                    <Tabs value={detailViewTab} onValueChange={(v) => setDetailViewTab(v as 'business' | 'technical')} className="flex-1 flex flex-col">
+                      <div className="px-6 pt-3 border-b border-slate-800">
+                        <TabsList className="bg-slate-900">
+                          <TabsTrigger value="business" className="data-[state=active]:bg-slate-800">
+                            <Box className="w-4 h-4 mr-2" />
+                            비즈니스 뷰
+                          </TabsTrigger>
+                          <TabsTrigger value="technical" className="data-[state=active]:bg-slate-800">
+                            <GitBranch className="w-4 h-4 mr-2" />
+                            기술 뷰
+                          </TabsTrigger>
+                        </TabsList>
+                      </div>
+                      
+                      {/* 비즈니스 탭 */}
+                      <TabsContent value="business" className="flex-1 overflow-hidden mt-0">
+                        <ScrollArea className="h-full">
+                          <TaskBentoGrid task={taskManager.selectedTask} onArtifactClick={handleArtifactClick} />
+                        </ScrollArea>
+                      </TabsContent>
+                      
+                      {/* 기술 탭 - 서브탭 시스템 */}
+                      <TabsContent value="technical" className="flex-1 overflow-hidden mt-0">
+                        <Tabs value={technicalSubTab} onValueChange={(v) => setTechnicalSubTab(v as 'graph' | 'timeline' | 'nodes')} className="h-full flex flex-col">
+                          {/* Technical 서브탭 헤더 */}
+                          <div className="px-4 pt-2 border-b border-slate-800">
+                            <TabsList className="bg-slate-900">
+                              <TabsTrigger value="graph" className="data-[state=active]:bg-slate-800 text-xs">
+                                <GitBranch className="w-3 h-3 mr-1.5" />
+                                Graph
+                              </TabsTrigger>
+                              <TabsTrigger value="timeline" className="data-[state=active]:bg-slate-800 text-xs">
+                                <History className="w-3 h-3 mr-1.5" />
+                                Timeline
+                              </TabsTrigger>
+                              <TabsTrigger value="nodes" className="data-[state=active]:bg-slate-800 text-xs">
+                                <Box className="w-3 h-3 mr-1.5" />
+                                Nodes
+                              </TabsTrigger>
+                            </TabsList>
+                          </div>
+
+                          {/* Graph 서브탭 */}
+                          <TabsContent value="graph" className="flex-1 overflow-hidden mt-0">
+                            <div className="h-full">
+                              {workflowGraphData ? (
+                                <WorkflowGraphViewer
+                                  nodes={workflowGraphData.nodes}
+                                  edges={workflowGraphData.edges}
+                                  activeNodeId={nodeStatus.activeNodeIds[0] || undefined}
+                                  completedNodeIds={nodeStatus.completedNodeIds}
+                                  failedNodeIds={nodeStatus.failedNodeIds}
+                                  onNodeClick={setSelectedNodeId}
+                                />
+                              ) : (
+                                <div className="flex items-center justify-center h-full text-slate-500">
+                                  <div className="text-center">
+                                    <p className="text-lg mb-2">워크플로우 그래프를 로드할 수 없습니다</p>
+                                    <p className="text-sm">workflow_config 데이터가 없습니다.</p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </TabsContent>
+
+                          {/* Timeline 서브탭 (기존 CheckpointTimeline) */}
+                          <TabsContent value="timeline" className="flex-1 overflow-hidden mt-0">
+                            <ScrollArea className="h-full">
+                              <div className="p-4">
+                                {taskManager.selectedTask ? (
+                                  <CheckpointTimeline
+                                    items={checkpoints.timeline}
+                                    loading={checkpoints.isLoading}
+                                    selectedId={timeMachine.selectedCheckpointId}
+                                    compareId={timeMachine.compareCheckpointId}
+                                    onRollback={handleRollbackClick}
+                                    onCompare={(item) => {
+                                      if (timeMachine.selectedCheckpointId && timeMachine.selectedCheckpointId !== item.checkpoint_id) {
+                                        timeMachine.compare(timeMachine.selectedCheckpointId, item.checkpoint_id);
+                                      }
+                                    }}
+                                    onPreview={(item) => checkpoints.getDetail(item.checkpoint_id)}
+                                    compact
+                                  />
+                                ) : (
+                                  <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center">
+                                    <History className="w-12 h-12 mb-4" />
+                                    <p className="text-sm font-medium uppercase">타임라인 데이터 없음</p>
+                                  </div>
+                                )}
+                              </div>
+                            </ScrollArea>
+                          </TabsContent>
+
+                          {/* Nodes 서브탭 (NodeDetailPanel + HITP Input) */}
+                          <TabsContent value="nodes" className="flex-1 overflow-hidden mt-0">
+                            <div className="h-full flex flex-col">
+                              {/* HITP Response Input (응답 대기 중일 때만 표시) */}
+                              {taskManager.selectedTask?.is_interruption && (
+                                <div className="border-b border-slate-800 p-4 bg-amber-900/10">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <AlertCircle className="w-5 h-5 text-amber-500" />
+                                    <h3 className="font-semibold text-slate-100">사용자 입력 대기 중</h3>
+                                  </div>
+                                  <div className="space-y-3">
+                                    <Input
+                                      placeholder="응답을 입력하세요..."
+                                      value={responseText}
+                                      onChange={(e) => setResponseText(e.target.value)}
+                                      className="bg-slate-800 border-slate-700 text-slate-100"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                          e.preventDefault();
+                                          handleResumeWorkflow();
+                                        }
+                                      }}
+                                    />
+                                    <div className="flex gap-2">
+                                      <Button
+                                        onClick={handleResumeWorkflow}
+                                        disabled={!responseText.trim() || isResuming}
+                                        className="flex-1 bg-amber-600 hover:bg-amber-700"
+                                      >
+                                        {isResuming ? (
+                                          <>
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                            재개 중...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Play className="w-4 h-4 mr-2" />
+                                            워크플로우 재개
+                                          </>
+                                        )}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* Node Detail Panel */}
+                              <div className="flex-1 overflow-y-auto bg-slate-900/50">
+                                <NodeDetailPanel
+                                  nodeId={selectedNodeId}
+                                  nodeDetails={nodeStatus.nodeDetails}
+                                  historyEntries={historyEntriesForGraph}
+                                />
+                              </div>
+                            </div>
+                          </TabsContent>
+                        </Tabs>
+                      </TabsContent>
+                    </Tabs>
                 </div>
             ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-500">
@@ -331,63 +603,6 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
             )}
         </ResizablePanel>
       </ResizablePanelGroup>
-
-      {/* Timeline Side Rail (Timeline only) */}
-      <TimelineSideRail
-        isExecuting={!!currentExecutionId}
-        panelOpen={rightPanelOpen}
-        onTogglePanel={() => setRightPanelOpen(!rightPanelOpen)}
-      />
-
-      {/* Unified Sidebar Panel */}
-      <AnimatePresence>
-        {rightPanelOpen && (
-          <motion.div
-            initial={{ x: 400 }}
-            animate={{ x: 0 }}
-            exit={{ x: 400 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="absolute right-0 top-14 bottom-0 w-96 border-l border-slate-800 bg-slate-950/50 backdrop-blur-xl z-30 flex flex-col"
-          >
-            <div className="p-6 pb-2">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-sm font-black uppercase tracking-widest text-slate-100">
-                  Execution Timeline
-                </h3>
-                <Button variant="ghost" size="icon" onClick={() => setRightPanelOpen(false)} className="h-8 w-8 text-slate-500 hover:text-white">
-                  <PanelRightClose className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-hidden">
-              <div className="h-[calc(100vh-180px)] overflow-y-auto custom-scrollbar px-6">
-                {currentExecutionId ? (
-                  <CheckpointTimeline
-                    items={checkpoints.timeline}
-                    loading={checkpoints.isLoading}
-                    selectedId={timeMachine.selectedCheckpointId}
-                    compareId={timeMachine.compareCheckpointId}
-                    onRollback={handleRollbackClick}
-                    onCompare={(item) => {
-                      if (timeMachine.selectedCheckpointId && timeMachine.selectedCheckpointId !== item.checkpoint_id) {
-                        timeMachine.compare(timeMachine.selectedCheckpointId, item.checkpoint_id);
-                      }
-                    }}
-                    onPreview={(item) => checkpoints.getDetail(item.checkpoint_id)}
-                    compact
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center">
-                    <History className="w-12 h-12 mb-4" />
-                    <p className="text-[10px] font-black uppercase">No active operations</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {taskManager.selectedTask && (
         <OutcomeManagerModal 
