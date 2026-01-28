@@ -221,7 +221,9 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   
   // Task 선택 핸들러
   const handleTaskClick = useCallback((task: TaskSummary) => {
+    console.log('[TaskManager] Task clicked:', task.task_id, task.task_summary);
     taskManager.selectTask(task.task_id);
+    console.log('[TaskManager] Selected task ID:', taskManager.selectedTaskId);
     // Fetch execution timeline when task is selected
     fetchExecutionTimeline(task.task_id);
   }, [taskManager, fetchExecutionTimeline]);
@@ -429,7 +431,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
         
         {/* 우측 패널: 상세 정보 (탭 시스템) */}
         <ResizablePanel defaultSize={75} className="bg-slate-950">
-            {taskManager.selectedTask ? (
+            {(() => {
+              console.log('[TaskManager] Rendering detail panel - selectedTask:', taskManager.selectedTask ? taskManager.selectedTask.task_id : 'null');
+              console.log('[TaskManager] selectedTaskId:', taskManager.selectedTaskId);
+              console.log('[TaskManager] isLoadingDetail:', taskManager.isLoadingDetail);
+              return taskManager.selectedTask;
+            })() ? (
                 <div className="h-full flex flex-col">
                     {/* 헤더 with Action Buttons */}
                     <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/30">

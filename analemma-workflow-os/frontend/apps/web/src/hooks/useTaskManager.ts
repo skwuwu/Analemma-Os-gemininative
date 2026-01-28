@@ -72,11 +72,13 @@ export function useTaskDetail(options: UseTaskDetailOptions = {}) {
   const detailQuery = useQuery({
     queryKey: ['task', taskId, { includeTechnicalLogs }],
     queryFn: async () => {
+      console.log('[useTaskDetail] queryFn executing for taskId:', taskId);
       if (!taskId) throw new Error('Task ID is required');
 
       const failures: string[] = [];
-
-      // 상세 정보, 결과물, 지표를 병렬로 조회
+      const API_BASE = import.meta.env.VITE_API_BASE_URL;
+      console.log('[useTaskDetail] API_BASE:', API_BASE);
+ole.log('[useTaskDetail] Fetching detail, outcomes, and metrics for:', taskId);
       const [detail, outcomesResponse, metricsResponse] = await Promise.all([
         getTaskDetail(taskId, { includeTechnicalLogs }),
         getTaskOutcomes(taskId).catch(err => {
@@ -90,6 +92,40 @@ export function useTaskDetail(options: UseTaskDetailOptions = {}) {
           return null;
         }),
       ]);
+      console.log('[useTaskDetail] Received detail:', detail?.task_id, 'status:', detail?.status   return null;
+        }),
+      ]);
+
+      // [FIX] 완료된 작업의 경우 execution history를 추가로 가져옴
+      let executionHistory = null;
+      if (detail.status === 'completed' || detail.status === 'failed' || detail.status === 'cancelled') {
+        try {
+          const historyUrl = `${API_BASE}/executions/${encodeURIComponent(taskId)}/history`;
+          const historyResp = await fetch(historyUrl, { credentials: 'include' });
+          if (historyResp.ok) {
+            const historyData = await historyResp.json();
+            executionHistory = historyData;
+            
+            // state_history를 payload에 병합
+            if (historyData?.step_function_state?.state_history) {
+              if (!detail.payload) detail.payload = {};
+              if (!detail.payload.state_history) {
+                detail.payload.state_history = historyData.step_function_state.state_history;
+              }
+            }
+            
+            // workflow_config도 병합
+            if (historyData?.step_function_state?.workflow_config) {
+              if (!detail.workflow_config) {
+                detail.workflow_config = historyData.step_function_state.workflow_config;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to fetch execution history:', err);
+          failures.push('execution_history');
+        }
+      }
 
       // Track partial failures for UI feedback
       setPartialFailures(failures);
@@ -101,6 +137,7 @@ export function useTaskDetail(options: UseTaskDetailOptions = {}) {
         // 비즈니스 지표 데이터 추가
         business_metrics: metricsResponse,
         collapsed_history: outcomesResponse.collapsed_history,
+        execution_history: executionHistory,
         _partialFailures: failures, // Expose to UI
       };
     },
@@ -299,10 +336,17 @@ export function useTaskManager(options: UseTaskManagerOptions = {}) {
   });
 
   // 선택된 Task 상세 조회
+  console.log('[useTaskManager] Initializing taskDetail with selectedId:', selectedId);
   const taskDetail = useTaskDetail({
     taskId: selectedId || undefined,
     includeTechnicalLogs: optionsRef.current.showTechnicalLogs,
     refetchInterval: optionsRef.current.autoRefresh && selectedId ? 5000 : false,
+  });
+  console.log('[useTaskManager] taskDetail state:', {
+    task: taskDetail.task?.task_id,
+    isLoading: taskDetail.isLoading,
+    isError: taskDetail.isError,
+    error: taskDetail.error?.message
   });
 
   // 실시간 스트림
@@ -317,8 +361,11 @@ export function useTaskManager(options: UseTaskManagerOptions = {}) {
 
   // Task 선택
   const selectTask = useCallback((taskId: string | null) => {
+    console.log('[useTaskManager] selectTask called with:', taskId);
+    console.log('[useTaskManager] Previous selectedId:', selectedId);
     setSelectedId(taskId);
-  }, []);
+    console.log('[useTaskManager] setSelectedId called');
+  }, [selectedId]);
 
   // 승인 대기 Task 필터
   const pendingApprovalTasks = taskList.tasks.filter(t => t.status === 'pending_approval');

@@ -48,15 +48,13 @@ class PlanBriefingService:
     - 예상 결과물 초안
     """
     
-    def __init__(self, gemini_api_key: Optional[str] = None):
-        """
-        Args:
-            gemini_api_key: Gemini API 키 (없으면 환경변수에서 로드)
-        """
+    def __init__(self):
+        """Gemini service는 lazy initialization으로 필요할 때만 초기화됩니다"""
         self.gemini_service = None
         if HAS_GEMINI:
             try:
-                self.gemini_service = GeminiService(api_key=gemini_api_key)
+                # Vertex AI 기반 GeminiService 초기화 (API 키 없이)
+                self.gemini_service = GeminiService()
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini service: {e}")
     
@@ -98,15 +96,6 @@ If the workflow is in Korean, respond in Korean. If in English, respond in Engli
     
     # 외부 영향이 있는 노드 타입
     SIDE_EFFECT_TYPES = {"email", "api_call", "webhook", "notification", "payment"}
-
-    def __init__(self, openai_api_key: Optional[str] = None):
-        """
-        Args:
-            openai_api_key: OpenAI API 키 (없으면 환경변수에서 로드)
-        """
-        self.api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
-        if HAS_OPENAI and self.api_key:
-            openai.api_key = self.api_key
 
     async def generate_briefing(
         self,
@@ -166,16 +155,26 @@ If the workflow is in Korean, respond in Korean. If in English, respond in Engli
             max_output_tokens=4096,
             temperature=0.3,  # 일관된 분석을 위해 낮은 temperature
             response_mime_type="application/json",
+            system_instruction=self.SYSTEM_INSTRUCTION
+        )
+        
+        # 기존 service가 있으면 재사용, 없으면 새로 생성
+        if not self.gemini_service:
+            self.gemini_service = GeminiService(config)
+        else:
+            # config 업데이트
+            self.gemini_service.config = config
+        
+        # Gemini API 호출 (Vertex AI 방식)
+        response = self.gemini_service.invoke_model(
+            user_prompt=analysis_prompt,
             system_instruction=self.SYSTEM_INSTRUCTION,
-            enable_thinking=False  # 빠른 응답을 위해 thinking 모드 비활성화
+            max_output_tokens=4096,
+            temperature=0.3
         )
         
-        # Gemini API 호출
-        response_text = await self.gemini_service.generate_content(
-            prompt=analysis_prompt,
-            config=config
-        )
-        
+        # 응답에서 텍스트 추출
+        response_text = self.gemini_service.extract_text(response)
         analysis = json.loads(response_text)
         
         return self._build_briefing_from_analysis(workflow_config, analysis)
