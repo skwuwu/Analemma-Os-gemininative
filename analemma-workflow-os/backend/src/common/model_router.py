@@ -92,6 +92,7 @@ class ModelConfig:
     supports_long_context: bool = False      # 1M+ 토큰 컨텍스트 지원
     supports_structured_output: bool = False  # Response Schema 지원
     supports_streaming: bool = True           # 스트리밍 지원
+    supports_thinking: bool = False           # Thinking Mode (Chain of Thought) 지원
     # [② Context Caching 지원]
     supports_context_caching: bool = False   # Gemini Context Caching API 지원
     cached_cost_per_1k_tokens: float = 0.0   # 캐싱 적용 시 비용 (90% 절감)
@@ -632,6 +633,20 @@ AVAILABLE_MODELS = {
         cached_cost_per_1k_tokens=0.01875,  # 75% discount with caching
         expected_ttft_ms=150,               # Very fast response
         expected_tps=150,                   # High throughput
+    ),
+    "gemini-2.0-flash-thinking-exp": ModelConfig(
+        model_id="gemini-2.0-flash-thinking-exp",
+        max_tokens=8192,
+        cost_per_1k_tokens=0.075,  # Same as flash
+        tier=ModelTier.PREMIUM,
+        provider=ModelProvider.GEMINI,
+        supports_long_context=True,
+        supports_structured_output=True,
+        supports_context_caching=True,
+        supports_thinking=True,             # Thinking Mode 지원
+        cached_cost_per_1k_tokens=0.01875,  # 75% discount with caching
+        expected_ttft_ms=200,               # Slightly slower due to thinking
+        expected_tps=120,                   # High throughput maintained
     ),
     "gemini-1.5-pro": ModelConfig(
         model_id="gemini-1.5-pro",
@@ -1175,6 +1190,28 @@ def select_optimal_model(
     Returns:
         ModelConfig: 선택된 모델 설정
     """
+    
+    # ──────────────────────────────────────────────────────────
+    # [Design Mode Special Handling] Thinking 지원 모델 우선 선택
+    # ──────────────────────────────────────────────────────────
+    if canvas_mode in ["agentic-designer", "co-design"]:
+        # 디자인 모드에서는 Thinking Mode가 유용하므로 thinking 지원 모델 우선 선택
+        thinking_models = ["gemini-2.0-flash-thinking-exp", "gemini-1.5-pro"]
+        
+        for model_name in thinking_models:
+            if model_name in AVAILABLE_MODELS:
+                model_config = AVAILABLE_MODELS[model_name]
+                # 예산 제약 확인
+                if budget_constraint and model_config.tier.value > budget_constraint.value:
+                    continue
+                # Gemini 우선 정책 확인
+                if not prefer_gemini and "gemini" in model_name:
+                    continue
+                    
+                logger.info(f"Design mode: Selected thinking-capable model {model_name} for {canvas_mode}")
+                return model_config
+        
+        logger.warning(f"Design mode: No thinking-capable models available, falling back to standard selection")
     
     # 복잡도 분석
     recommended_tier = estimate_request_complexity(

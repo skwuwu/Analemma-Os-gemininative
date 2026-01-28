@@ -51,8 +51,34 @@ def _get_lambda_client():
     return _lambda_client
 
 
-def _get_events_client():
-    return boto3.client("events")
+def _get_original_owner_id(execution_arn: str) -> Optional[str]:
+    """
+    DynamoDB에서 executionArn으로 원래 실행 기록을 조회하여 ownerId를 반환합니다.
+    ExecutionsTableV3의 구조: PK(ownerId), SK(executionArn)
+    """
+    try:
+        dynamodb = _get_dynamodb()
+        table = dynamodb.Table(EXECUTIONS_TABLE)
+        
+        # executionArn으로 스캔 (비효율적이지만 정확함)
+        # FilterExpression을 사용하여 executionArn이 정확히 일치하는 항목만 필터링
+        response = table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr("executionArn").eq(execution_arn)
+        )
+        
+        items = response.get("Items", [])
+        if items:
+            # 첫 번째 일치 항목의 ownerId 반환
+            owner_id = items[0].get("ownerId")
+            logger.info(f"Found owner_id: {owner_id} for execution: {execution_arn}")
+            return owner_id
+        
+        logger.error(f"No execution record found for {execution_arn}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Failed to retrieve owner_id for {execution_arn}: {e}")
+        return None
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -76,7 +102,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         detail = event.get("detail", {})
         
         execution_arn = detail.get("executionArn") or detail.get("execution_arn")
-        owner_id = detail.get("ownerId") or detail.get("owner_id", "system")
         error_type = detail.get("error_type", detail.get("Error", "UnknownError"))
         error_message = detail.get("error_message", detail.get("Cause", ""))
         healing_count = detail.get("healing_count", detail.get("_self_healing_count", 0))
@@ -84,6 +109,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if not execution_arn:
             logger.error("Missing executionArn in event")
             return {"status": "error", "message": "Missing executionArn"}
+        
+        # DynamoDB에서 원래 실행 기록을 조회하여 ownerId 가져오기
+        owner_id = _get_original_owner_id(execution_arn)
+        if not owner_id:
+            logger.error(f"Could not find original execution record for {execution_arn}")
+            return {"status": "error", "message": "Could not find original execution record"}
+        
+        logger.info(f"Retrieved original owner_id: {owner_id} for execution: {execution_arn}")
         
         # ErrorClassifier import (동적 로드)
         from src.services.recovery.error_classifier import get_error_classifier, ErrorCategory

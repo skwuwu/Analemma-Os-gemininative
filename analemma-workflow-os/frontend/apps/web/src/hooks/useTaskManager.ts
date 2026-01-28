@@ -98,7 +98,7 @@ export function useTaskDetail(options: UseTaskDetailOptions = {}) {
       let executionHistory = null;
       if (detail.status === 'completed' || detail.status === 'failed' || detail.status === 'cancelled') {
         try {
-          const historyUrl = `${API_BASE}/executions/${encodeURIComponent(taskId)}/history`;
+          const historyUrl = `${API_BASE}/executions/history?executionArn=${encodeURIComponent(taskId)}`;
           const historyResp = await fetch(historyUrl, { credentials: 'include' });
           if (historyResp.ok) {
             const historyData = await historyResp.json();

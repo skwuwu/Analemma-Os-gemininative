@@ -659,16 +659,12 @@ def lambda_handler(event, context):
     # 🚀 Override max_concurrency with strategy-recommended value (strategy calculated earlier)
     max_concurrency = distributed_strategy.get("max_concurrency", max_concurrency)
     
-    logger.info(f"[FIXED_ROBUST] Returning state data. partition_map_s3_path: '{partition_map_s3_path}'")
-
-    # 🛡️ [Critical Fix] Ensure total_segments uses Top-Level Count
-    # Step Functions Loop (0..N-1) relies on this value matching partition_map length.
-    # Recursive count from partition_result might be higher, causing index out of bounds.
-    safe_total_segments = len(partition_map)
-    if safe_total_segments < 1:
-        safe_total_segments = 1
-        
-    return {
+    # 🚨 [Critical Fix] S3 Offloading for InitializeStateDataFunction Response
+    # Step Functions has 256KB limit on Lambda response size
+    STREAM_INLINE_THRESHOLD_BYTES = int(os.environ.get("STREAM_INLINE_THRESHOLD_BYTES", "200000"))  # 200KB default
+    
+    # Prepare the response data
+    response_data = {
         "workflow_config": workflow_config,
         "current_state": current_state,
         "input": input_value,
@@ -712,4 +708,60 @@ def lambda_handler(event, context):
         "max_loop_iterations": int(workflow_config.get("max_loop_iterations", 100)),
         "max_branch_iterations": int(workflow_config.get("max_branch_iterations", 100))
     }
+    
+    # Calculate response size and offload if necessary
+    response_json = json.dumps(response_data, default=str, ensure_ascii=False)
+    response_size_bytes = len(response_json.encode('utf-8'))
+    response_size_kb = response_size_bytes / 1024
+    
+    logger.info(f"InitializeStateData response size: {response_size_kb:.1f}KB (threshold: {STREAM_INLINE_THRESHOLD_BYTES/1024:.1f}KB)")
+    
+    if response_size_bytes > STREAM_INLINE_THRESHOLD_BYTES:
+        logger.warning(f"Response size {response_size_kb:.1f}KB exceeds threshold. Offloading to S3...")
+        
+        # Get S3 bucket for workflow state
+        bucket = os.environ.get("WORKFLOW_STATE_BUCKET", "analemma-workflow-state-dev")
+        
+        # Create S3 key for offloaded data
+        s3_key = f"initialize-state/{owner_id}/{workflow_id}/{idempotency_key}/response.json"
+        
+        try:
+            # Upload to S3
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=s3_key,
+                Body=response_json.encode('utf-8'),
+                ContentType='application/json',
+                Metadata={
+                    'response_size_kb': str(int(response_size_kb)),
+                    'created_at': str(current_time),
+                    'workflow_id': workflow_id,
+                    'owner_id': owner_id
+                }
+            )
+            
+            s3_path = f"s3://{bucket}/{s3_key}"
+            logger.info(f"InitializeStateData response offloaded to S3: {s3_path}")
+            
+            # Return minimal response with S3 reference
+            return {
+                "__s3_offloaded": True,
+                "__s3_path": s3_path,
+                "__original_size_kb": response_size_kb,
+                # Include essential fields for Step Functions routing
+                "total_segments": safe_total_segments,
+                "distributed_mode": is_distributed_mode,
+                "max_concurrency": max_concurrency,
+                "distributed_strategy": distributed_strategy["strategy"],
+                "MOCK_MODE": mock_mode
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to offload InitializeStateData response to S3: {e}")
+            # Fallback: return original data with warning
+            logger.warning(f"Proceeding with inline response ({response_size_kb:.1f}KB) despite size limit")
+            return response_data
+    else:
+        # Response size is acceptable
+        return response_data
 

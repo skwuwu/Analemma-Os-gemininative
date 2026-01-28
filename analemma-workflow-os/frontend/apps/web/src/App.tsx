@@ -10,6 +10,7 @@ import { PageLoading } from "@/components/ui/loading";
 // Pages - Lazy loaded for code splitting
 const Index = React.lazy(() => import("./pages/Index"));
 const TaskManager = React.lazy(() => import("./pages/TaskManager"));
+const WorkflowMonitor = React.lazy(() => import("./pages/WorkflowMonitor"));
 const NotFound = React.lazy(() => import("./pages/NotFound"));
 
 // Custom Auth Component
@@ -58,6 +59,7 @@ function AppContent() {
               {/* /workflows → /tasks 리다이렉트 (Task Manager 통합) */}
               <Route path="/workflows" element={<Navigate to="/tasks" replace />} />
               <Route path="/tasks" element={<TaskManager signOut={signOut} />} />
+              <Route path="/monitor" element={<WorkflowMonitor signOut={signOut} />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

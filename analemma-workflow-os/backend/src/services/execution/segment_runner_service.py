@@ -1998,7 +1998,25 @@ class SegmentRunnerService:
         3. Intelligent Retry: 적응형 품질 임계값 + 정보 증류
         4. Budget/Drift Guardrail: 비용 서킷 브레이커 + 시맨틱 드리프트 감지
         """
-        # 🛡️ [v3.6] Entropy Shield: 입력을 받자마자 StateBag으로 변환하여 하위 로직 전체를 보호
+        # � [Critical Fix] Restore InitializeStateData S3 Offloading
+        # If the event is S3 offloaded from InitializeStateDataFunction, restore it
+        if isinstance(event, dict) and event.get('__s3_offloaded') is True:
+            s3_path = event.get('__s3_path')
+            if s3_path:
+                try:
+                    logger.info(f"[InitializeStateData Offload] Restoring event from S3: {s3_path}")
+                    restored_event = self.state_manager.download_state_from_s3(s3_path)
+                    if isinstance(restored_event, dict):
+                        event = restored_event
+                        logger.info(f"[InitializeStateData Offload] Successfully restored event ({len(str(event))} chars)")
+                    else:
+                        logger.error(f"[InitializeStateData Offload] Restored data is not a dict: {type(restored_event)}")
+                        raise ValueError("Invalid restored event data")
+                except Exception as e:
+                    logger.error(f"[InitializeStateData Offload] Failed to restore event from S3: {e}")
+                    raise RuntimeError(f"Failed to restore InitializeStateData from S3: {e}")
+        
+        # �🛡️ [v3.6] Entropy Shield: 입력을 받자마자 StateBag으로 변환하여 하위 로직 전체를 보호
         # event.get('current_state')가 None이어도 ensure_state_bag이 빈 StateBag으로 승격시킴
         from src.common.statebag import ensure_state_bag
         event['current_state'] = ensure_state_bag(event.get('current_state') or event.get('state', {}))

@@ -81,6 +81,7 @@ class TokenUsage:
 # Model-specific pricing (USD per 1M tokens, as of January 2026)
 MODEL_PRICING = {
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40, "cached_input": 0.025},
+    "gemini-2.0-flash-thinking-exp": {"input": 0.10, "output": 0.40, "cached_input": 0.025},  # Same as flash
     "gemini-1.5-pro": {"input": 1.25, "output": 5.00, "cached_input": 0.3125},
     "gemini-1.5-flash": {"input": 0.075, "output": 0.30, "cached_input": 0.01875},
     "gemini-1.5-flash-8b": {"input": 0.0375, "output": 0.15, "cached_input": 0.01},
@@ -189,6 +190,7 @@ class GeminiModel(Enum):
     """Available Gemini models"""
     # Pro: Complex reasoning, structural analysis, large-scale context
     GEMINI_2_0_FLASH = "gemini-2.0-flash"
+    GEMINI_2_0_FLASH_THINKING_EXP = "gemini-2.0-flash-thinking-exp"  # Thinking Mode 지원 최상위 모델
     GEMINI_1_5_PRO = "gemini-1.5-pro"
     # Flash: Fast responses, real-time collaboration, cost efficiency
     GEMINI_1_5_FLASH = "gemini-1.5-flash"
@@ -235,6 +237,26 @@ class GeminiConfig:
 
 # Singleton client
 _gemini_client = None
+
+
+def _supports_thinking(model_name: str) -> bool:
+    """
+    Check if the given Gemini model supports thinking mode.
+    
+    Based on Google AI documentation, only certain models support thinking_config:
+    - gemini-2.0-flash-thinking-exp (explicit thinking model - HIGHEST priority)
+    - gemini-1.5-pro (some versions may support)
+    
+    Models that do NOT support thinking:
+    - gemini-2.0-flash
+    - gemini-1.5-flash
+    - gemini-1.5-flash-8b
+    """
+    thinking_supported_models = {
+        "gemini-2.0-flash-thinking-exp",  # Highest priority for thinking
+        "gemini-1.5-pro"
+    }
+    return model_name in thinking_supported_models
 
 
 def _convert_json_schema_to_vertex(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -1074,7 +1096,7 @@ class GeminiService:
         # ═══════════════════════════════════════════════════════════════════════
         # Thinking Mode setup (Gemini 2.0+ thinking_config)
         # ═══════════════════════════════════════════════════════════════════════
-        if use_thinking:
+        if use_thinking and _supports_thinking(self.config.model.value):
             # Use Gemini 2.0's thinking_config
             # https://ai.google.dev/gemini-api/docs/thinking
             generation_config["thinking_config"] = {
@@ -1082,6 +1104,9 @@ class GeminiService:
                 "include_thoughts": True  # Expose thinking process to UI
             }
             logger.info(f"Thinking Mode enabled with budget: {thinking_budget} tokens")
+        elif use_thinking:
+            logger.warning(f"Thinking Mode requested but not supported by model {self.config.model.value}. Skipping thinking_config.")
+            # Thinking을 지원하지 않는 모델에서는 thinking_budget을 0으로 설정하여 일반 모드로 동작
         
         # Get safety settings to prevent false positives on technical content
         safety_settings = _get_safety_settings()
@@ -2147,9 +2172,10 @@ def get_gemini_codesign_service() -> GeminiService:
     - Context Caching: structure_tools + graph_dsl cached (75% cost reduction)
     - Thinking Mode ready: Chain of Thought visualization
     - Real-time streaming: Low latency for interactive design
+    - Uses gemini-2.0-flash-thinking-exp: Highest tier thinking-capable model
     """
     return GeminiService(GeminiConfig(
-        model=GeminiModel.GEMINI_2_0_FLASH,
+        model=GeminiModel.GEMINI_2_0_FLASH_THINKING_EXP,  # Thinking 지원 최상위 모델
         max_output_tokens=4096,
         temperature=0.8,
         enable_thinking=True,

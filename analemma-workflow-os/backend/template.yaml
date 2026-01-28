@@ -1745,6 +1745,11 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ExecutionsTableV3
+        - Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:Scan
+            Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ExecutionsTableV3}"
         - EventBridgePutEventsPolicy:
             EventBusName: !Ref WorkflowEventBus
         - Statement:

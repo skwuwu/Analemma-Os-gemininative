@@ -488,19 +488,24 @@ class TaskService:
         Executions 테이블에서 직접 태스크 정보 조회
         
         진행 중인 작업이 notification 테이블에 없는 경우 사용
+        멀티 테넌트 격리를 위해 자신의 owner_id로만 조회
         """
         try:
             logger.info(f"[ExecutionsTable] Querying for task_id={task_id[:8]}..., owner_id={owner_id[:8]}...")
             
             # Executions 테이블에서 조회 (PK: ownerId, SK: executionArn)
-            # task_id는 보통 execution ARN의 마지막 부분이므로 full ARN 구성 필요
+            # executionArn 구조: arn:aws:states:region:account:execution:stateMachineName:executionName
+            # executionName이 task_id와 일치해야 함
+            
+            # 🔒 보안: 멀티 테넌트 격리를 위해 자신의 owner_id로만 조회
+            # 시스템 실행은 별도 처리하지 않음 (격리 위반 방지)
             get_func = partial(
                 self.execution_table.query,
                 KeyConditionExpression="ownerId = :oid",
-                FilterExpression="contains(executionArn, :tid)",
+                FilterExpression="executionArn LIKE :arn_pattern",
                 ExpressionAttributeValues={
                     ":oid": owner_id,
-                    ":tid": task_id
+                    ":arn_pattern": f"%:{task_id}"  # executionArn 끝이 :task_id로 끝나는 패턴
                 },
                 Limit=10  # 여러 개 가져와서 확인
             )
@@ -508,14 +513,27 @@ class TaskService:
             response = await asyncio.get_event_loop().run_in_executor(None, get_func)
             items = response.get('Items', [])
             
-            logger.info(f"[ExecutionsTable] Found {len(items)} items for task_id={task_id[:8]}...")
+            logger.info(f"[ExecutionsTable] Found {len(items)} items for owner_id={owner_id[:8]}...")
             
             if not items:
                 logger.warning(f"Task {task_id[:8]}... not found in executions table for owner {owner_id[:8]}...")
                 return None
             
+            # 정확한 매칭 확인 (executionArn의 마지막 부분이 task_id와 일치하는지)
+            matching_items = []
+            for item in items:
+                execution_arn = item.get('executionArn', '')
+                if execution_arn.endswith(f':{task_id}'):
+                    execution_name = execution_arn.split(':')[-1]
+                    if execution_name == task_id:
+                        matching_items.append(item)
+            
+            if not matching_items:
+                logger.warning(f"No exact executionArn match found for task_id={task_id[:8]}...")
+                return None
+            
             # 가장 최신 항목 사용 (startDate 기준)
-            execution = max(items, key=lambda x: x.get('startDate', ''))
+            execution = max(matching_items, key=lambda x: x.get('startDate', ''))
             logger.info(f"Found task {task_id[:8]}... in executions table, status={execution.get('status')}")
             
             # Execution을 Task 형식으로 변환

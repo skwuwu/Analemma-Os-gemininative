@@ -38,10 +38,18 @@ import {
   GitBranch,
   Box,
   Play,
-  Square
+  Square,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 
 // Components
 import { TaskBentoGrid } from '@/components/TaskBentoGrid';
@@ -59,7 +67,7 @@ import { useWorkflowApi } from '@/hooks/useWorkflowApi';
 import { useCheckpoints, useTimeMachine } from '@/hooks/useBriefingAndCheckpoints';
 import { useNodeExecutionStatus } from '@/hooks/useNodeExecutionStatus';
 import { useExecutionTimeline } from '@/hooks/useExecutionTimeline';
-import type { TaskSummary, TaskStatus, TimelineItem, NotificationItem, HistoryEntry, ResumeWorkflowRequest } from '@/lib/types';
+import type { TaskSummary, TaskStatus, TimelineItem, NotificationItem, HistoryEntry, ResumeWorkflowRequest, ExecutionSummary } from '@/lib/types';
 
 interface TaskManagerProps {
   signOut?: () => void;
@@ -113,6 +121,9 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   const [outcomeModalOpen, setOutcomeModalOpen] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | undefined>(undefined);
   
+  // 아코디언 상태 관리 (기본적으로 모두 접힘)
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+  
   // Rollback state (for Timeline sub-tab)
   const [rollbackDialogOpen, setRollbackDialogOpen] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState<TimelineItem | null>(null);
@@ -137,7 +148,43 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   });
   
   // API 훅
-  const { resumeWorkflow, stopExecution, isStopping, isResuming, dismissNotification, isDismissing } = useWorkflowApi();
+  const { resumeWorkflow, stopExecution, isStopping, isResuming, dismissNotification, isDismissing, fetchExecutions } = useWorkflowApi();
+  
+  // Execution 목록 상태 (완료된 executions용)
+  const [completedExecutions, setCompletedExecutions] = useState<ExecutionSummary[]>([]);
+  const [isLoadingExecutions, setIsLoadingExecutions] = useState(false);
+  const [executionsNextToken, setExecutionsNextToken] = useState<string | undefined>();
+
+  // 완료된 executions 로드 함수
+  const loadCompletedExecutions = useCallback(async (token?: string) => {
+    try {
+      setIsLoadingExecutions(true);
+      const response = await fetchExecutions(token);
+      
+      // 완료된 상태만 필터링
+      const completedItems = response.executions.filter((exec: ExecutionSummary) => 
+        ['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'ABORTED'].includes(exec.status || '')
+      );
+      
+      if (token) {
+        setCompletedExecutions(prev => [...prev, ...completedItems]);
+      } else {
+        setCompletedExecutions(completedItems);
+      }
+      
+      setExecutionsNextToken(response.nextToken);
+    } catch (error) {
+      console.error('Failed to load completed executions:', error);
+      toast.error('완료된 실행 목록을 불러오는데 실패했습니다');
+    } finally {
+      setIsLoadingExecutions(false);
+    }
+  }, [fetchExecutions]);
+
+  // 컴포넌트 마운트 시 완료된 executions 로드 (한 번만)
+  useEffect(() => {
+    loadCompletedExecutions();
+  }, [loadCompletedExecutions]);
   
   // ExecutionTimeline 훅
   const { executionTimelines, fetchExecutionTimeline } = useExecutionTimeline(notifications, API_BASE);
@@ -307,6 +354,47 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
     completed: taskManager.tasks.filter(t => t.status === 'completed').length,
   }), [taskManager.tasks, taskManager.inProgressTasks, taskManager.pendingApprovalTasks]);
 
+  // 작업 그룹화 (진행중 vs 완료)
+  const taskGroups = useMemo(() => {
+    const filteredTasks = taskManager.tasks.filter(task => {
+      // 검색어 필터링
+      if (searchQuery && !task.task_summary?.toLowerCase().includes(searchQuery.toLowerCase()) &&
+          !task.agent_name?.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return false;
+      }
+      
+      // 상태 필터링
+      if (statusFilter !== 'all' && task.status !== statusFilter) {
+        return false;
+      }
+      
+      return true;
+    });
+
+    const inProgressTasks = filteredTasks.filter(task => 
+      ['in_progress', 'pending_approval', 'queued'].includes(task.status)
+    );
+    
+    // 완료된 executions를 TaskSummary 형식으로 변환
+    const completedTasks = completedExecutions.map(exec => ({
+      task_id: exec.executionArn || exec.execution_id || '',
+      task_summary: exec.name || 'Completed Execution',
+      agent_name: 'System',
+      status: exec.status?.toLowerCase().replace('_', ' ') || 'completed',
+      current_step_name: exec.status || 'Completed',
+      progress_percentage: 100,
+      workflow_name: 'Legacy Workflow',
+      created_at: exec.startDate ? new Date(exec.startDate).getTime() : Date.now(),
+      is_interruption: false,
+      artifacts_count: 0,
+    }));
+
+    return {
+      inProgress: inProgressTasks,
+      completed: completedTasks
+    };
+  }, [taskManager.tasks, searchQuery, statusFilter, completedExecutions]);
+
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden">
       {/* 헤더 */}
@@ -380,48 +468,131 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
             </div>
 
             <ScrollArea className="flex-1">
-                <div className="p-3 space-y-2">
+                <div className="p-3">
                     {taskManager.isLoading ? (
-                        [1, 2, 3].map((i) => (
-                            <Skeleton key={i} className="h-24 w-full bg-slate-800 rounded-lg" />
-                        ))
-                    ) : filteredTasks.length === 0 ? (
-                        <div className="text-center py-10 text-slate-500 text-sm">
-                            No tasks available.
+                        <div className="space-y-2">
+                            {[1, 2, 3].map((i) => (
+                                <Skeleton key={i} className="h-24 w-full bg-slate-800 rounded-lg" />
+                            ))}
                         </div>
                     ) : (
-                        filteredTasks.map((task) => (
-                            <div
-                                key={task.task_id}
-                                onClick={() => handleTaskClick(task)}
-                                className={`
-                                    p-3 rounded-lg border cursor-pointer transition-all duration-200
-                                    ${taskManager.selectedTaskId === task.task_id 
-                                        ? 'bg-slate-800 border-sky-500/50 shadow-md' 
-                                        : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600'}
-                                `}
-                            >
-                                <div className="flex justify-between items-start mb-2">
+                        <Accordion 
+                            type="multiple" 
+                            value={expandedGroups} 
+                            onValueChange={setExpandedGroups}
+                            className="space-y-2"
+                        >
+                            {/* 진행중 작업 그룹 */}
+                            <AccordionItem value="in-progress" className="border-slate-700">
+                                <AccordionTrigger className="px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800/50 rounded-md">
                                     <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
-                                            <Bot className="w-3 h-3 text-slate-300" />
-                                        </div>
-                                        <span className="text-xs font-medium text-slate-200 truncate max-w-[120px]">
-                                            {task.agent_name}
-                                        </span>
+                                        <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                                        <span>진행중</span>
+                                        <Badge variant="outline" className="text-xs text-blue-400 border-blue-700">
+                                            {taskGroups.inProgress.length}
+                                        </Badge>
                                     </div>
-                                    <StatusIcon status={task.status} />
-                                </div>
-                                <h4 className="text-sm font-medium text-slate-100 mb-1 line-clamp-1">
-                                    {task.task_summary || 'Task in progress'}
-                                </h4>
-                                <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2">
-                                    <span>{task.current_step_name || 'Waiting'}</span>
-                                    <span>{task.progress_percentage}%</span>
-                                </div>
-                                <Progress value={task.progress_percentage} className="h-1 mt-1 bg-slate-700" />
-                            </div>
-                        ))
+                                </AccordionTrigger>
+                                <AccordionContent className="pb-2">
+                                    <div className="space-y-2">
+                                        {taskGroups.inProgress.length === 0 ? (
+                                            <div className="text-center py-4 text-slate-500 text-xs">
+                                                진행중인 작업이 없습니다.
+                                            </div>
+                                        ) : (
+                                            taskGroups.inProgress.map((task) => (
+                                                <div
+                                                    key={task.task_id}
+                                                    onClick={() => handleTaskClick(task)}
+                                                    className={`
+                                                        p-3 rounded-lg border cursor-pointer transition-all duration-200
+                                                        ${taskManager.selectedTaskId === task.task_id 
+                                                            ? 'bg-slate-800 border-sky-500/50 shadow-md' 
+                                                            : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600'}
+                                                    `}
+                                                >
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
+                                                                <Bot className="w-3 h-3 text-slate-300" />
+                                                            </div>
+                                                            <span className="text-xs font-medium text-slate-200 truncate max-w-[120px]">
+                                                                {task.agent_name}
+                                                            </span>
+                                                        </div>
+                                                        <StatusIcon status={task.status} />
+                                                    </div>
+                                                    <h4 className="text-sm font-medium text-slate-100 mb-1 line-clamp-1">
+                                                        {task.task_summary || 'Task in progress'}
+                                                    </h4>
+                                                    <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2">
+                                                        <span>{task.current_step_name || 'Waiting'}</span>
+                                                        <span>{task.progress_percentage}%</span>
+                                                    </div>
+                                                    <Progress value={task.progress_percentage} className="h-1 mt-1 bg-slate-700" />
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </AccordionContent>
+                            </AccordionItem>
+
+                            {/* 완료된 작업 그룹 */}
+                            <AccordionItem value="completed" className="border-slate-700">
+                                <AccordionTrigger className="px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800/50 rounded-md">
+                                    <div className="flex items-center gap-2">
+                                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                                        <span>완료됨</span>
+                                        <Badge variant="outline" className="text-xs text-green-400 border-green-700">
+                                            {taskGroups.completed.length}
+                                        </Badge>
+                                    </div>
+                                </AccordionTrigger>
+                                <AccordionContent className="pb-2">
+                                    <div className="space-y-2">
+                                        {taskGroups.completed.length === 0 ? (
+                                            <div className="text-center py-4 text-slate-500 text-xs">
+                                                완료된 작업이 없습니다.
+                                            </div>
+                                        ) : (
+                                            taskGroups.completed.map((task) => (
+                                                <div
+                                                    key={task.task_id}
+                                                    onClick={() => {
+                                                      // 완료된 execution은 상세 정보가 없으므로 클릭 비활성화 또는 다른 동작
+                                                      toast.info('완료된 실행의 상세 정보는 현재 지원되지 않습니다');
+                                                    }}
+                                                    className={`
+                                                        p-3 rounded-lg border cursor-pointer transition-all duration-200
+                                                        bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600
+                                                    `}
+                                                >
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
+                                                                <CheckCircle2 className="w-3 h-3 text-green-500" />
+                                                            </div>
+                                                            <span className="text-xs font-medium text-slate-200 truncate max-w-[120px]">
+                                                                {task.agent_name}
+                                                            </span>
+                                                        </div>
+                                                        <StatusBadge status={task.status} />
+                                                    </div>
+                                                    <h4 className="text-sm font-medium text-slate-100 mb-1 line-clamp-1">
+                                                        {task.task_summary}
+                                                    </h4>
+                                                    <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2">
+                                                        <span>{task.current_step_name}</span>
+                                                        <span>{task.progress_percentage}%</span>
+                                                    </div>
+                                                    <Progress value={task.progress_percentage} className="h-1 mt-1 bg-slate-700" />
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </AccordionContent>
+                            </AccordionItem>
+                        </Accordion>
                     )}
                 </div>
             </ScrollArea>
