@@ -78,7 +78,7 @@ export function useTaskDetail(options: UseTaskDetailOptions = {}) {
       const failures: string[] = [];
       const API_BASE = import.meta.env.VITE_API_BASE_URL;
       console.log('[useTaskDetail] API_BASE:', API_BASE);
-ole.log('[useTaskDetail] Fetching detail, outcomes, and metrics for:', taskId);
+      console.log('[useTaskDetail] Fetching detail, outcomes, and metrics for:', taskId);
       const [detail, outcomesResponse, metricsResponse] = await Promise.all([
         getTaskDetail(taskId, { includeTechnicalLogs }),
         getTaskOutcomes(taskId).catch(err => {
@@ -92,9 +92,7 @@ ole.log('[useTaskDetail] Fetching detail, outcomes, and metrics for:', taskId);
           return null;
         }),
       ]);
-      console.log('[useTaskDetail] Received detail:', detail?.task_id, 'status:', detail?.status   return null;
-        }),
-      ]);
+      console.log('[useTaskDetail] Received detail:', detail?.task_id, 'status:', detail?.status);
 
       // [FIX] 완료된 작업의 경우 execution history를 추가로 가져옴
       let executionHistory = null;
