@@ -592,12 +592,19 @@ def lambda_handler(event, context):
         # input size limits. We mirror the same threshold env var used elsewhere.
         try:
             SKELETON_STATE_BUCKET = os.environ.get('SKELETON_S3_BUCKET') or os.environ.get('WORKFLOW_STATE_BUCKET')
-            # Use a conservative default below the Step Functions 256KB limit
-            STREAM_INLINE_THRESHOLD = int(os.environ.get('STREAM_INLINE_THRESHOLD_BYTES', '250000'))
-            if SKELETON_STATE_BUCKET and input_data:
-                serialized = json.dumps(input_data, ensure_ascii=False)
-                if len(serialized.encode('utf-8')) > STREAM_INLINE_THRESHOLD:
-                    # upload to S3
+            # Use a conservative threshold below the Step Functions 256KB limit
+            # Reduced to 200KB to account for payload overhead (metadata, workflow_config, etc.)
+            STREAM_INLINE_THRESHOLD = int(os.environ.get('STREAM_INLINE_THRESHOLD_BYTES', '200000'))
+            
+            if SKELETON_STATE_BUCKET:
+                # Check ENTIRE payload size, not just initial_state
+                payload_serialized = json.dumps(payload, ensure_ascii=False, default=str)
+                payload_size = len(payload_serialized.encode('utf-8'))
+                
+                # If payload is too large, offload initial_state to S3
+                if payload_size > STREAM_INLINE_THRESHOLD and input_data:
+                    logger.warning(f"Payload size ({payload_size} bytes) exceeds threshold ({STREAM_INLINE_THRESHOLD}). Offloading initial_state to S3.")
+                    
                     # SECURITY: include owner_id (tenant) in the key path so that
                     # downstream Lambdas can validate the pointer belongs to the
                     # authenticated user and avoid IDOR. Require owner_id exists.
@@ -606,9 +613,11 @@ def lambda_handler(event, context):
 
                     key_prefix = f"workflow-states/{owner_id}/{workflow_id}/execution-inputs"
                     key = f"{key_prefix.rstrip('/')}/{uuid.uuid4()}.json"
+                    serialized = json.dumps(input_data, ensure_ascii=False)
                     s3.put_object(Bucket=SKELETON_STATE_BUCKET, Key=key, Body=serialized.encode('utf-8'))
                     payload.pop('initial_state', None)
                     payload['initial_state_s3_path'] = f"s3://{SKELETON_STATE_BUCKET}/{key}"
+                    logger.info(f"Offloaded initial_state to S3: {key}. New payload size: {len(json.dumps(payload, default=str).encode('utf-8'))} bytes")
         except Exception as e:
             # S3 offload failed while the payload is above the safe threshold.
             # Returning 500 is safer than attempting to send a too-large

@@ -2689,10 +2689,11 @@ class SegmentRunnerService:
                 # 2. Extract state to potentially offload
                 current_final_state = response_payload.get('final_state')
                 
-                # 3. Offload Logic: If state exists AND (forced offload OR payload > 128KB safe limit)
-                # Note: We use 128KB as a safety margin for the 256KB Step Functions limit,
-                # considering overhead from packaging and encoding.
-                should_offload = current_final_state and (payload_size > 128 * 1024)
+                # 3. Offload Logic: If state exists AND (forced offload OR payload > 100KB safe limit)
+                # Note: We use 100KB as a safety margin for the 256KB Step Functions limit,
+                # considering overhead from packaging, encoding, and ASL wrapper fields.
+                # Previous 128KB threshold was too close to the limit.
+                should_offload = current_final_state and (payload_size > 100 * 1024)
                 
                 if should_offload:
                     if not s3_bucket:
