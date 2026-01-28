@@ -1126,12 +1126,16 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /tasks
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
         GetTaskDetailEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /tasks/{id}
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # --- Skills API Functions ---
   ListSkillsFunction:
