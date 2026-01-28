@@ -1112,7 +1112,10 @@ export const convertWorkflowFromBackendFormat = (backendWorkflow: any): any => {
     }
   }
 
-  const frontendNodes = backendWorkflow.nodes?.map((node: BackendNode, index: number) => {
+  const frontendNodes = backendWorkflow.nodes?.filter((node: BackendNode) => {
+    // __auto_end 노드는 UI에 표시하지 않음 (백엔드 전용)
+    return node.id !== '__auto_end';
+  }).map((node: BackendNode, index: number) => {
     // 백엔드 타입을 프론트엔드 타입으로 매핑
     let frontendType = 'operator';
     let label = 'Block';
@@ -1417,7 +1420,10 @@ export const convertWorkflowFromBackendFormat = (backendWorkflow: any): any => {
   const allFrontendNodes = [...frontendNodes, ...hitlNodes, ...branchNodes];
 
   // 엣지 재구성
-  const frontendEdges = backendWorkflow.edges?.flatMap((edge: BackendEdge, index: number) => {
+  const frontendEdges = backendWorkflow.edges?.filter((edge: BackendEdge) => {
+    // __auto_end 노드와 연결된 엣지는 제외
+    return edge.source !== '__auto_end' && edge.target !== '__auto_end';
+  }).flatMap((edge: BackendEdge, index: number) => {
     // 1. HITL 엣지인 경우: 2개의 일반 엣지로 분할
     if (edge.type === 'hitp' || edge.type === 'human_in_the_loop') {
       const hitlNodeId = `hitl_${edge.source}_${edge.target}`;

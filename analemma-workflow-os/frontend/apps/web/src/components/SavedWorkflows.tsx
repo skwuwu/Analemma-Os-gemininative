@@ -138,10 +138,10 @@ export const SavedWorkflows = ({
         idToken
       );
 
-      // 심각한 오류가 있어도 경고만 표시 (변환 후이므로 대부분 해결됨)
+      // 심각한 오류가 있어도 경고만 로그 (변환 후이므로 대부분 해결됨)
       const criticalIssues = auditIssues.filter(issue => issue.level === 'error');
       if (criticalIssues.length > 0) {
-        console.warn('⚠️ [SavedWorkflows] Validation warnings after conversion:', {
+        console.log('⚠️ [SavedWorkflows] Validation warnings after conversion:', {
           issueCount: criticalIssues.length,
           issues: criticalIssues.map(issue => ({
             level: issue.level,
@@ -169,8 +169,7 @@ export const SavedWorkflows = ({
           }
         });
         
-        // 변환 후에도 에러가 있으면 경고 표시 (저장은 계속 진행)
-        toast.warning(`${criticalIssues.length} validation warning(s) after conversion. Proceeding with save.`);
+        // 변환 후 검증 경고는 UI에 표시하지 않음 (콘솔 로그만)
       }
 
       // Simulation 실행 (경로 검증 - 선택적)
@@ -180,14 +179,13 @@ export const SavedWorkflows = ({
       );
 
       if (simulationResult && !simulationResult.success) {
-        toast.info(`Workflow has logical issues but will be saved. Check audit panel for details.`);
+        console.log('⚠️ [SavedWorkflows] Workflow has logical issues (see audit panel)');
       } else {
         console.log('✅ [SavedWorkflows] Validation passed');
       }
     } catch (error) {
       console.error('[SavedWorkflows] Validation failed:', error);
-      // 검증 실패해도 저장은 허용 (경고만)
-      toast.warning('Validation incomplete, proceeding with save');
+      // 검증 실패해도 저장은 허용 (로그만)
     }
 
     // 3단계: 저장 실행

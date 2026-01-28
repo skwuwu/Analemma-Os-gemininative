@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
 import { useState, useCallback, useMemo } from 'react';
 
 // 백엔드 엣지 타입 정의
@@ -84,6 +85,8 @@ interface SmartEdgeData extends Record<string, unknown> {
 
 export const SmartEdge = ({
   id,
+  source,
+  target,
   sourceX,
   sourceY,
   targetX,
@@ -94,7 +97,7 @@ export const SmartEdge = ({
   markerEnd,
   data,
 }: EdgeProps) => {
-  const { setEdges } = useReactFlow();
+  const { setEdges, getEdges } = useReactFlow();
   const [isEditing, setIsEditing] = useState(false);
   const [conditionInput, setConditionInput] = useState('');
   const [isEditingLoop, setIsEditingLoop] = useState(false);
@@ -125,13 +128,13 @@ export const SmartEdge = ({
     
     for (const backEdge of backEdges) {
       // Loop entry edge: points to the same target as back-edge
-      if (edge.target === backEdge.target) return true;
+      if (target === backEdge.target) return true;
       // Loop exit edge: starts from the same source as back-edge
-      if (edge.source === backEdge.source) return true;
+      if (source === backEdge.source) return true;
     }
     
     return false;
-  }, [edge.source, edge.target, edgeData?.isBackEdge, getEdges]);
+  }, [source, target, edgeData?.isBackEdge, getEdges]);
 
   // 엣지 타입 변경 핸들러
   const handleTypeChange = useCallback((newType: BackendEdgeType) => {
