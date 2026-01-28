@@ -902,6 +902,19 @@ export const convertWorkflowToBackendFormat = (workflow: any): BackendWorkflow =
       // back-edge는 제외 (loop 노드 내부로 흡수됨)
       if (analysisResult.backEdgeIds.has(edge.id)) return false;
       
+      // HITL/Branch control 노드와 연결된 엣지는 나중에 변환되므로 유지
+      const sourceNode = nodes.find((n: any) => n.id === edge.source);
+      const targetNode = nodes.find((n: any) => n.id === edge.target);
+      
+      const isHitlOrBranchEdge = 
+        (sourceNode?.type === 'control' && (sourceNode?.data?.controlType === 'human' || sourceNode?.data?.controlType === 'branch')) ||
+        (targetNode?.type === 'control' && (targetNode?.data?.controlType === 'human' || targetNode?.data?.controlType === 'branch'));
+      
+      if (isHitlOrBranchEdge) {
+        // HITL/Branch 관련 엣지는 무조건 유지 (나중에 변환됨)
+        return true;
+      }
+      
       // source나 target이 제외된 노드인 경우
       if (excludedNodeIds.has(edge.source) && excludedNodeIds.has(edge.target)) {
         // 둘 다 같은 그룹에 속하면 제외
@@ -964,7 +977,16 @@ export const convertWorkflowToBackendFormat = (workflow: any): BackendWorkflow =
 
       // [수정] 일반 엣지도 검증
       if (!validBackendNodeIds.has(actualSource) || !validBackendNodeIds.has(actualTarget)) {
-        console.warn(`Skipping regular edge: missing node reference ${actualSource} -> ${actualTarget}`);
+        const sourceNode = nodes.find((n: any) => n.id === actualSource);
+        const targetNode = nodes.find((n: any) => n.id === actualTarget);
+        console.warn(`⚠️ [Converter] Skipping edge: nodes excluded from backend`, {
+          edge: `${actualSource} -> ${actualTarget}`,
+          sourceType: sourceNode?.type,
+          targetType: targetNode?.type,
+          reason: !validBackendNodeIds.has(actualSource) 
+            ? `Source node excluded (${excludedNodeIds.has(actualSource) ? 'in excluded set' : 'filtered out'})` 
+            : `Target node excluded (${excludedNodeIds.has(actualTarget) ? 'in excluded set' : 'filtered out'})`
+        });
         return null;
       }
 

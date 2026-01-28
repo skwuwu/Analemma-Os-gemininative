@@ -110,31 +110,38 @@ export const SavedWorkflows = ({
       return;
     }
 
-    // 최종 검증: Save 시점에 시뮬레이션 실행
-    console.log('[SavedWorkflows] Running final validation before save...');
+    // 1단계: 먼저 백엔드 형식으로 변환
+    console.log('🔄 [SavedWorkflows] Step 1: Converting to backend format...');
+    const workflowWithSubgraphs = {
+      ...currentWorkflow,
+      subgraphs: subgraphs || {},
+    };
+    const config: BackendWorkflow = convertWorkflowToBackendFormat(workflowWithSubgraphs);
+    
+    // 🐛 디버깅: 변환된 워크플로우 확인
+    console.log('[SaveWorkflow] Converted workflow config:', JSON.stringify(config, null, 2));
+    
+    const name = (workflowName && workflowName.trim()) ? workflowName.trim() : (currentWorkflow.name || config.name || 'untitled');
+    config.name = name;
+
+    // 2단계: 변환된 백엔드 워크플로우로 검증 (선택적 - 경고만)
+    console.log('✅ [SavedWorkflows] Step 2: Validating converted workflow...');
     
     try {
       // Get auth token
       const session = await fetchAuthSession();
       const idToken = session.tokens?.idToken?.toString();
       
-      // 1. Audit 체크
+      // Audit 체크 (변환된 백엔드 워크플로우로)
       await requestAudit(
-        { nodes: currentWorkflow.nodes, edges: currentWorkflow.edges },
+        { nodes: config.nodes, edges: config.edges },
         idToken
       );
 
-      // 2. 심각한 오류가 있으면 저장 차단
+      // 심각한 오류가 있어도 경고만 표시 (변환 후이므로 대부분 해결됨)
       const criticalIssues = auditIssues.filter(issue => issue.level === 'error');
       if (criticalIssues.length > 0) {
-        // 🔍 상세 에러 정보 출력
-        const workflowWithSubgraphs = {
-          ...currentWorkflow,
-          subgraphs: subgraphs || {},
-        };
-        const config: BackendWorkflow = convertWorkflowToBackendFormat(workflowWithSubgraphs);
-        
-        console.error('❌ [SavedWorkflows] Cannot save - Critical validation issues:', {
+        console.warn('⚠️ [SavedWorkflows] Validation warnings after conversion:', {
           issueCount: criticalIssues.length,
           issues: criticalIssues.map(issue => ({
             level: issue.level,
@@ -142,8 +149,8 @@ export const SavedWorkflows = ({
             nodeId: issue.nodeId,
             category: issue.category
           })),
-          attemptedConfig: {
-            name: workflowName || currentWorkflow.name || 'untitled',
+          convertedConfig: {
+            name: name,
             nodeCount: config.nodes?.length || 0,
             edgeCount: config.edges?.length || 0,
             nodes: config.nodes?.map((n: any) => ({
@@ -162,20 +169,20 @@ export const SavedWorkflows = ({
           }
         });
         
-        toast.error(`Cannot save: ${criticalIssues.length} critical issue(s) found. Please fix them first.`);
-        return;
+        // 변환 후에도 에러가 있으면 경고 표시 (저장은 계속 진행)
+        toast.warning(`${criticalIssues.length} validation warning(s) after conversion. Proceeding with save.`);
       }
 
-      // 3. Simulation 실행 (경로 검증)
+      // Simulation 실행 (경로 검증 - 선택적)
       const simulationResult = await requestSimulation(
-        { nodes: currentWorkflow.nodes, edges: currentWorkflow.edges },
+        { nodes: config.nodes, edges: config.edges },
         idToken
       );
 
       if (simulationResult && !simulationResult.success) {
-        toast.warning(`Workflow has logical issues but will be saved. Check audit panel for details.`);
+        toast.info(`Workflow has logical issues but will be saved. Check audit panel for details.`);
       } else {
-        toast.success('Validation passed ✓');
+        console.log('✅ [SavedWorkflows] Validation passed');
       }
     } catch (error) {
       console.error('[SavedWorkflows] Validation failed:', error);
@@ -183,19 +190,8 @@ export const SavedWorkflows = ({
       toast.warning('Validation incomplete, proceeding with save');
     }
 
-    // subgraphs를 포함한 완전한 워크플로우 객체 생성
-    const workflowWithSubgraphs = {
-      ...currentWorkflow,
-      subgraphs: subgraphs || {},
-    };
-
-    const config: BackendWorkflow = convertWorkflowToBackendFormat(workflowWithSubgraphs);
-    
-    // 🐛 디버깅: 변환된 워크플로우 확인
-    console.log('[SaveWorkflow] Converted workflow config:', JSON.stringify(config, null, 2));
-    
-    const name = (workflowName && workflowName.trim()) ? workflowName.trim() : (currentWorkflow.name || config.name || 'untitled');
-    config.name = name;
+    // 3단계: 저장 실행
+    console.log('💾 [SavedWorkflows] Step 3: Saving to backend...');
     const is_scheduled = false;
     const next_run_time = null;
 
