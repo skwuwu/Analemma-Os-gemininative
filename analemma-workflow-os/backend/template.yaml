@@ -480,6 +480,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /workflows/{id}/run
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   RecoverUsersFunction:
     Type: AWS::Serverless::Function
@@ -711,12 +713,16 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /design-assistant
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
         ApiEventPost:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /design-assistant
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # [추가] 명시적인 Function URL 리소스 정의 (참조 안정성 확보)
   # 🔒 SECURITY: AWS_IAM for access control
@@ -844,6 +850,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /executions/{id}/history
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # --- Functions (LangSmith 미적용 그룹) ---
 
@@ -867,6 +875,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /workflows
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   GetWorkflowByNameFunction:
     Type: AWS::Serverless::Function
@@ -888,6 +898,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /by-name
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   DeleteWorkflowFunction:
     Type: AWS::Serverless::Function
@@ -909,6 +921,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /workflows/{id}
             Method: DELETE
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   SaveWorkflowFunction:
     Type: AWS::Serverless::Function
@@ -932,12 +946,16 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /workflows
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         ApiEventUpdate:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /workflows/{id}
             Method: PUT
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # --- Co-design Assistant API Functions ---
   CodesignAssistantFunction:
@@ -978,24 +996,32 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /codesign
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         CodesignExplainEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /codesign/explain
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         CodesignSuggestionsEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /codesign/suggestions
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         CodesignApplySuggestionEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /codesign/apply-suggestion
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # --- Plan Briefing & Time Machine API Functions ---
   PlanBriefingFunction:
@@ -1036,12 +1062,16 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /workflows/preview
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         DetailedDraftEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /workflows/preview/detailed-draft
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         # Execution Timeline & Checkpoints
         TimelineEvent:
           Type: HttpApi
@@ -1049,18 +1079,24 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /executions/{id}/timeline
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
         CheckpointsListEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /executions/{id}/checkpoints
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
         CheckpointDetailEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /executions/{id}/checkpoints/{checkpoint_id}
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
         # Time Machine Operations
         RollbackPreviewEvent:
           Type: HttpApi
@@ -1068,30 +1104,40 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /executions/rollback/preview
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         RollbackExecuteEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /executions/rollback
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         CheckpointCompareEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /executions/checkpoints/compare
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         BranchHistoryEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /executions/{id}/branches
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
         RollbackSuggestionsEvent:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /executions/{id}/rollback-suggestions
             Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   # --- Task Manager API Functions ---
   TaskManagerFunction:
@@ -1434,6 +1480,8 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /api/media/upload
             Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
         PresignEvent:
           Type: HttpApi
           Properties:
