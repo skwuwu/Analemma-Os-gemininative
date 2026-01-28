@@ -149,7 +149,7 @@ Be specific and actionable. The user should understand exactly what will happen.
             user_context
         )
         
-        # Gemini 설정 - Plan Briefing uses Gemini 3 Pro for high-quality analysis
+        # Gemini 설정 - Plan Briefing uses Gemini 3 Pro Preview for high-quality analysis
         config = GeminiConfig(
             model=GeminiModel.GEMINI_3_PRO,
             max_output_tokens=4096,

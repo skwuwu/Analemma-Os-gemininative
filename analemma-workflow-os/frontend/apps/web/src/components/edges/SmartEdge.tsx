@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 
 // 백엔드 엣지 타입 정의
 export type BackendEdgeType = 'edge' | 'if' | 'while' | 'for_each' | 'hitp' | 'conditional_edge' | 'pause';

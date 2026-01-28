@@ -81,9 +81,9 @@ class TokenUsage:
 
 # Model-specific pricing (USD per 1M tokens, as of January 2026)
 MODEL_PRICING = {
-    # Gemini 3 (latest)
-    "gemini-3-pro": {"input": 1.50, "output": 6.00, "cached_input": 0.375},
-    "gemini-3-flash": {"input": 0.20, "output": 0.80, "cached_input": 0.05},
+    # Gemini 3 Preview (latest, official as of Jan 21, 2026)
+    "gemini-3-pro-preview": {"input": 0.00, "output": 0.00, "cached_input": 0.00},  # Preview - free during early access
+    "gemini-3-flash-preview": {"input": 0.00, "output": 0.00, "cached_input": 0.00},  # Preview - free during early access
     
     # Gemini 2.5
     "gemini-2.5-pro": {"input": 1.25, "output": 5.00, "cached_input": 0.3125},
@@ -195,9 +195,9 @@ MAX_IMAGES_PER_REQUEST = 16  # Vertex AI limit
 
 class GeminiModel(Enum):
     """Available Gemini models"""
-    # Gemini 3: Latest generation with advanced reasoning
-    GEMINI_3_PRO = "gemini-3-pro"  # 1M context, adaptive thinking
-    GEMINI_3_FLASH = "gemini-3-flash"  # Near-zero thinking level, best multimodal
+    # Gemini 3: Latest generation with advanced reasoning (Official Preview, Jan 2026)
+    GEMINI_3_PRO = "gemini-3-pro-preview"  # Gemini 3 Pro - enterprise-grade intelligence
+    GEMINI_3_FLASH = "gemini-3-flash-preview"  # Gemini 3 Flash - speed/cost optimized
     
     # Gemini 2.5: Thinking capabilities
     GEMINI_2_5_PRO = "gemini-2.5-pro"  # Adaptive thinking, 1M context
@@ -269,11 +269,11 @@ def _supports_thinking(model_name: str) -> bool:
     - gemini-1.5-flash-8b
     """
     thinking_supported_models = {
-        "gemini-3-pro",       # Gemini 3 - adaptive thinking
-        "gemini-3-flash",     # Gemini 3 - near-zero thinking
-        "gemini-2.5-flash",   # Vertex AI - controllable thinking budgets
-        "gemini-2.5-pro",     # Vertex AI - adaptive thinking
-        "gemini-1.5-pro"      # Legacy
+        "gemini-3-pro-preview",    # Gemini 3 Pro - adaptive thinking (official preview)
+        "gemini-3-flash-preview",  # Gemini 3 Flash - speed optimized thinking
+        "gemini-2.5-flash",        # Vertex AI - controllable thinking budgets
+        "gemini-2.5-pro",          # Vertex AI - adaptive thinking
+        "gemini-1.5-pro"           # Legacy
     }
     return model_name in thinking_supported_models
 
@@ -419,7 +419,10 @@ def _get_safety_settings():
 # Vertex AI Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "")
-GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+# [2026-01-28] Updated default location to "global" for Gemini 3 Preview support
+# Gemini 3 models (gemini-3-pro-preview, gemini-3-flash-preview) are available in "global" endpoint
+# For region-specific deployments, set GCP_LOCATION environment variable (e.g., "us-central1", "europe-west4")
+GCP_LOCATION = os.getenv("GCP_LOCATION", "global")
 GCP_SERVICE_ACCOUNT_KEY = os.getenv("GCP_SERVICE_ACCOUNT_KEY", "")  # JSON string
 
 _vertexai_initialized = False
@@ -2187,17 +2190,17 @@ def get_gemini_flash_service() -> GeminiService:
 
 def get_gemini_codesign_service() -> GeminiService:
     """
-    Gemini 3 Flash service optimized for Co-design Assistant
+    Gemini 2.5 Flash service optimized for Co-design Assistant
     
     Features:
-    - Gemini 3 Flash: Latest generation with near-zero thinking level
+    - Gemini 2.5 Flash: Stable, high-performance model
     - Best multimodal understanding capabilities
     - Context Caching: structure_tools + graph_dsl cached (75% cost reduction)
     - Thinking Mode ready: Chain of Thought visualization
     - Real-time streaming: Low latency for interactive design
     """
     return GeminiService(GeminiConfig(
-        model=GeminiModel.GEMINI_3_FLASH,  # Codesign uses Gemini 3 Flash (fast, interactive)
+        model=GeminiModel.GEMINI_2_5_FLASH,  # Codesign uses Gemini 2.5 Flash (stable, available)
         max_output_tokens=4096,
         temperature=0.8,
         enable_thinking=True,

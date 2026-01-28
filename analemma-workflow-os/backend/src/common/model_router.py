@@ -619,26 +619,56 @@ The goal is to provide complete and useful responses within the limited tokens."
 # ============================================================
 AVAILABLE_MODELS = {
     # ──────────────────────────────────────────────────────────
-    # Gemini 3 Tier - 최신 세대 (2M context, adaptive thinking)
+    # Gemini 3 Tier - Official Preview (Jan 21, 2026)
     # ──────────────────────────────────────────────────────────
-    "gemini-3-pro": ModelConfig(
-        model_id="gemini-3-pro",
+    "gemini-3-pro-preview": ModelConfig(
+        model_id="gemini-3-pro-preview",
         max_tokens=8192,
-        cost_per_1k_tokens=1.50,  # Premium pricing for advanced reasoning
+        cost_per_1k_tokens=0.00,  # Free during preview period
         tier=ModelTier.PREMIUM,
         provider=ModelProvider.GEMINI,
         supports_long_context=True,
         supports_structured_output=True,
         supports_context_caching=True,
         supports_thinking=True,             # Adaptive thinking capabilities
-        cached_cost_per_1k_tokens=0.375,    # 75% discount with caching
+        cached_cost_per_1k_tokens=0.00,     # Free during preview
         expected_ttft_ms=250,               # Advanced reasoning takes time
         expected_tps=100,                   # High quality output
     ),
-    "gemini-3-flash": ModelConfig(
-        model_id="gemini-3-flash",
+    # Backward compatibility alias
+    "gemini-3-pro": ModelConfig(
+        model_id="gemini-3-pro-preview",  # Maps to official preview ID
         max_tokens=8192,
-        cost_per_1k_tokens=0.20,  # Fast and affordable
+        cost_per_1k_tokens=0.00,
+        tier=ModelTier.PREMIUM,
+        provider=ModelProvider.GEMINI,
+        supports_long_context=True,
+        supports_structured_output=True,
+        supports_context_caching=True,
+        supports_thinking=True,
+        cached_cost_per_1k_tokens=0.00,
+        expected_ttft_ms=250,
+        expected_tps=100,
+    ),
+    "gemini-3-flash-preview": ModelConfig(
+        model_id="gemini-3-flash-preview",
+        max_tokens=8192,
+        cost_per_1k_tokens=0.00,  # Free during preview period
+        tier=ModelTier.PREMIUM,
+        provider=ModelProvider.GEMINI,
+        supports_long_context=True,
+        supports_structured_output=True,
+        supports_context_caching=True,
+        supports_thinking=True,             # Near-zero thinking level option
+        cached_cost_per_1k_tokens=0.00,     # Free during preview
+        expected_ttft_ms=120,               # Fastest Gemini 3
+        expected_tps=180,                   # Excellent throughput
+    ),
+    # Backward compatibility alias
+    "gemini-3-flash": ModelConfig(
+        model_id="gemini-3-flash-preview",  # Maps to official preview ID
+        max_tokens=8192,
+        cost_per_1k_tokens=0.00,
         tier=ModelTier.PREMIUM,
         provider=ModelProvider.GEMINI,
         supports_long_context=True,
@@ -1246,8 +1276,8 @@ def select_optimal_model(
     # ──────────────────────────────────────────────────────────
     if canvas_mode in ["agentic-designer", "co-design"]:
         # 디자인 모드에서는 Thinking Mode가 유용하므로 thinking 지원 모델 우선 선택
-        # Agentic Designer uses Gemini 3 Pro, Co-design can use Gemini 3 Flash
-        thinking_models = ["gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"]
+        # Agentic Designer uses Gemini 3 Pro Preview, Co-design can use Gemini 3 Flash Preview
+        thinking_models = ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"]
         
         for model_name in thinking_models:
             if model_name in AVAILABLE_MODELS:

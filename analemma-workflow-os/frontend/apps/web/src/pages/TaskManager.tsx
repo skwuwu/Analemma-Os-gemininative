@@ -566,12 +566,14 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                                 <div
                                                     key={task.task_id}
                                                     onClick={() => {
-                                                      // Completed executions don't have detail info available
-                                                      toast.info('Detailed information for completed executions is not currently supported');
+                                                      // Load completed execution details with history
+                                                      taskManager.selectTask(task.task_id);
                                                     }}
                                                     className={`
                                                         p-3 rounded-lg border cursor-pointer transition-all duration-200
-                                                        bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600
+                                                        ${taskManager.selectedTask?.task_id === task.task_id 
+                                                            ? 'bg-slate-800 border-purple-500/50' 
+                                                            : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600'}
                                                     `}
                                                 >
                                                     <div className="flex justify-between items-start mb-2">
