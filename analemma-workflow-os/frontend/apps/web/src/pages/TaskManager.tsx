@@ -121,7 +121,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   const [outcomeModalOpen, setOutcomeModalOpen] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | undefined>(undefined);
   
-  // 아코디언 상태 관리 (기본적으로 모두 접힘)
+  // Accordion state management (collapsed by default)
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   
   // Rollback state (for Timeline sub-tab)
@@ -140,28 +140,28 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   // 기존 notifications 훅 (WebSocket 연결 유지)
   const { notifications } = useNotifications();
   
-  // Task Manager 훅
+  // Task Manager hook
   const taskManager = useTaskManager({
     statusFilter: statusFilter === 'all' ? undefined : statusFilter,
     autoRefresh: true,
     showTechnicalLogs: false,
   });
   
-  // API 훅
+  // API hook
   const { resumeWorkflow, stopExecution, isStopping, isResuming, dismissNotification, isDismissing, fetchExecutions } = useWorkflowApi();
   
-  // Execution 목록 상태 (완료된 executions용)
+  // Execution list state (for completed executions)
   const [completedExecutions, setCompletedExecutions] = useState<ExecutionSummary[]>([]);
   const [isLoadingExecutions, setIsLoadingExecutions] = useState(false);
   const [executionsNextToken, setExecutionsNextToken] = useState<string | undefined>();
 
-  // 완료된 executions 로드 함수
+  // Load completed executions function
   const loadCompletedExecutions = useCallback(async (token?: string) => {
     try {
       setIsLoadingExecutions(true);
       const response = await fetchExecutions(token);
       
-      // 완료된 상태만 필터링
+      // Filter only completed status
       const completedItems = response.executions.filter((exec: ExecutionSummary) => 
         ['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'ABORTED'].includes(exec.status || '')
       );
@@ -175,18 +175,18 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
       setExecutionsNextToken(response.nextToken);
     } catch (error) {
       console.error('Failed to load completed executions:', error);
-      toast.error('완료된 실행 목록을 불러오는데 실패했습니다');
+      toast.error('Failed to load completed executions list');
     } finally {
       setIsLoadingExecutions(false);
     }
   }, [fetchExecutions]);
 
-  // 컴포넌트 마운트 시 완료된 executions 로드 (한 번만)
+  // Load completed executions on component mount (once)
   useEffect(() => {
     loadCompletedExecutions();
   }, [loadCompletedExecutions]);
   
-  // ExecutionTimeline 훅
+  // ExecutionTimeline hook
   const { executionTimelines, fetchExecutionTimeline } = useExecutionTimeline(notifications, API_BASE);
   
   // Checkpoints and Time Machine hooks
@@ -208,11 +208,11 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
     },
   });
   
-  // Workflow Graph Data (기술 탭용)
+  // Workflow Graph Data (for technical tab)
   const workflowGraphData = useMemo(() => {
     if (!taskManager.selectedTask) return null;
     
-    // workflow_config 추출
+    // Extract workflow_config
     const config = (taskManager.selectedTask as any)?.workflow_config;
     if (!config || !config.nodes) return null;
 
@@ -254,7 +254,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
     ? selectedWorkflowTimeline[selectedWorkflowTimeline.length - 1] 
     : null;
   
-  // 검색 필터링
+  // Search filtering
   const filteredTasks = useMemo(() => {
     if (!searchQuery.trim()) return taskManager.tasks;
     
@@ -266,7 +266,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
     );
   }, [taskManager.tasks, searchQuery]);
   
-  // Task 선택 핸들러
+  // Task selection handler
   const handleTaskClick = useCallback((task: TaskSummary) => {
     console.log('[TaskManager] Task clicked:', task.task_id, task.task_summary);
     taskManager.selectTask(task.task_id);
@@ -285,7 +285,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
     setRollbackDialogOpen(true);
   }, []);
   
-  // Gemini 요약 생성 함수
+  // Gemini summary generation function
   const fetchSummary = useCallback(async (type: 'business' | 'technical' | 'full') => {
     if (!taskManager.selectedTask) return;
     
@@ -309,13 +309,13 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
       setSummary(data);
       
       if (data.cached) {
-        toast.success('캐시된 요약을 불러왔습니다');
+        toast.success('Loaded cached summary');
       } else {
-        toast.success('Gemini가 요약을 생성했습니다');
+        toast.success('Gemini generated summary');
       }
     } catch (error) {
       console.error('Failed to fetch summary:', error);
-      toast.error('요약 생성 실패');
+      toast.error('Failed to generate summary');
       setSummary(null);
     } finally {
       setSummaryLoading(false);
@@ -324,7 +324,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   
   const handleResumeWorkflow = useCallback(async () => {
     if (!taskManager.selectedTask || !responseText.trim()) {
-      toast.error('응답을 입력해주세요');
+      toast.error('Please enter a response');
       return;
     }
     
@@ -339,14 +339,14 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
       
       await resumeWorkflow(payload);
       setResponseText('');
-      toast.success('워크플로우를 재개했습니다');
+      toast.success('Workflow resumed successfully');
       taskManager.refreshList();
     } catch (error) {
-      toast.error('워크플로우 재개에 실패했습니다');
+      toast.error('Failed to resume workflow');
     }
   }, [taskManager, responseText, resumeWorkflow]);
   
-  // 통계
+  // Statistics
   const stats = useMemo(() => ({
     total: taskManager.tasks.length,
     inProgress: taskManager.inProgressTasks.length,
@@ -354,16 +354,16 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
     completed: taskManager.tasks.filter(t => t.status === 'completed').length,
   }), [taskManager.tasks, taskManager.inProgressTasks, taskManager.pendingApprovalTasks]);
 
-  // 작업 그룹화 (진행중 vs 완료)
+  // Task grouping (in-progress vs completed)
   const taskGroups = useMemo(() => {
     const filteredTasks = taskManager.tasks.filter(task => {
-      // 검색어 필터링
+      // Search query filtering
       if (searchQuery && !task.task_summary?.toLowerCase().includes(searchQuery.toLowerCase()) &&
           !task.agent_name?.toLowerCase().includes(searchQuery.toLowerCase())) {
         return false;
       }
       
-      // 상태 필터링
+      // Status filtering
       if (statusFilter !== 'all' && task.status !== statusFilter) {
         return false;
       }
@@ -375,7 +375,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
       ['in_progress', 'pending_approval', 'queued'].includes(task.status)
     );
     
-    // 완료된 executions를 TaskSummary 형식으로 변환
+    // Convert completed executions to TaskSummary format
     const completedTasks = completedExecutions.map(exec => ({
       task_id: exec.executionArn || exec.execution_id || '',
       task_summary: exec.name || 'Completed Execution',
@@ -397,7 +397,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden">
-      {/* 헤더 */}
+      {/* Header */}
       <header className="flex items-center justify-between px-6 py-3 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm shrink-0 h-14">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate('/')} className="text-slate-400 hover:text-slate-100 hover:bg-slate-800">
@@ -410,7 +410,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
         </div>
         
         <div className="flex items-center gap-3">
-          {/* 알림 배지 */}
+          {/* Notification badge */}
           {stats.pendingApproval > 0 && (
             <Badge variant="destructive" className="animate-pulse bg-red-600 text-white border-red-500">
               <Bell className="w-3 h-3 mr-1" />
@@ -438,7 +438,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
       </header>
       
       <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* 좌측 패널: 작업 목록 */}
+        {/* Left panel: Task list */}
         <ResizablePanel defaultSize={25} minSize={20} maxSize={40} className="bg-slate-900/30 border-r border-slate-800 flex flex-col">
             <div className="p-4 border-b border-slate-800 space-y-3">
                 <div className="relative">
@@ -454,7 +454,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                     <Select value={statusFilter} onValueChange={setStatusFilter}>
                         <SelectTrigger className="w-full bg-slate-800 border-slate-700 text-slate-100 h-8 text-xs">
                             <Filter className="w-3 h-3 mr-2" />
-                            <SelectValue placeholder="상태" />
+                            <SelectValue placeholder="Status" />
                         </SelectTrigger>
                         <SelectContent className="bg-slate-800 border-slate-700">
                             <SelectItem value="all">All Status</SelectItem>
@@ -482,12 +482,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                             onValueChange={setExpandedGroups}
                             className="space-y-2"
                         >
-                            {/* 진행중 작업 그룹 */}
+                            {/* In-progress tasks group */}
                             <AccordionItem value="in-progress" className="border-slate-700">
                                 <AccordionTrigger className="px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800/50 rounded-md">
                                     <div className="flex items-center gap-2">
                                         <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
-                                        <span>진행중</span>
+                                        <span>In Progress</span>
                                         <Badge variant="outline" className="text-xs text-blue-400 border-blue-700">
                                             {taskGroups.inProgress.length}
                                         </Badge>
@@ -497,7 +497,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     <div className="space-y-2">
                                         {taskGroups.inProgress.length === 0 ? (
                                             <div className="text-center py-4 text-slate-500 text-xs">
-                                                진행중인 작업이 없습니다.
+                                                No tasks in progress.
                                             </div>
                                         ) : (
                                             taskGroups.inProgress.map((task) => (
@@ -537,12 +537,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                 </AccordionContent>
                             </AccordionItem>
 
-                            {/* 완료된 작업 그룹 */}
+                            {/* Completed tasks group */}
                             <AccordionItem value="completed" className="border-slate-700">
                                 <AccordionTrigger className="px-3 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800/50 rounded-md">
                                     <div className="flex items-center gap-2">
                                         <CheckCircle2 className="w-4 h-4 text-green-500" />
-                                        <span>완료됨</span>
+                                        <span>Completed</span>
                                         <Badge variant="outline" className="text-xs text-green-400 border-green-700">
                                             {taskGroups.completed.length}
                                         </Badge>
@@ -552,15 +552,15 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     <div className="space-y-2">
                                         {taskGroups.completed.length === 0 ? (
                                             <div className="text-center py-4 text-slate-500 text-xs">
-                                                완료된 작업이 없습니다.
+                                                No completed tasks.
                                             </div>
                                         ) : (
                                             taskGroups.completed.map((task) => (
                                                 <div
                                                     key={task.task_id}
                                                     onClick={() => {
-                                                      // 완료된 execution은 상세 정보가 없으므로 클릭 비활성화 또는 다른 동작
-                                                      toast.info('완료된 실행의 상세 정보는 현재 지원되지 않습니다');
+                                                      // Completed executions don't have detail info available
+                                                      toast.info('Detailed information for completed executions is not currently supported');
                                                     }}
                                                     className={`
                                                         p-3 rounded-lg border cursor-pointer transition-all duration-200
@@ -600,7 +600,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
         
         <ResizableHandle className="bg-slate-800" />
         
-        {/* 우측 패널: 상세 정보 (탭 시스템) */}
+        {/* Right panel: Details (tab system) */}
         <ResizablePanel defaultSize={75} className="bg-slate-950">
             {(() => {
               console.log('[TaskManager] Rendering detail panel - selectedTask:', taskManager.selectedTask ? taskManager.selectedTask.task_id : 'null');
@@ -618,7 +618,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                 {taskManager.selectedTask.is_interruption && (
                                   <Badge variant="destructive" className="animate-pulse">
                                     <AlertCircle className="w-3 h-3 mr-1" />
-                                    응답 대기 중
+                                    Awaiting Response
                                   </Badge>
                                 )}
                             </h2>
@@ -633,7 +633,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                 size="sm" 
                                 onClick={() => {
                                   setDetailViewTab('technical');
-                                  toast.info('응답을 입력하려면 기술 탭에서 입력하세요');
+                                  toast.info('Go to Technical tab to enter a response');
                                 }}
                                 className="bg-amber-600 hover:bg-amber-700"
                               >
@@ -689,26 +689,26 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                         <TabsList className="bg-slate-900">
                           <TabsTrigger value="business" className="data-[state=active]:bg-slate-800">
                             <Box className="w-4 h-4 mr-2" />
-                            비즈니스 뷰
+                            Business View
                           </TabsTrigger>
                           <TabsTrigger value="technical" className="data-[state=active]:bg-slate-800">
                             <GitBranch className="w-4 h-4 mr-2" />
-                            기술 뷰
+                            Technical View
                           </TabsTrigger>
                         </TabsList>
                       </div>
                       
-                      {/* 비즈니스 탭 */}
+                      {/* Business tab */}
                       <TabsContent value="business" className="flex-1 overflow-hidden mt-0">
                         <ScrollArea className="h-full">
                           <TaskBentoGrid task={taskManager.selectedTask} onArtifactClick={handleArtifactClick} />
                         </ScrollArea>
                       </TabsContent>
                       
-                      {/* 기술 탭 - 서브탭 시스템 */}
+                      {/* Technical tab - Sub-tab system */}
                       <TabsContent value="technical" className="flex-1 overflow-hidden mt-0">
                         <Tabs value={technicalSubTab} onValueChange={(v) => setTechnicalSubTab(v as 'graph' | 'timeline' | 'nodes' | 'summary')} className="h-full flex flex-col">
-                          {/* Technical 서브탭 헤더 */}
+                          {/* Technical sub-tab header */}
                           <div className="px-4 pt-2 border-b border-slate-800">
                             <TabsList className="bg-slate-900">
                               <TabsTrigger value="graph" className="data-[state=active]:bg-slate-800 text-xs">
@@ -745,8 +745,8 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                               ) : (
                                 <div className="flex items-center justify-center h-full text-slate-500">
                                   <div className="text-center">
-                                    <p className="text-lg mb-2">워크플로우 그래프를 로드할 수 없습니다</p>
-                                    <p className="text-sm">workflow_config 데이터가 없습니다.</p>
+                                    <p className="text-lg mb-2">Cannot load workflow graph</p>
+                                    <p className="text-sm">workflow_config data is not available.</p>
                                   </div>
                                 </div>
                               )}
@@ -775,14 +775,14 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                 ) : (
                                   <div className="flex flex-col items-center justify-center py-20 opacity-20 text-center">
                                     <History className="w-12 h-12 mb-4" />
-                                    <p className="text-sm font-medium uppercase">타임라인 데이터 없음</p>
+                                    <p className="text-sm font-medium uppercase">No Timeline Data</p>
                                   </div>
                                 )}
                               </div>
                             </ScrollArea>
                           </TabsContent>
 
-                          {/* Nodes 서브탭 (NodeDetailPanel + HITP Input) */}
+                          {/* Nodes sub-tab (NodeDetailPanel + HITP Input) */}
                           <TabsContent value="nodes" className="flex-1 overflow-hidden mt-0">
                             <div className="h-full flex flex-col">
                               {/* HITP Response Input (응답 대기 중일 때만 표시) */}
@@ -790,11 +790,11 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                 <div className="border-b border-slate-800 p-4 bg-amber-900/10">
                                   <div className="flex items-center gap-2 mb-3">
                                     <AlertCircle className="w-5 h-5 text-amber-500" />
-                                    <h3 className="font-semibold text-slate-100">사용자 입력 대기 중</h3>
+                                    <h3 className="font-semibold text-slate-100">Awaiting User Input</h3>
                                   </div>
                                   <div className="space-y-3">
                                     <Input
-                                      placeholder="응답을 입력하세요..."
+                                      placeholder="Enter your response..."
                                       value={responseText}
                                       onChange={(e) => setResponseText(e.target.value)}
                                       className="bg-slate-800 border-slate-700 text-slate-100"
@@ -814,12 +814,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                         {isResuming ? (
                                           <>
                                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                            재개 중...
+                                            Resuming...
                                           </>
                                         ) : (
                                           <>
                                             <Play className="w-4 h-4 mr-2" />
-                                            워크플로우 재개
+                                            Resume Workflow
                                           </>
                                         )}
                                       </Button>
@@ -839,11 +839,11 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                             </div>
                           </TabsContent>
                           
-                          {/* Summary 서브탭 (Gemini 요약) */}
+                          {/* Summary sub-tab (Gemini summary) */}
                           <TabsContent value="summary" className="flex-1 overflow-hidden mt-0">
                             <ScrollArea className="h-full">
                               <div className="p-6 space-y-6">
-                                {/* 요약 타입 선택 */}
+                                {/* Summary type selection */}
                                 <div className="flex gap-2">
                                   <Button 
                                     size="sm" 
@@ -856,7 +856,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     ) : (
                                       <Bot className="w-4 h-4 mr-2" />
                                     )}
-                                    비즈니스 요약
+                                    Business Summary
                                   </Button>
                                   <Button 
                                     size="sm" 
@@ -869,7 +869,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     ) : (
                                       <GitBranch className="w-4 h-4 mr-2" />
                                     )}
-                                    기술 요약
+                                    Technical Summary
                                   </Button>
                                   <Button 
                                     size="sm" 
@@ -882,7 +882,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     ) : (
                                       <LayoutGrid className="w-4 h-4 mr-2" />
                                     )}
-                                    전체 요약
+                                    Full Summary
                                   </Button>
                                 </div>
                                 
@@ -890,7 +890,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                 {summaryLoading && (
                                   <div className="flex items-center gap-2 text-slate-400 bg-slate-800/30 p-4 rounded-lg border border-slate-700">
                                     <Loader2 className="w-5 h-5 animate-spin" />
-                                    <span>Gemini 2.0 Flash가 실행 로그를 분석하고 있습니다...</span>
+                                    <span>Gemini 2.0 Flash is analyzing execution logs...</span>
                                   </div>
                                 )}
                                 
@@ -901,7 +901,7 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     {summary.cached && (
                                       <Badge variant="outline" className="text-green-400 border-green-700">
                                         <CheckCircle2 className="w-3 h-3 mr-1" />
-                                        캐시됨 (즉시 조회)
+                                        Cached (Instant)
                                       </Badge>
                                     )}
                                     
@@ -909,19 +909,19 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                     <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
                                       <h3 className="font-semibold mb-3 text-slate-100 flex items-center gap-2">
                                         <Bot className="w-4 h-4" />
-                                        요약
+                                        Summary
                                       </h3>
                                       <p className="text-slate-300 text-sm whitespace-pre-wrap leading-relaxed">
                                         {summary.summary}
                                       </p>
                                     </div>
                                     
-                                    {/* 인사이트 */}
+                                    {/* Insights */}
                                     {summary.key_insights && summary.key_insights.length > 0 && (
                                       <div className="bg-blue-900/20 p-4 rounded-lg border border-blue-700/50">
                                         <h3 className="font-semibold mb-3 text-blue-300 flex items-center gap-2">
                                           <GitBranch className="w-4 h-4" />
-                                          핵심 인사이트
+                                          Key Insights
                                         </h3>
                                         <ul className="space-y-2">
                                           {summary.key_insights.map((insight: string, i: number) => (
@@ -934,12 +934,12 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                       </div>
                                     )}
                                     
-                                    {/* 권장사항 */}
+                                    {/* Recommendations */}
                                     {summary.recommendations && summary.recommendations.length > 0 && (
                                       <div className="bg-amber-900/20 p-4 rounded-lg border border-amber-700/50">
                                         <h3 className="font-semibold mb-3 text-amber-300 flex items-center gap-2">
                                           <AlertCircle className="w-4 h-4" />
-                                          개선 권장사항
+                                          Recommendations
                                         </h3>
                                         <ul className="space-y-2">
                                           {summary.recommendations.map((rec: string, i: number) => (
@@ -952,35 +952,35 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
                                       </div>
                                     )}
                                     
-                                    {/* 메타데이터 */}
+                                    {/* Metadata */}
                                     <div className="text-xs text-slate-500 flex flex-wrap gap-4 bg-slate-900/50 p-3 rounded border border-slate-800">
                                       <span className="flex items-center gap-1">
                                         <Bot className="w-3 h-3" />
-                                        모델: {summary.model_used}
+                                        Model: {summary.model_used}
                                       </span>
                                       <span className="flex items-center gap-1">
                                         <Box className="w-3 h-3" />
-                                        토큰: {summary.token_usage?.total_tokens?.toLocaleString() || 'N/A'}
+                                        Tokens: {summary.token_usage?.total_tokens?.toLocaleString() || 'N/A'}
                                       </span>
                                       <span className="flex items-center gap-1">
                                         <Clock className="w-3 h-3" />
-                                        생성 시간: {summary.generation_time_ms}ms
+                                        Generation Time: {summary.generation_time_ms}ms
                                       </span>
                                       {summary.token_usage?.estimated_cost_usd && (
                                         <span className="flex items-center gap-1 text-green-400">
-                                          💰 비용: ${summary.token_usage.estimated_cost_usd.toFixed(6)}
+                                          💰 Cost: ${summary.token_usage.estimated_cost_usd.toFixed(6)}
                                         </span>
                                       )}
                                     </div>
                                   </div>
                                 )}
                                 
-                                {/* 초기 상태 */}
+                                {/* Initial state */}
                                 {!summary && !summaryLoading && (
                                   <div className="text-center py-12 text-slate-500">
                                     <Bot className="w-16 h-16 mx-auto mb-4 opacity-20" />
-                                    <p className="text-lg mb-2">Gemini 2.0 Flash로 실행 로그 요약</p>
-                                    <p className="text-sm">위 버튼을 클릭하여 AI가 분석한 요약을 확인하세요</p>
+                                    <p className="text-lg mb-2">Summarize Execution Logs with Gemini 2.0 Flash</p>
+                                    <p className="text-sm">Click the buttons above to view AI-analyzed summary</p>
                                   </div>
                                 )}
                               </div>

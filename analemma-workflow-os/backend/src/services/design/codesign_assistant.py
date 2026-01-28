@@ -1105,7 +1105,11 @@ async def _stream_gemini_codesign(
     # ════════════════════════════════════════════════════════════════════
     # Gemini 스트리밍 호출 (Thinking Mode + Context Caching 활성화)
     # ════════════════════════════════════════════════════════════════════
+    logger.info(f"🚀 Starting Gemini API call with thinking_budget={thinking_budget_tokens}, enable_thinking={enable_thinking}")
+    logger.info(f"📝 Prompt length: {len(enhanced_prompt)} chars, System instruction length: {len(gemini_system)} chars")
+    
     try:
+        stream_started = False
         for chunk in service.invoke_model_stream(
             user_prompt=enhanced_prompt,
             system_instruction=gemini_system,  # API 수준에서 분리 (implicit caching 적용)
@@ -1115,6 +1119,10 @@ async def _stream_gemini_codesign(
             enable_thinking=enable_thinking,  # Chain of Thought 활성화
             thinking_budget_tokens=thinking_budget_tokens  # 동적 사고 예산 (복잡도에 따라 1K~16K)
         ):
+            if not stream_started:
+                logger.info("✅ First chunk received from Gemini API")
+                stream_started = True
+            
             chunk = chunk.strip()
             if not chunk:
                 continue

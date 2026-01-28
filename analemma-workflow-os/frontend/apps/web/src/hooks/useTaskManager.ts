@@ -360,10 +360,8 @@ export function useTaskManager(options: UseTaskManagerOptions = {}) {
   // Task 선택
   const selectTask = useCallback((taskId: string | null) => {
     console.log('[useTaskManager] selectTask called with:', taskId);
-    console.log('[useTaskManager] Previous selectedId:', selectedId);
     setSelectedId(taskId);
-    console.log('[useTaskManager] setSelectedId called');
-  }, [selectedId]);
+  }, []); // ✅ selectedId를 의존성 배열에서 제거 (불필요한 재생성 방지)
 
   // 승인 대기 Task 필터
   const pendingApprovalTasks = taskList.tasks.filter(t => t.status === 'pending_approval');

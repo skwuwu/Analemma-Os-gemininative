@@ -699,7 +699,9 @@ def lambda_handler(event, context):
         
         # 🚀 Hybrid Distributed Strategy
         "distributed_strategy": distributed_strategy["strategy"],
-        "distributed_strategy_detail": distributed_strategy,
+        # 🚨 [Critical Fix] Exclude distributed_strategy_detail from response to reduce payload
+        # It can be very large and is not needed for Step Functions routing
+        # "distributed_strategy_detail": distributed_strategy,  # REMOVED to prevent DataLimitExceeded
         
         # [Fix] Pass MOCK_MODE - for simulator E2E testing (HITP auto resume, etc.)
         "MOCK_MODE": mock_mode,
@@ -716,17 +718,134 @@ def lambda_handler(event, context):
     
     logger.info(f"InitializeStateData response size: {response_size_kb:.1f}KB (threshold: {STREAM_INLINE_THRESHOLD_BYTES/1024:.1f}KB)")
     
+    # 🚨 [Critical] Apply Segment Runner's Field-by-Field Offloading Strategy
+    # Instead of offloading entire response, offload large fields individually
+    SFN_SIZE_LIMIT = 256 * 1024  # 256KB Step Functions limit
+    AGGRESSIVE_THRESHOLD = 100 * 1024  # 100KB - start optimizing early
+    
+    if response_size_bytes > AGGRESSIVE_THRESHOLD:
+        logger.warning(f"Response size {response_size_kb:.1f}KB exceeds aggressive threshold ({AGGRESSIVE_THRESHOLD/1024:.0f}KB). Applying field-by-field offloading...")
+        
+        # Import boto3 only when needed
+        if not s3_client:
+            import boto3
+            s3_client = boto3.client('s3')
+        
+        # Fields to consider for offloading (in priority order - largest first)
+        large_fields = ['workflow_config', 'current_state', 'partition_map', 'segment_manifest']
+        
+        offloaded_count = 0
+        for field_name in large_fields:
+            field_value = response_data.get(field_name)
+            
+            # Skip if field doesn't exist, is None, or already offloaded
+            if not field_value:
+                continue
+            if isinstance(field_value, dict) and field_value.get('__s3_offloaded'):
+                continue
+            
+            # Calculate field size
+            field_json = json.dumps(field_value, default=str, ensure_ascii=False)
+            field_size = len(field_json.encode('utf-8'))
+            
+            # Offload if field > 30KB (segment_runner uses 30KB threshold)
+            if field_size > 30 * 1024:
+                s3_key = f"initialize-state/{owner_id}/{workflow_id}/{idempotency_key}/{field_name}.json"
+                
+                try:
+                    # Upload field to S3
+                    s3_client.put_object(
+                        Bucket=bucket,
+                        Key=s3_key,
+                        Body=field_json.encode('utf-8'),
+                        ContentType='application/json',
+                        Metadata={
+                            'field_name': field_name,
+                            'size_kb': str(int(field_size / 1024)),
+                            'created_at': str(current_time)
+                        }
+                    )
+                    
+                    s3_path = f"s3://{bucket}/{s3_key}"
+                    logger.info(f"[Field Offload] Uploaded {field_name} ({field_size/1024:.1f}KB) to S3: {s3_path}")
+                    
+                    # Replace field with S3 reference
+                    if isinstance(field_value, dict):
+                        # Preserve critical metadata for routing
+                        response_data[field_name] = {
+                            "__s3_offloaded": True,
+                            "__s3_path": s3_path,
+                            "__original_size_kb": field_size / 1024
+                        }
+                        
+                        # For workflow_config, preserve essential fields
+                        if field_name == 'workflow_config':
+                            response_data[field_name].update({
+                                "workflow_name": field_value.get("workflow_name", ""),
+                                "version": field_value.get("version", "1.0.0"),
+                                "max_loop_iterations": field_value.get("max_loop_iterations", 100),
+                                "max_branch_iterations": field_value.get("max_branch_iterations", 100)
+                            })
+                        
+                        # For current_state, preserve tokens and guardrail data
+                        if field_name == 'current_state':
+                            response_data[field_name].update({
+                                "total_tokens": field_value.get("total_tokens", 0),
+                                "total_input_tokens": field_value.get("total_input_tokens", 0),
+                                "total_output_tokens": field_value.get("total_output_tokens", 0),
+                                "guardrail_verified": field_value.get("guardrail_verified", False)
+                            })
+                    
+                    elif isinstance(field_value, list):
+                        # For list fields
+                        response_data[field_name] = {
+                            "__s3_offloaded": True,
+                            "__s3_path": s3_path,
+                            "__original_size_kb": field_size / 1024,
+                            "__original_length": len(field_value)
+                        }
+                    
+                    # Update corresponding S3 path fields
+                    if field_name == 'workflow_config':
+                        response_data['workflow_config_s3_path'] = s3_path
+                    elif field_name == 'current_state':
+                        response_data['state_s3_path'] = s3_path
+                    elif field_name == 'partition_map':
+                        response_data['partition_map_s3_path'] = s3_path
+                    elif field_name == 'segment_manifest':
+                        response_data['segment_manifest_s3_path'] = s3_path
+                    
+                    offloaded_count += 1
+                    
+                except Exception as s3_err:
+                    logger.error(f"[Field Offload] Failed to upload {field_name} to S3: {s3_err}")
+                    # Continue without offloading this field
+        
+        # Recalculate response size after field offloading
+        if offloaded_count > 0:
+            new_response_json = json.dumps(response_data, default=str, ensure_ascii=False)
+            new_response_size = len(new_response_json.encode('utf-8'))
+            new_size_kb = new_response_size / 1024
+            
+            logger.info(
+                f"[Field Offload] Response size reduced ({offloaded_count} fields offloaded): "
+                f"{response_size_kb:.1f}KB → {new_size_kb:.1f}KB "
+                f"(saved {response_size_kb - new_size_kb:.1f}KB)"
+            )
+            
+            response_size_bytes = new_response_size
+            response_size_kb = new_size_kb
+            response_json = new_response_json
+    
+    # Final check: if still > 200KB threshold, offload entire response
     if response_size_bytes > STREAM_INLINE_THRESHOLD_BYTES:
-        logger.warning(f"Response size {response_size_kb:.1f}KB exceeds threshold. Offloading to S3...")
+        logger.warning(f"Response still {response_size_kb:.1f}KB after field offloading. Offloading entire response to S3...")
         
-        # Get S3 bucket for workflow state
-        bucket = os.environ.get("WORKFLOW_STATE_BUCKET", "analemma-workflow-state-dev")
-        
-        # Create S3 key for offloaded data
-        s3_key = f"initialize-state/{owner_id}/{workflow_id}/{idempotency_key}/response.json"
+        # Create S3 key for complete response
+        s3_key = f"initialize-state/{owner_id}/{workflow_id}/{idempotency_key}/full_response.json"
         
         try:
-            # Upload to S3
+            # Upload complete response to S3
             s3_client.put_object(
                 Bucket=bucket,
                 Key=s3_key,
@@ -741,27 +860,59 @@ def lambda_handler(event, context):
             )
             
             s3_path = f"s3://{bucket}/{s3_key}"
-            logger.info(f"InitializeStateData response offloaded to S3: {s3_path}")
+            logger.info(f"InitializeStateData full response offloaded to S3: {s3_path}")
             
-            # Return minimal response with S3 reference
-            return {
+            # 🚨 [Critical Fix] Return MINIMAL response with S3 reference only
+            # Do NOT include any large objects - Step Functions has 256KB hard limit
+            minimal_response = {
                 "__s3_offloaded": True,
                 "__s3_path": s3_path,
                 "__original_size_kb": response_size_kb,
-                # Include essential fields for Step Functions routing
+                # Include ONLY essential routing fields (mimicking segment_runner pattern)
                 "total_segments": _safe_total_segments,
                 "distributed_mode": is_distributed_mode,
                 "max_concurrency": max_concurrency,
                 "distributed_strategy": distributed_strategy["strategy"],
-                "MOCK_MODE": mock_mode
+                "MOCK_MODE": mock_mode,
+                # Essential identifiers for Step Functions
+                "ownerId": owner_id,
+                "workflowId": workflow_id,
+                "idempotency_key": idempotency_key,
+                "segment_to_run": 0,
+                # Preserve S3 paths for hydration
+                "workflow_config_s3_path": response_data.get("workflow_config_s3_path", ""),
+                "state_s3_path": response_data.get("state_s3_path", ""),
+                "partition_map_s3_path": partition_map_s3_path,
+                "segment_manifest_s3_path": manifest_s3_path
             }
             
+            # Verify minimal response size (should be < 5KB)
+            minimal_json = json.dumps(minimal_response, default=str, ensure_ascii=False)
+            minimal_size_kb = len(minimal_json.encode('utf-8')) / 1024
+            logger.info(f"Minimal response size: {minimal_size_kb:.1f}KB (original: {response_size_kb:.1f}KB, saved: {response_size_kb - minimal_size_kb:.1f}KB)")
+            
+            # 🛡️ [Critical] Hard limit check - ensure we're under 250KB (safety margin)
+            if minimal_size_kb > 250:
+                logger.error(
+                    f"🚨 CRITICAL: Minimal response still exceeds 250KB ({minimal_size_kb:.1f}KB)! "
+                    f"Step Functions will reject with DataLimitExceeded. "
+                    f"Fields in response: {list(minimal_response.keys())}"
+                )
+            elif minimal_size_kb > 200:
+                logger.warning(
+                    f"⚠️ WARNING: Minimal response is {minimal_size_kb:.1f}KB (>200KB). "
+                    f"Close to Step Functions limit. Consider removing more fields."
+                )
+            
+            return minimal_response
+            
         except Exception as e:
-            logger.error(f"Failed to offload InitializeStateData response to S3: {e}")
-            # Fallback: return original data with warning
-            logger.warning(f"Proceeding with inline response ({response_size_kb:.1f}KB) despite size limit")
+            logger.error(f"Failed to offload InitializeStateData full response to S3: {e}")
+            # Fallback: return original data with warning (will likely fail at Step Functions)
+            logger.warning(f"⚠️ Proceeding with inline response ({response_size_kb:.1f}KB) despite size limit. This may cause DataLimitExceeded error.")
             return response_data
     else:
-        # Response size is acceptable
+        # Response size is acceptable after field offloading
+        logger.info(f"✅ Response size {response_size_kb:.1f}KB is within threshold. Returning inline response.")
         return response_data
 
