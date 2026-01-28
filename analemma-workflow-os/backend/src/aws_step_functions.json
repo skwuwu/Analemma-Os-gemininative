@@ -1,52 +1,17 @@
 {
   "Comment": "Orchestrator that executes user workflows in segment units and handles HITP",
-  "StartAt": "SetDefaultMockMode",
+  "StartAt": "CheckForInjectedConfig",
   "States": {
-    "SetDefaultMockMode": {
-      "Type": "Pass",
-      "Comment": "Set MOCK_MODE to false if not present in input",
-      "Parameters": {
-        "workflowId.$": "$.workflowId",
-        "ownerId.$": "$.ownerId",
-        "user_id.$": "$.user_id",
-        "initial_state.$": "$.initial_state",
-        "idempotency_key.$": "$.idempotency_key",
-        "ALLOW_UNSAFE_EXECUTION.$": "$.ALLOW_UNSAFE_EXECUTION",
-        "test_workflow_config.$": "$.test_workflow_config",
-        "MOCK_MODE.$": "States.Format('{}', $.MOCK_MODE)"
-      },
-      "ResultPath": "$",
-      "Catch": [
-        {
-          "ErrorEquals": ["States.ALL"],
-          "ResultPath": "$.mockModeError",
-          "Next": "SetMockModeFalse"
-        }
-      ],
-      "Next": "CheckForInjectedConfig"
-    },
-    "SetMockModeFalse": {
-      "Type": "Pass",
-      "Comment": "MOCK_MODE was not present, set to false",
-      "Parameters": {
-        "workflowId.$": "$.workflowId",
-        "ownerId.$": "$.ownerId",
-        "user_id.$": "$.user_id",
-        "initial_state.$": "$.initial_state",
-        "idempotency_key.$": "$.idempotency_key",
-        "ALLOW_UNSAFE_EXECUTION.$": "$.ALLOW_UNSAFE_EXECUTION",
-        "test_workflow_config.$": "$.test_workflow_config",
-        "MOCK_MODE": "false"
-      },
-      "ResultPath": "$",
-      "Next": "CheckForInjectedConfig"
-    },
     "CheckForInjectedConfig": {
       "Type": "Choice",
       "Comment": "Bypass DynamoDB if MOCK_MODE is true and test config exists",
       "Choices": [
         {
           "And": [
+            {
+              "Variable": "$.MOCK_MODE",
+              "IsPresent": true
+            },
             {
               "Variable": "$.MOCK_MODE",
               "StringEquals": "true"
