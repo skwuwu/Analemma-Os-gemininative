@@ -62,12 +62,12 @@ const EDGE_TYPE_CONFIG: Record<BackendEdgeType, {
 interface SmartEdgeData extends Record<string, unknown> {
   label?: string;           // 조건 라벨 (예: "Yes", "Tool Call")
   active?: boolean;         // 현재 실행 중인지 여부 (애니메이션 트리거)
-  stateDelta?: string;      // 전달되는 상태 데이터 요약 (JSON string)
-  edgeType?: BackendEdgeType; // 백엔드 엣지 타입
-  condition?: string;       // 조건식 (if, while용)
-  max_iterations?: number;  // while 최대 반복 횟수
-  isBackEdge?: boolean;     // 순환 구조의 back-edge 여부
-  isInCycle?: boolean;      // 순환 구조에 포함되어 있는지 여부
+  stateDelta?: string;      // Summary of state data being passed (JSON string)
+  edgeType?: BackendEdgeType; // Backend edge type
+  condition?: string;       // Conditional expression (for if, while)
+  max_iterations?: number;  // Maximum iterations for while
+  isBackEdge?: boolean;     // Whether this is a back-edge in circular structure
+  isInCycle?: boolean;      // Whether this edge is part of a cycle
 }
 
 export const SmartEdge = ({
@@ -266,9 +266,9 @@ export const SmartEdge = ({
                 <div className="space-y-1">
                   {isBackEdge && (
                     <div className="mb-2 p-2 bg-orange-500/10 border border-orange-500/30 rounded">
-                      <p className="text-xs font-bold text-orange-500">🔄 순환 구조 (Back-Edge)</p>
+                      <p className="text-xs font-bold text-orange-500">🔄 Circular Structure (Back-Edge)</p>
                       <p className="text-[10px] text-muted-foreground mt-1">
-                        이 엣지는 for_each 반복을 위한 피드백 경로입니다.
+                        This edge is a feedback path for for_each iteration.
                       </p>
                     </div>
                   )}

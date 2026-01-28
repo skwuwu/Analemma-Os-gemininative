@@ -1,0 +1,20 @@
+[
+    {
+        "timestamp": "2026-01-26T17:06:28.408000+09:00",
+        "type": "TaskStarted",
+        "id": 36,
+        "previousEventId": 35,
+        "taskStartedEventDetails": {
+            "resourceType": "lambda",
+            "resource": "invoke"
+        }
+    },
+    {
+        "timestamp": "2026-01-26T17:06:28.530000+09:00",
+        "type": "TaskSucceeded",
+        "id": 37,
+        "previousEventId": 36,
+        "taskSucceededEventDetails": {
+            "resourceType": "lambda",
+            "resource": "invoke",
+            "output": 

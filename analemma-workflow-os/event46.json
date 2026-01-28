@@ -1,0 +1,13 @@
+{
+    "timestamp": "2026-01-26T17:06:28.627000+09:00",
+    "type": "FailStateEntered",
+    "id": 46,
+    "previousEventId": 45,
+    "stateEnteredEventDetails": {
+        "name": "WorkflowFailed",
+        "input": "{\"Entries\":[{\"EventId\":\"796aae2d-f827-5bba-a828-b4724ad1f8fb\"}],\"FailedEntryCount\":0}",
+        "inputDetails": {
+            "truncated": false
+        }
+    }
+}

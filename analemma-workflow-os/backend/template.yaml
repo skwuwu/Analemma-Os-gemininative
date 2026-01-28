@@ -563,11 +563,18 @@ Resources:
       Environment:
         Variables:
           WORKFLOWS_TABLE: !Ref WorkflowsTableV3
+          # 🗂️ [S3 Offload] State offloading for large payloads (>256KB)
+          SKELETON_S3_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+          WORKFLOW_STATE_BUCKET: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
+          STREAM_INLINE_THRESHOLD_BYTES: "200000"  # 200KB threshold (safer than 250KB)
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref WorkflowsTableV3
         - DynamoDBReadPolicy:
             TableName: !Ref UsersTableV3
+        # 🗂️ [S3 Offload] Write permissions for large state storage
+        - S3CrudPolicy:
+            BucketName: !If [CreateWorkflowStateBucket, !Ref WorkflowStateBucketResource, !Ref WorkflowStateBucket]
 
   # SegmentRunnerFunction - Heavy dependencies required (langgraph, etc.)
   # 🛡️ [1단계: Reserved Concurrency] 워크플로우 엔진 동시성 제한
@@ -964,7 +971,7 @@ Resources:
       PackageType: Image
       ImageUri: !Ref BackendLambdaImageUri
       ImageConfig:
-        Command: ["src.handlers.core.codesign_api_handler.lambda_handler_streaming_sync"]
+        Command: ["src.handlers.core.codesign_api_handler.lambda_handler_sync"]
       Timeout: 120
       Environment:
         Variables:

@@ -222,7 +222,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         // Notify user if back-edge was created
         if (createsBackEdge) {
-          toast.success('순환 구조가 생성되었습니다. for_each 반복을 위한 back-edge로 설정되었습니다.');
+          toast.success('Circular structure created. Set as back-edge for for_each iteration.');
         }
       },
 
@@ -232,7 +232,7 @@ export const useWorkflowStore = create<WorkflowState>()(
         const nodesToGroup = state.nodes.filter((n) => nodeIds.includes(n.id));
 
         if (nodesToGroup.length < 2) {
-          toast.error('서브그래프 생성 실패: 최소 2개 이상의 노드가 필요합니다');
+          toast.error('Failed to create subgraph: At least 2 nodes are required');
           return;
         }
 
@@ -263,21 +263,21 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         // 3. 진입점이 정확히 1개인지 검증
         if (entryEdges.length === 0) {
-          toast.error('서브그래프 생성 실패: 외부에서 들어오는 진입 엣지가 없습니다');
+          toast.error('Failed to create subgraph: No entry edge from outside');
           return;
         }
         if (entryEdges.length > 1) {
-          toast.error(`서브그래프 생성 실패: 진입 엣지는 1개여야 하지만 ${entryEdges.length}개 발견됨`);
+          toast.error(`Failed to create subgraph: Entry edge must be 1, but found ${entryEdges.length}`);
           return;
         }
 
         // 4. 탈출점이 정확히 1개인지 검증
         if (exitEdges.length === 0) {
-          toast.error('서브그래프 생성 실패: 외부로 나가는 탈출 엣지가 없습니다');
+          toast.error('Failed to create subgraph: No exit edge to outside');
           return;
         }
         if (exitEdges.length > 1) {
-          toast.error(`서브그래프 생성 실패: 탈출 엣지는 1개여야 하지만 ${exitEdges.length}개 발견됨`);
+          toast.error(`Failed to create subgraph: Exit edge must be 1, but found ${exitEdges.length}`);
           return;
         }
 
@@ -287,7 +287,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         // 6. 진입 노드와 탈출 노드가 다른지 검증 (단일 노드 서브그래프 방지)
         if (entryNodeId === exitNodeId && nodesToGroup.length === 1) {
-          toast.error('서브그래프 생성 실패: 단일 노드는 진입/탈출 노드가 동일할 수 없습니다');
+          toast.error('Failed to create subgraph: Single node cannot have same entry/exit node');
           return;
         }
 
@@ -310,7 +310,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         const disconnectedNodes = nodesToGroup.filter(n => !connectedNodes.has(n.id));
         if (disconnectedNodes.length > 0) {
-          toast.error(`서브그래프 생성 실패: ${disconnectedNodes.length}개 노드가 진입점에서 도달 불가능합니다`);
+          toast.error(`Failed to create subgraph: ${disconnectedNodes.length} node(s) unreachable from entry point`);
           return;
         }
 
@@ -340,14 +340,14 @@ export const useWorkflowStore = create<WorkflowState>()(
         };
 
         if (hasCycle()) {
-          toast.warning('경고: 서브그래프 내부에 순환 참조가 감지되었습니다. 실행 시 무한 루프가 발생할 수 있습니다');
-          // 경고만 표시하고 계속 진행 (일부 워크플로우는 의도적으로 루프를 사용할 수 있음)
+          toast.warning('Warning: Circular reference detected in subgraph. May cause infinite loop during execution');
+          // Show warning and continue (some workflows may intentionally use loops)
         }
 
         // 9. 그룹 노드 타입 검증 (이미 그룹 노드는 중첩 불가)
         const hasGroupNode = nodesToGroup.some(n => n.type === 'group');
         if (hasGroupNode) {
-          toast.error('서브그래프 생성 실패: 서브그래프를 중첩할 수 없습니다');
+          toast.error('Failed to create subgraph: Cannot nest subgraphs');
           return;
         }
 
@@ -414,8 +414,8 @@ export const useWorkflowStore = create<WorkflowState>()(
         const entryNode = nodesToGroup.find(n => n.id === entryNodeId);
         const exitNode = nodesToGroup.find(n => n.id === exitNodeId);
         toast.success(
-          `서브그래프 "${groupName}" 생성 완료\n` +
-          `진입: ${entryNode?.data?.label || entryNodeId} → 탈출: ${exitNode?.data?.label || exitNodeId}`
+          `Subgraph "${groupName}" created successfully\n` +
+          `Entry: ${entryNode?.data?.label || entryNodeId} → Exit: ${exitNode?.data?.label || exitNodeId}`
         );
       },
 
