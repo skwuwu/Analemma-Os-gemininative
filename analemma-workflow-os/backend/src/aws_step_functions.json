@@ -600,35 +600,13 @@
       "Default": "PublishSucceededEvent"
     },
     "PrepareSequentialBranch": {
-      "Type": "Task",
+      "Type": "Pass",
       "Comment": "[SEQUENTIAL_BRANCH] Replace partition_map with inner_partition_map for sequential branch execution",
-      "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
-        "FunctionName": "${SafeOperatorArn}",
-        "Payload": {
-          "operation": "prepare_sequential_branch",
-          "state_data.$": "$.state_data",
-          "execution_result.$": "$.execution_result"
-        }
+        "state_data.$": "States.StringToJson(States.JsonToString($.state_data))",
+        "execution_result.$": "$.execution_result"
       },
-      "ResultSelector": {
-        "state_data.$": "$.Payload"
-      },
-      "ResultPath": "$",
-      "Next": "ExecuteSegment",
-      "Retry": [
-        {
-          "ErrorEquals": [
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException",
-            "Lambda.TooManyRequestsException"
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-          "BackoffRate": 2.0
-        }
-      ]
+      "Next": "ExecuteSegment"
     },
     "ProcessParallelSegments": {
       "Type": "Map",
