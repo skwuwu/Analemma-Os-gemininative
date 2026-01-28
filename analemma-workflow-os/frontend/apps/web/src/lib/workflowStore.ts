@@ -11,6 +11,7 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react';
 import { toast } from 'sonner';
+import { detectAndSuggestControlBlock } from './controlBlockGenerator';
 
 // 서브그래프 정의
 interface SubgraphDefinition {
@@ -295,7 +296,7 @@ export const useWorkflowStore = create<WorkflowState>()(
           }
         }
 
-        // 🔀 분기 패턴 감지 및 Conditional Control Block 제안
+        // 🔀 분기 패턴 감지 및 Conditional Control Block 자동 생성
         const suggestion = detectAndSuggestControlBlock(
           connection.source!,
           state.nodes,
@@ -303,28 +304,19 @@ export const useWorkflowStore = create<WorkflowState>()(
         );
 
         if (suggestion && !createsBackEdge) {  // Loop 제안과 중복 방지
-          // Control Block 제안 토스트
-          toast.info(suggestion.message, {
-            duration: 10000,
-            action: {
-              label: 'Create Block',
-              onClick: () => {
-                // Control Block 노드 추가
-                set((state) => ({
-                  nodes: [...state.nodes, suggestion.controlBlockNode],
-                  edges: [
-                    ...state.edges.filter(e => !suggestion.originalEdges.includes(e)),
-                    ...suggestion.newEdges
-                  ]
-                }));
-                toast.success('Control Block created!');
-              }
-            },
-            cancel: {
-              label: 'Keep as is',
-              onClick: () => {}
-            }
-          });
+          // Control Block 자동 생성 (사용자 확인 없이)
+          set((currentState) => ({
+            nodes: [...currentState.nodes, suggestion.controlBlockNode],
+            edges: [
+              ...currentState.edges.filter(e => !suggestion.originalEdges.includes(e)),
+              ...suggestion.newEdges
+            ]
+          }));
+          
+          toast.success(`Control Block created for branching at ${sourceNode?.data?.label || connection.source}`);
+          
+          // 원래 엣지 연결 취소 (Control Block을 통해서만 연결되도록)
+          return;
         }
       },
 

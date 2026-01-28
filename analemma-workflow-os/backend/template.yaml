@@ -1037,7 +1037,7 @@ Resources:
       PackageType: Image
       ImageUri: !Ref BackendLambdaImageUri
       ImageConfig:
-        Command: ["src.handlers.core.plan_briefing_handler.lambda_handler"]
+        Command: ["src.handlers.core.plan_briefing_handler.lambda_handler_entry"]
       Timeout: 60
       Environment:
         Variables:

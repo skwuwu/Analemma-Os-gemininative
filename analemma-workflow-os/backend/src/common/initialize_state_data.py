@@ -677,7 +677,7 @@ def lambda_handler(event, context):
         "quota_reservation_id": quota_reservation_id,
         
         # 🚨 [Critical Fix] Conditional partition_map return in distributed mode
-        "total_segments": safe_total_segments,  # 🛡️ Always Top-Level Count
+        "total_segments": _safe_total_segments,  # 🛡️ Always Top-Level Count
         "partition_map": partition_map_for_return,
         "partition_map_s3_path": partition_map_s3_path,  # Always exists (minimum "")
         
@@ -749,7 +749,7 @@ def lambda_handler(event, context):
                 "__s3_path": s3_path,
                 "__original_size_kb": response_size_kb,
                 # Include essential fields for Step Functions routing
-                "total_segments": safe_total_segments,
+                "total_segments": _safe_total_segments,
                 "distributed_mode": is_distributed_mode,
                 "max_concurrency": max_concurrency,
                 "distributed_strategy": distributed_strategy["strategy"],

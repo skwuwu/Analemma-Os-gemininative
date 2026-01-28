@@ -398,4 +398,6 @@ def lambda_handler_sync(event, context):
 
 
 # Lambda 엔트리포인트
-lambda_handler = lambda_handler_sync
+def lambda_handler_entry(event, context):
+    """Lambda entry point"""
+    return lambda_handler_sync(event, context)
