@@ -138,7 +138,7 @@
         "Payload.$": "$"
       },
       "ResultSelector": {
-        "bag.$": "$.Payload.state_data.bag"
+        "bag.$": "$.Payload.state_data"
       },
       "ResultPath": "$.state_data",
       "Retry": [
