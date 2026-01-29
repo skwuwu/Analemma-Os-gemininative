@@ -150,7 +150,6 @@
                                 "scenario.$": "$.scenario",
                                 "scenario_key.$": "$.scenario",
                                 "test_result.$": "$.test_result",
-                                "final_state.$": "$.test_result.output.final_state",
                                 "test_config": {
                                     "include_task_abstraction_verification": true,
                                     "verify_provider": true

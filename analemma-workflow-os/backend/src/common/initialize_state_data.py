@@ -542,9 +542,13 @@ def lambda_handler(event, context):
         # Ensure idempotency_key is available
         idempotency_key = bag.get('idempotency_key') or raw_input.get('idempotency_key') or "unknown"
         
+        # 🔑 [Critical] ASL expects structure: {state_data: {bag: {...}}}
+        # Wrap payload in 'bag' key for ASL compatibility
+        wrapped_payload = {'bag': payload}
+        
         usc_result = universal_sync_core(
             base_state={},  # 빈 상태에서 시작
-            new_result=payload, # Use hydrated payload
+            new_result=wrapped_payload,  # payload를 bag으로 감싸서 전달
             context={
                 'action': 'init',
                 'execution_id': idempotency_key,
@@ -552,18 +556,25 @@ def lambda_handler(event, context):
             }
         )
         
-        response_data = usc_result['state_data']
+        # 🔑 [Critical] Return USC result as-is
+        # USC returns {state_data: {...}, next_action: ...}
+        # ASL ResultSelector will extract what it needs
+        response_data = usc_result
         next_action = usc_result.get('next_action', 'STARTED')
         
-        logger.info(f"✅ [Day-Zero Sync] Complete: next_action={next_action}, size={response_data.get('payload_size_kb', 0)}KB")
+        logger.info(f"✅ [Day-Zero Sync] Complete: next_action={next_action}")
     else:
         # USC 미사용 폴백 (기존 로직)
         logger.warning("⚠️ Universal Sync Core not available, using legacy initialization")
-        response_data = initial_payload
-        response_data['segment_to_run'] = 0
-        response_data['loop_counter'] = 0
-        response_data['state_history'] = []
-        response_data['last_update_time'] = current_time
+        
+        # 🔑 [Critical] Wrap in 'bag' structure for v3 ASL compatibility
+        # Even in fallback path, maintain {state_data: {bag: {...}}} structure
+        payload['segment_to_run'] = 0
+        payload['loop_counter'] = 0
+        payload['state_history'] = []
+        payload['last_update_time'] = current_time
+        
+        response_data = {'bag': payload}
     
     # 최종 크기 검증 (USC가 이미 처리했지만 로깅용)
     response_json = json.dumps(response_data, default=str, ensure_ascii=False)
