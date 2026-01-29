@@ -202,6 +202,10 @@ export const useNotifications = (options: UseNotificationsOptions = {}) => {
         onMessage: handleNotificationMessage,
         onComponentStream: optionsRef.current.onWorkflowComponentStream,
       });
+      // Ensure connection is active
+      if (!globalWsManager.isConnected()) {
+        globalWsManager.connect();
+      }
     }
 
     return () => {
@@ -215,13 +219,13 @@ export const useNotifications = (options: UseNotificationsOptions = {}) => {
 
   // Update callbacks when options change (without reconnecting)
   useEffect(() => {
-    if (globalWsManager) {
+    if (globalWsManager && handleNotificationMessage) {
       globalWsManager.updateCallbacks({
         onMessage: handleNotificationMessage,
         onComponentStream: optionsRef.current.onWorkflowComponentStream,
       });
     }
-  }, [handleNotificationMessage, optionsRef.current.onWorkflowComponentStream]);
+  }, [handleNotificationMessage]);
 
   const connect = useCallback(async () => {
     await globalWsManager?.connect();

@@ -37,6 +37,9 @@ class ASLValidator:
         
         # JSONPath 패턴
         if path.startswith('$'):
+            # Root path (전체 입력 참조)
+            if path == '$':
+                return True, ''
             # 기본 JSONPath 패턴
             if re.match(r'^\$[\[\].a-zA-Z0-9_\*\-]+$', path):
                 return True, ''

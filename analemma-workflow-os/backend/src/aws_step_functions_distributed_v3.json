@@ -122,7 +122,7 @@
       "Comment": "🎒 Smart StateBag 초기화 - S3 포인터 기반 상태 관리",
       "Parameters": {
         "FunctionName": "${InitializeStateDataArn}",
-        "Payload": "$"
+        "Payload.$": "$"
       },
       "ResultSelector": {
         "state_data": "$.Payload"

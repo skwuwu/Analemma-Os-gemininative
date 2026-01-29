@@ -274,12 +274,13 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
   
   // Task selection handler
   const handleTaskClick = useCallback((task: TaskSummary) => {
-    console.log('[TaskManager] Task clicked:', task.task_id, task.task_summary);
+    console.log('[TaskManager] 🖱️ Task clicked:', task.task_id, task.task_summary);
     taskManager.selectTask(task.task_id);
-    console.log('[TaskManager] Selected task ID:', taskManager.selectedTaskId);
+    console.log('[TaskManager] 📌 After selectTask, selectedTaskId:', taskManager.selectedTaskId);
+    console.log('[TaskManager] 📌 taskManager.selectedTask:', taskManager.selectedTask?.task_id);
     // Fetch execution timeline when task is selected
     fetchExecutionTimeline(task.task_id);
-  }, [taskManager.selectTask, taskManager.selectedTaskId, fetchExecutionTimeline]); // ✅ 필요한 메서드만 의존성으로 지정
+  }, [taskManager, fetchExecutionTimeline]); // ✅ taskManager 전체를 의존성으로 추가
 
   const handleArtifactClick = useCallback((artifactId: string) => {
     setSelectedArtifactId(artifactId);

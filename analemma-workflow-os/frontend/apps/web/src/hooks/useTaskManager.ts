@@ -72,13 +72,13 @@ export function useTaskDetail(options: UseTaskDetailOptions = {}) {
   const detailQuery = useQuery({
     queryKey: ['task', taskId, { includeTechnicalLogs }],
     queryFn: async () => {
-      console.log('[useTaskDetail] queryFn executing for taskId:', taskId);
+      console.log('[useTaskDetail] ✅ queryFn executing for taskId:', taskId);
       if (!taskId) throw new Error('Task ID is required');
 
       const failures: string[] = [];
       const API_BASE = import.meta.env.VITE_API_BASE_URL;
       console.log('[useTaskDetail] API_BASE:', API_BASE);
-      console.log('[useTaskDetail] Fetching detail, outcomes, and metrics for:', taskId);
+      console.log('[useTaskDetail] 📥 Fetching detail, outcomes, and metrics for:', taskId);
       const [detail, outcomesResponse, metricsResponse] = await Promise.all([
         getTaskDetail(taskId, { includeTechnicalLogs }),
         getTaskOutcomes(taskId).catch(err => {
@@ -141,6 +141,8 @@ export function useTaskDetail(options: UseTaskDetailOptions = {}) {
     },
     enabled: enabled && !!taskId,
     refetchInterval,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
   });
 
   // 캐시 무효화
@@ -313,6 +315,7 @@ interface UseTaskManagerOptions {
  */
 export function useTaskManager(options: UseTaskManagerOptions = {}) {
   const optionsRef = useRef(options);
+  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(options.selectedTaskId || null);
 
   // Keep options ref up to date
@@ -360,9 +363,14 @@ export function useTaskManager(options: UseTaskManagerOptions = {}) {
 
   // Task 선택
   const selectTask = useCallback((taskId: string | null) => {
-    console.log('[useTaskManager] selectTask called with:', taskId);
+    console.log('[useTaskManager] 🎯 selectTask called with:', taskId);
     setSelectedId(taskId);
-  }, []); // ✅ selectedId를 의존성 배열에서 제거 (불필요한 재생성 방지)
+    // Force refetch when task is selected
+    if (taskId) {
+      console.log('[useTaskManager] 🔄 Invalidating cache for task:', taskId);
+      queryClient.invalidateQueries({ queryKey: ['task', taskId] });
+    }
+  }, [queryClient]); // ✅ queryClient 추가하여 캐시 무효화 가능
 
   // 승인 대기 Task 필터
   const pendingApprovalTasks = taskList.tasks.filter(t => t.status === 'pending_approval');

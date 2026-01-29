@@ -35,24 +35,14 @@ def fix_result_selector_fields(obj):
             fix_result_selector_fields(item)
 
 def fix_payload_parameters(obj):
-    """Parameters.Payload.$ -> Parameters.Payload"""
-    if isinstance(obj, dict):
-        if 'Parameters' in obj:
-            params = obj['Parameters']
-            if isinstance(params, dict) and 'Payload.$' in params:
-                # Payload.$ -> Payload로 변경
-                payload_value = params.pop('Payload.$')
-                params['Payload'] = payload_value
-                print(f'  ✓ "Payload.$" -> "Payload"')
-        
-        # 재귀 처리
-        for value in obj.values():
-            if isinstance(value, (dict, list)):
-                fix_payload_parameters(value)
+    """Parameters.Payload.$ -> Parameters.Payload (REMOVED - this was incorrect!)
     
-    elif isinstance(obj, list):
-        for item in obj:
-            fix_payload_parameters(item)
+    NOTE: Payload.$ is actually CORRECT for Lambda invoke in Step Functions.
+    The .$ suffix tells Step Functions to evaluate the value as JSONPath.
+    This function is kept for reference but does nothing.
+    """
+    # This function intentionally does nothing - Payload.$ is correct syntax!
+    pass
 
 def process_file(file_path: Path):
     """파일 처리"""
@@ -65,8 +55,9 @@ def process_file(file_path: Path):
     print('\n🔧 ResultSelector 필드 수정:')
     fix_result_selector_fields(sm_def)
     
-    print('\n🔧 Parameters.Payload.$ 수정:')
-    fix_payload_parameters(sm_def)
+    # Payload.$ 수정은 제거됨 (원래 문법이 맞았음)
+    # print('\n🔧 Parameters.Payload.$ 수정:')
+    # fix_payload_parameters(sm_def)
     
     # 파일 저장
     with open(file_path, 'w', encoding='utf-8') as f:

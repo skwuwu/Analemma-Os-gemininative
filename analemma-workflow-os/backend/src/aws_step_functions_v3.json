@@ -135,7 +135,7 @@
       "Comment": "🎒 [Smart StateBag] Create initial state_data with S3 pointers and partition_map",
       "Parameters": {
         "FunctionName": "${InitializeStateDataArn}",
-        "Payload": "$"
+        "Payload.$": "$"
       },
       "ResultSelector": {
         "state_data": "$.Payload"
@@ -263,7 +263,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${ExecuteSegmentArn}",
-              "Payload": "$"
+              "Payload.$": "$"
             },
             "ResultSelector": {
               "status": "$.Payload.status",
@@ -312,7 +312,7 @@
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
               "FunctionName": "${ExecuteSegmentArn}",
-              "Payload": "$"
+              "Payload.$": "$"
             },
             "ResultSelector": {
               "status": "$.Payload.status",
@@ -365,9 +365,7 @@
       "Comment": "🎯 [Standardized Interface] Execute single segment, return ExecutionResult",
       "Parameters": {
         "FunctionName": "${ExecuteSegmentArn}",
-        "Payload": {
-          "state_data.$": "$.state_data"
-        }
+        "Payload.$": "$"
       },
       "ResultSelector": {
         "result": "$.Payload"
