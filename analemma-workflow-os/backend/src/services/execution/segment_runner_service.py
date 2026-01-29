@@ -63,6 +63,19 @@ from src.common.state_hydrator import (
 
 logger = logging.getLogger(__name__)
 
+# [v3.13] Kernel Protocol - The Great Seal Pattern
+# 모든 Lambda ↔ ASL 통신을 표준화
+try:
+    from src.common.kernel_protocol import seal_state_bag, open_state_bag, get_from_bag
+    KERNEL_PROTOCOL_AVAILABLE = True
+except ImportError:
+    try:
+        from common.kernel_protocol import seal_state_bag, open_state_bag, get_from_bag
+        KERNEL_PROTOCOL_AVAILABLE = True
+    except ImportError:
+        KERNEL_PROTOCOL_AVAILABLE = False
+        logger.warning("⚠️ kernel_protocol not available - falling back to legacy mode")
+
 # [v3.12] Shared Kernel Library: StateBag as Single Source of Truth
 # ExecuteSegment now returns StateBag format directly using universal_sync_core
 try:
@@ -204,75 +217,51 @@ def _safe_get_from_bag(
     log_on_default: bool = False
 ) -> Any:
     """
-    🛡️ [v3.4 Deep Guard] Safely extract value from State Bag
+    🛡️ [v3.13] Kernel Protocol 기반 Bag 데이터 추출
     
-    v3 ASL Design: ASL passes only $.state_data.bag
-    → Lambda receives event.state_data = bag_contents (flat)
-    
-    Search Priority:
-        1. event.state_data.bag.{key}  (legacy: when bag wrapper exists)
-        2. event.state_data.{key}      (v3 normal: bag contents passed directly)
-        3. default
-    
-    ❌ Event root fallback removed
-       - v3 ASL only passes bag, so bag data doesn't exist in event root
-       - Event root only contains meta fields like action, segment_to_run, etc.
+    kernel_protocol.get_from_bag을 사용하여 표준화된 경로로 데이터 추출.
+    Kernel Protocol이 없으면 레거시 로직 사용.
     
     Args:
-        event: Event dictionary from Lambda/Step Functions
-        key: Key to extract from bag
-        default: Default value if key not found
-        caller: (Optional) Caller identifier for tracing (e.g., "execute_segment:line2540")
-        log_on_default: (Optional) If True, log when returning default value
+        event: Lambda 이벤트
+        key: 추출할 키
+        default: 기본값
+        caller: (Optional) 호출자 식별자
+        log_on_default: (Optional) 기본값 반환 시 로깅
     
     Returns:
-        Found value or default
+        찾은 값 또는 default
     """
+    # [v3.13] Kernel Protocol 사용 (권장)
+    if KERNEL_PROTOCOL_AVAILABLE:
+        val = get_from_bag(event, key, default)
+        if val == default and log_on_default:
+            logger.warning(f"🔍 [Kernel Protocol] key='{key}' returned default. Caller: {caller}")
+        return val
+    
+    # Legacy fallback
     if not isinstance(event, dict):
-        if log_on_default and caller:
-            logger.warning(
-                f"🔍 [None Trace] key='{key}' returned default={default}. "
-                f"Reason: event is not dict (type={type(event).__name__}). Caller: {caller}"
-            )
         return default
     
     state_data = event.get('state_data') or {}
     
     if isinstance(state_data, dict):
-        # 1. Inside bag (legacy: when bag wrapper exists)
         bag = state_data.get('bag')
         if isinstance(bag, dict):
             val = bag.get(key)
             if val is not None:
                 return val
         
-        # 2. state_data directly (v3 normal: ASL passes $.state_data.bag → state_data IS bag contents)
         val = state_data.get(key)
         if val is not None:
             return val
     
-    # 🛡️ [v3.5 Critical Fix] Event root fallback - REQUIRED for v3 ASL
-    # v3 ASL: "Payload.$": "$.state_data.bag" → Lambda receives event = bag_contents (flat)
-    # In this case, event.state_data doesn't exist, and event ITSELF is the bag contents
-    # So we MUST check event root for the key
     val = event.get(key)
     if val is not None:
         return val
     
-    # 🔍 [v3.5] None Reference Tracing: Log when returning default
     if log_on_default:
-        # Collect diagnostic info
-        state_data_type = type(state_data).__name__
-        state_data_keys = list(state_data.keys())[:10] if isinstance(state_data, dict) else "N/A"
-        event_keys = list(event.keys())[:10] if isinstance(event, dict) else "N/A"
-        bag_type = type(bag).__name__ if 'bag' in dir() and bag is not None else "None"
-        
-        logger.warning(
-            f"🔍 [None Trace] key='{key}' returned default={default}. "
-            f"Caller: {caller or 'unknown'}. "
-            f"Diagnostics: state_data_type={state_data_type}, "
-            f"state_data_keys={state_data_keys}, event_keys={event_keys}, bag_type={bag_type}"
-        )
+        logger.warning(f"🔍 [Legacy] key='{key}' returned default. Caller: {caller}")
     
     return default
 
@@ -2460,26 +2449,16 @@ class SegmentRunnerService:
             })
             res['final_state'] = original_final_state
             
-            # 3. 🎯 [v3.12] Use universal_sync_core for StateBag packaging
-            # This is the "Great Seal" - wrapping execution result into StateBag
-            if UNIVERSAL_SYNC_CORE_AVAILABLE:
-                # Build base_state from current event's state
-                base_state = event.get('state_data', {})
-                if isinstance(base_state, dict) and 'bag' in base_state:
-                    base_state = base_state.get('bag', {})
+            # 3. 🎯 [v3.13] Kernel Protocol - The Great Seal
+            # Uses seal_state_bag for unified Lambda ↔ ASL communication
+            if KERNEL_PROTOCOL_AVAILABLE:
+                # Build base_state from current event using open_state_bag
+                base_state = open_state_bag(event)
                 if not isinstance(base_state, dict):
                     base_state = {}
                 
-                # Map status to next_action context
+                # Build execution_result for sealing
                 status = res.get('status', 'CONTINUE')
-                action_context = {
-                    'action': 'sync',
-                    'segment_id': _segment_id,
-                    'force_offload': force_offload,
-                    'is_parallel_branch': is_parallel_branch,
-                }
-                
-                # Build execution_result for USC
                 execution_result = {
                     'final_state': original_final_state,
                     'new_history_logs': res.get('new_history_logs', []),
@@ -2498,27 +2477,63 @@ class SegmentRunnerService:
                     'total_output_tokens': res.get('total_output_tokens') or original_final_state.get('total_output_tokens'),
                 }
                 
-                # Call universal_sync_core - The Great Seal
+                # Context for seal_state_bag
+                seal_context = {
+                    'segment_id': _segment_id,
+                    'force_offload': force_offload,
+                    'is_parallel_branch': is_parallel_branch,
+                }
+                
+                # 🎯 [v3.13] Use seal_state_bag - Unified Protocol
+                # Returns: { state_data: {...}, next_action: "..." }
+                # ASL ResultSelector wraps this into $.state_data.bag
+                sealed_result = seal_state_bag(
+                    base_state=base_state,
+                    result_delta={'execution_result': execution_result},
+                    action='sync',
+                    context=seal_context
+                )
+                
+                logger.info(f"[v3.13] 🎯 Kernel Protocol: sealed response - "
+                           f"next_action={sealed_result.get('next_action')}, "
+                           f"state_size={len(json.dumps(sealed_result.get('state_data', {}), default=str))//1024}KB")
+                
+                return sealed_result
+            
+            # 3b. USC Fallback (if kernel_protocol not available but USC is)
+            if UNIVERSAL_SYNC_CORE_AVAILABLE:
+                base_state = event.get('state_data', {})
+                if isinstance(base_state, dict) and 'bag' in base_state:
+                    base_state = base_state.get('bag', {})
+                if not isinstance(base_state, dict):
+                    base_state = {}
+                
+                status = res.get('status', 'CONTINUE')
+                execution_result = {
+                    'final_state': original_final_state,
+                    'new_history_logs': res.get('new_history_logs', []),
+                    'status': status,
+                    'segment_id': _segment_id,
+                    'segment_type': res.get('segment_type', 'normal'),
+                    'next_segment_to_run': res.get('next_segment_to_run'),
+                    'error_info': res.get('error_info'),
+                    'branches': res.get('branches'),
+                    'execution_time': res.get('execution_time'),
+                    'kernel_actions': res.get('kernel_actions'),
+                    'total_segments': _total_segments,
+                    'total_tokens': res.get('total_tokens') or original_final_state.get('total_tokens'),
+                    'total_input_tokens': res.get('total_input_tokens') or original_final_state.get('total_input_tokens'),
+                    'total_output_tokens': res.get('total_output_tokens') or original_final_state.get('total_output_tokens'),
+                }
+                
                 usc_result = universal_sync_core(
                     base_state=base_state,
                     new_result={'execution_result': execution_result},
-                    context=action_context
+                    context={'action': 'sync', 'segment_id': _segment_id}
                 )
                 
-                # 🎯 [v3.12] Wrap in {state_data: {bag: ...}} format for ASL consistency
-                # ASL expects: $.state_data.bag for all state references
-                wrapped_result = {
-                    'state_data': {
-                        'bag': usc_result.get('state_data', {})
-                    },
-                    'next_action': usc_result.get('next_action', 'CONTINUE')
-                }
-                
-                logger.info(f"[v3.12] 🎯 ExecuteSegment returning StateBag format: "
-                           f"next_action={wrapped_result.get('next_action')}, "
-                           f"state_size={len(json.dumps(wrapped_result.get('state_data', {}), default=str))//1024}KB")
-                
-                return wrapped_result
+                logger.warning("[v3.13] ⚠️ USC fallback - kernel_protocol not available")
+                return usc_result
             
             # 4. Fallback: Legacy mode (if universal_sync_core not available)
             logger.warning("[v3.12] ⚠️ Fallback to legacy mode - universal_sync_core not available")

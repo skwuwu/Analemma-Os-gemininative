@@ -132,18 +132,16 @@
     "InitializeStateBag": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🎒 [v3.12] Smart StateBag - returns {state_data: {bag: ...}, next_action}",
+      "Comment": "🎒 [v3.13] Kernel Protocol - Lambda returns {state_data, next_action}, ASL wraps to bag",
       "Parameters": {
         "FunctionName": "${InitializeStateDataArn}",
         "Payload.$": "$"
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data.bag"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -445,7 +443,7 @@
     "SyncStateAfterDistributed": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🔄 [Central State Manager] Aggregate distributed results",
+      "Comment": "🔄 [v3.13] Kernel Protocol - Aggregate distributed results",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -455,29 +453,25 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
-        "final_status.$": "$.Payload.final_status"
+        "bag.$": "$.Payload.state_data",
+        "next_action.$": "$.Payload.final_status"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Next": "NotifyWorkflowCompleted"
     },
     "ExecuteSegment": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🎯 [v3.12] Lambda hydrates state_data (may contain S3 pointers)",
+      "Comment": "🎯 [v3.13] Kernel Protocol - Lambda returns {state_data, next_action}",
       "Parameters": {
         "FunctionName": "${ExecuteSegmentArn}",
-        "Payload": {
-          "state_data.$": "$.state_data"
-        }
+        "Payload.$": "$.state_data.bag"
       },
       "ResultSelector": {
-        "state_data.$": "$.Payload.state_data",
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -530,12 +524,10 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -562,50 +554,50 @@
     },
     "EvaluateNextAction": {
       "Type": "Choice",
-      "Comment": "🧭 [Router] Determine next step based on execution_result status and outgoing_edges",
+      "Comment": "🧭 [v3.13] Router - next_action is now at $.state_data.next_action",
       "Choices": [
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "FAILED",
           "Next": "NotifyAndFail"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "HALTED",
           "Next": "NotifyAndFail"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "SIGKILL",
           "Next": "NotifyAndFail"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "COMPLETE",
           "Next": "NotifyWorkflowCompleted"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "PAUSED_FOR_HITP",
           "Next": "WaitForHITPCallback"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "PAUSE",
           "Next": "WaitForHITPCallback"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "PAUSED_FOR_ASYNC_LLM",
           "Next": "HandleAsyncLLM"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "PARALLEL_GROUP",
           "Next": "ProcessParallelBranches"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "SEQUENTIAL_BRANCH",
           "Next": "ExecuteSegment"
         }
@@ -845,7 +837,7 @@
     "AggregateParallelResults": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "[Join] Merge parallel branch results using Fork-Join pattern (pointer-only input)",
+      "Comment": "[v3.13] Kernel Protocol - Merge parallel branch results",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -857,12 +849,10 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Next": "EvaluateNextAction"
     },
     "WaitForHITPCallback": {
@@ -918,7 +908,7 @@
     "MergeCallbackResult": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "Merge HITP callback result into state_data",
+      "Comment": "[v3.13] Kernel Protocol - Merge HITP callback result",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -928,12 +918,10 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Catch": [
         {
           "ErrorEquals": [
@@ -987,7 +975,7 @@
     "MergeAsyncResult": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "Merge async LLM result into state_data",
+      "Comment": "[v3.13] Kernel Protocol - Merge async LLM result",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -997,12 +985,10 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Next": "EvaluateNextAction"
     },
     "NotifyWorkflowCompleted": {

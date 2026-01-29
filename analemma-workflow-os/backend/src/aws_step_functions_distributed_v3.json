@@ -119,18 +119,16 @@
     "InitializeStateBag": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🎒 [v3.12] Smart StateBag - returns {state_data: {bag: ...}, next_action}",
+      "Comment": "🎒 [v3.13] Kernel Protocol - Lambda returns {state_data, next_action}, ASL wraps to bag",
       "Parameters": {
         "FunctionName": "${InitializeStateDataArn}",
         "Payload.$": "$"
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data.bag"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -478,7 +476,7 @@
     "AggregateDistributedResults": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🔀 [Map-Reduce + P1 Post-Snapshot] Merge chunk results and verify state continuity",
+      "Comment": "🔀 [v3.13] Kernel Protocol - Merge chunk results and verify state continuity",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -492,20 +490,18 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
-        "final_status.$": "$.Payload.final_status",
+        "bag.$": "$.Payload.state_data",
+        "next_action.$": "$.Payload.final_status",
         "failed_chunks.$": "$.Payload.failed_chunks"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Next": "EvaluateDistributedResult"
     },
     "EvaluateDistributedResult": {
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.final_status",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "FAILED",
           "Next": "NotifyAndFail"
         }
@@ -542,15 +538,13 @@
       "Comment": "🎯 [v3.12] Lambda hydrates state_data (may contain S3 pointers)",
       "Parameters": {
         "FunctionName": "${ExecuteSegmentArn}",
-        "Payload": {
-          "state_data.$": "$.state_data"
-        }
+        "Payload.$": "$.state_data.bag"
       },
       "ResultSelector": {
-        "state_data.$": "$.Payload.state_data",
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -577,7 +571,7 @@
     "SyncStateData": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🔄 [v3.12 Legacy] Only used for external merge requests - ExecuteSegment handles sync internally",
+      "Comment": "🔄 [v3.13] Kernel Protocol - Only used for external merge requests",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -587,12 +581,10 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -617,30 +609,30 @@
     },
     "EvaluateNextAction": {
       "Type": "Choice",
-      "Comment": "🧭 다음 액션 라우팅",
+      "Comment": "🧭 [v3.13] Router - next_action is at $.state_data.next_action",
       "Choices": [
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "FAILED",
           "Next": "NotifyAndFail"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "COMPLETE",
           "Next": "NotifyWorkflowCompleted"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "PAUSED_FOR_HITP",
           "Next": "WaitForCallback"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "PAUSE",
           "Next": "WaitForCallback"
         },
         {
-          "Variable": "$.next_action",
+          "Variable": "$.state_data.next_action",
           "StringEquals": "PARALLEL_GROUP",
           "Next": "ProcessParallelBranches"
         }
@@ -854,7 +846,7 @@
     "AggregateParallelResults": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🔀 [Fork-Join + P0] 브랜치 결과 병합 - S3에서 로드",
+      "Comment": "🔀 [v3.13] Kernel Protocol - 브랜치 결과 병합",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -866,12 +858,10 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Next": "EvaluateNextAction"
     },
     "WaitForCallback": {
@@ -893,6 +883,7 @@
     "MergeCallbackResult": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
+      "Comment": "[v3.13] Kernel Protocol - Merge callback result",
       "Parameters": {
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
@@ -902,12 +893,10 @@
         }
       },
       "ResultSelector": {
-        "state_data": {
-          "bag.$": "$.Payload.state_data"
-        },
+        "bag.$": "$.Payload.state_data",
         "next_action.$": "$.Payload.next_action"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Next": "EvaluateNextAction"
     },
     "NotifyWorkflowCompleted": {

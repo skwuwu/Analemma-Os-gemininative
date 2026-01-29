@@ -532,23 +532,45 @@ def lambda_handler(event, context):
     
     logger.info(f"✅ State Initialization Complete. Keys: {list(payload.keys())}")
     
-    # 🎯 Universal Sync Core 호출 (action='init')
-    # - 빈 상태 {}에서 시작하여 표준 StateBag으로 승격
-    # - 필수 메타데이터 자동 주입 (segment_to_run=0, loop_counter=0, state_history=[])
-    # - P0~P2 자동 최적화 (256KB 초과 시 자동 오프로딩)
-    if _HAS_USC and universal_sync_core:
-        logger.info("🎯 [Day-Zero Sync] Routing through Universal Sync Core (action='init')")
+    # � [v3.13] Kernel Protocol - The Great Seal Pattern
+    # seal_state_bag을 사용하여 표준 응답 포맷 생성
+    try:
+        from src.common.kernel_protocol import seal_state_bag
+        _HAS_KERNEL_PROTOCOL = True
+    except ImportError:
+        try:
+            from common.kernel_protocol import seal_state_bag
+            _HAS_KERNEL_PROTOCOL = True
+        except ImportError:
+            _HAS_KERNEL_PROTOCOL = False
+    
+    if _HAS_KERNEL_PROTOCOL:
+        logger.info("🎒 [v3.13] Using Kernel Protocol seal_state_bag")
         
         # Ensure idempotency_key is available
         idempotency_key = bag.get('idempotency_key') or raw_input.get('idempotency_key') or "unknown"
         
-        # 🔑 [Critical] ASL expects structure: {state_data: {bag: {...}}}
-        # Wrap payload in 'bag' key for ASL compatibility
-        wrapped_payload = {'bag': payload}
+        # seal_state_bag: USC 호출 + 표준 포맷 반환
+        response_data = seal_state_bag(
+            base_state={},  # 빈 상태에서 시작
+            result_delta=payload,
+            action='init',
+            context={
+                'execution_id': idempotency_key,
+                'idempotency_key': idempotency_key
+            }
+        )
+        
+        logger.info(f"✅ [Kernel Protocol] Init complete: next_action={response_data.get('next_action')}")
+    elif _HAS_USC and universal_sync_core:
+        # Fallback to direct USC (if kernel_protocol not available)
+        logger.warning("⚠️ Kernel Protocol not available, using direct USC")
+        
+        idempotency_key = bag.get('idempotency_key') or raw_input.get('idempotency_key') or "unknown"
         
         usc_result = universal_sync_core(
-            base_state={},  # 빈 상태에서 시작
-            new_result=wrapped_payload,  # payload를 bag으로 감싸서 전달
+            base_state={},
+            new_result=payload,
             context={
                 'action': 'init',
                 'execution_id': idempotency_key,
@@ -556,30 +578,26 @@ def lambda_handler(event, context):
             }
         )
         
-        # 🔑 [Critical] Return USC result as-is
-        # USC returns {state_data: {...}, next_action: ...}
-        # ASL ResultSelector will extract what it needs
-        response_data = usc_result
-        next_action = usc_result.get('next_action', 'STARTED')
-        
-        logger.info(f"✅ [Day-Zero Sync] Complete: next_action={next_action}")
+        # 표준 포맷으로 반환
+        response_data = {
+            'state_data': usc_result.get('state_data', {}),
+            'next_action': usc_result.get('next_action', 'STARTED')
+        }
     else:
-        # USC 미사용 폴백 (기존 로직)
+        # USC도 없는 경우 폴백
         logger.warning("⚠️ Universal Sync Core not available, using legacy initialization")
         
-        # 🔑 [Critical] Wrap in 'bag' structure for v3 ASL compatibility
-        # Must match USC return structure: {state_data: {bag: {...}}, next_action: ...}
         payload['segment_to_run'] = 0
         payload['loop_counter'] = 0
         payload['state_history'] = []
         payload['last_update_time'] = current_time
         
         response_data = {
-            'state_data': {'bag': payload},
+            'state_data': payload,
             'next_action': 'STARTED'
         }
     
-    # 최종 크기 검증 (USC가 이미 처리했지만 로깅용)
+    # 최종 크기 검증
     response_json = json.dumps(response_data, default=str, ensure_ascii=False)
     response_size_kb = len(response_json.encode('utf-8')) / 1024
     
