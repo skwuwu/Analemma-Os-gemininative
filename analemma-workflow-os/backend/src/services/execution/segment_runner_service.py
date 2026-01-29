@@ -242,20 +242,27 @@ def _safe_get_from_bag(
         if val is not None:
             return val
     
-    # ❌ Event root fallback removed - v3 ASL only passes bag, doesn't work
+    # 🛡️ [v3.5 Critical Fix] Event root fallback - REQUIRED for v3 ASL
+    # v3 ASL: "Payload.$": "$.state_data.bag" → Lambda receives event = bag_contents (flat)
+    # In this case, event.state_data doesn't exist, and event ITSELF is the bag contents
+    # So we MUST check event root for the key
+    val = event.get(key)
+    if val is not None:
+        return val
     
     # 🔍 [v3.5] None Reference Tracing: Log when returning default
     if log_on_default:
         # Collect diagnostic info
         state_data_type = type(state_data).__name__
         state_data_keys = list(state_data.keys())[:10] if isinstance(state_data, dict) else "N/A"
+        event_keys = list(event.keys())[:10] if isinstance(event, dict) else "N/A"
         bag_type = type(bag).__name__ if 'bag' in dir() and bag is not None else "None"
         
         logger.warning(
             f"🔍 [None Trace] key='{key}' returned default={default}. "
             f"Caller: {caller or 'unknown'}. "
             f"Diagnostics: state_data_type={state_data_type}, "
-            f"state_data_keys={state_data_keys}, bag_type={bag_type}"
+            f"state_data_keys={state_data_keys}, event_keys={event_keys}, bag_type={bag_type}"
         )
     
     return default

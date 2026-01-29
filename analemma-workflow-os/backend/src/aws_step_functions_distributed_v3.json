@@ -537,10 +537,14 @@
     "ExecuteSegment": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Comment": "🎯 [Standardized] bag 내용물을 직접 전달",
+      "Comment": "🎯 [v3.5 Fix] state_data wrapper preserved for Lambda compatibility",
       "Parameters": {
         "FunctionName": "${ExecuteSegmentArn}",
-        "Payload.$": "$.state_data.bag"
+        "Payload": {
+          "state_data": {
+            "bag.$": "$.state_data.bag"
+          }
+        }
       },
       "ResultSelector": {
         "result.$": "$.Payload"
