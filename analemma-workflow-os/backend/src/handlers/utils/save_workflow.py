@@ -669,18 +669,31 @@ def lambda_handler(event, context):
                     except Exception:
                         pass
 
+            # 🛡️ [Critical Fix] Initialize partition metadata with default values
+            # Ensures fields exist even if partitioning is skipped or fails
+            if 'llm_segments_count' not in body:
+                body['llm_segments_count'] = 0
+            if 'hitp_segments_count' not in body:
+                body['hitp_segments_count'] = 0
+            if 'total_segments' not in body:
+                body['total_segments'] = 0
+
             # [1순위 최적화] Pre-compilation: 저장 시점에 파티셔닝 수행
             # 런타임 InitializeStateData Lambda가 partition_map을 로드만 하도록 변경
             if _HAS_PARTITION and cfg_for_check:
                 try:
                     partition_start = time.time()
                     partition_result = partition_workflow_advanced(cfg_for_check)
+                    
+                    # 🛡️ [Critical Fix] Ensure metadata fields are never None
                     body['partition_map'] = partition_result.get('partition_map', [])
-                    body['total_segments'] = partition_result.get('total_segments', 0)
-                    body['llm_segments_count'] = partition_result.get('llm_segments', 0)
-                    body['hitp_segments_count'] = partition_result.get('hitp_segments', 0)
+                    body['total_segments'] = partition_result.get('total_segments') or 0
+                    body['llm_segments_count'] = partition_result.get('llm_segments') or 0
+                    body['hitp_segments_count'] = partition_result.get('hitp_segments') or 0
+                    
                     partition_time = time.time() - partition_start
-                    logger.info(f"Pre-compiled partition_map: {body['total_segments']} segments in {partition_time:.3f}s")
+                    logger.info(f"Pre-compiled partition_map: {body['total_segments']} segments "
+                               f"(llm={body['llm_segments_count']}, hitp={body['hitp_segments_count']}) in {partition_time:.3f}s")
                 except Exception as e:
                     # 파티셔닝 실패 시 워크플로우 저장 자체를 차단 (런타임 오류 방지)
                     logger.error(f"Partition pre-compilation failed: {e}")

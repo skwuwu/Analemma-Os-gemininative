@@ -437,16 +437,18 @@ def lambda_handler(event, context):
         logger.info("Using provided partition_map from input")
         partition_map = raw_input.get('partition_map')
         total_segments = raw_input.get('total_segments', len(partition_map))
-        llm_segments = raw_input.get('llm_segments', 0)
-        hitp_segments = raw_input.get('hitp_segments', 0)
+        llm_segments = raw_input.get('llm_segments') or 0
+        hitp_segments = raw_input.get('hitp_segments') or 0
+        _safe_total_segments = max(1, total_segments)  # 🛡️ Update safe counter
     
     # 2a-1. Use partition_map loaded with config
     if not partition_map and event.get('_db_partition_map'):
         logger.info("Using partition_map from DB config load")
         partition_map = event.get('_db_partition_map')
         total_segments = event.get('_db_total_segments', len(partition_map) if partition_map else 0)
-        llm_segments = event.get('_db_llm_segments', 0)
-        hitp_segments = event.get('_db_hitp_segments', 0)
+        llm_segments = event.get('_db_llm_segments') or 0
+        hitp_segments = event.get('_db_hitp_segments') or 0
+        _safe_total_segments = max(1, total_segments)  # 🛡️ Update safe counter
     
     # 2b. Load pre-compiled partition_map from DB (priority 1 optimization)
     if not partition_map:
@@ -454,8 +456,9 @@ def lambda_handler(event, context):
         if precompiled:
             partition_map = precompiled.get('partition_map')
             total_segments = precompiled.get('total_segments', len(partition_map) if partition_map else 0)
-            llm_segments = precompiled.get('llm_segments_count', 0)
-            hitp_segments = precompiled.get('hitp_segments_count', 0)
+            llm_segments = precompiled.get('llm_segments_count') or 0
+            hitp_segments = precompiled.get('hitp_segments_count') or 0
+            _safe_total_segments = max(1, total_segments)  # 🛡️ Update safe counter
     
     # 2c. Fallback: Runtime calculation (existing logic, maintain backward compatibility)
     if not partition_map:
@@ -470,6 +473,9 @@ def lambda_handler(event, context):
             llm_segments = partition_result.get('llm_segments', 0)
             hitp_segments = partition_result.get('hitp_segments', 0)
             
+            # 🛡️ Update _safe_total_segments after runtime partitioning
+            _safe_total_segments = max(1, total_segments)
+            
             # 🛡️ [v2.6 P0 Fix] 유령 'code' 타입 박멸 로직
             for seg in partition_map:
                 if seg is None:
@@ -483,6 +489,30 @@ def lambda_handler(event, context):
         except Exception as e:
             logger.error(f"Partitioning failed: {e}")
             raise RuntimeError(f"Failed to partition workflow: {str(e)}")
+
+    # 🚨 [Critical Fix] Recalculate metadata from partition_map if it doesn't match
+    # This handles cases where DB has stale or incorrect metadata
+    # Recalculate if: partition_map exists AND (metadata missing OR doesn't match actual segment types)
+    if partition_map:
+        # Count actual segment types from partition_map
+        actual_llm_count = sum(1 for seg in partition_map if seg and seg.get('type') == 'llm')
+        actual_hitp_count = sum(1 for seg in partition_map if seg and seg.get('type') == 'hitp')
+        
+        # Recalculate if metadata is missing, None, or doesn't match actual counts
+        needs_recalc = (
+            llm_segments is None or 
+            hitp_segments is None or 
+            llm_segments != actual_llm_count or 
+            hitp_segments != actual_hitp_count
+        )
+        
+        if needs_recalc:
+            logger.info(f"Recalculating metadata: stored=(llm:{llm_segments}, hitp:{hitp_segments}), actual=(llm:{actual_llm_count}, hitp:{actual_hitp_count})")
+            llm_segments = actual_llm_count
+            hitp_segments = actual_hitp_count
+            total_segments = len(partition_map)
+            _safe_total_segments = max(1, total_segments)
+            logger.info(f"✅ Metadata corrected: llm_segments={llm_segments}, hitp_segments={hitp_segments}, total_segments={total_segments}")
 
     # 🎯 [Unification Strategy] Create segment_manifest (list of segments to execute)
     segment_manifest = []

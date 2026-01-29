@@ -122,8 +122,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         artifact_id = path_params.get("artifactId") or path_params.get("artifact_id")
         
         # 소유자 ID 추출 (Cognito JWT claims)
-        request_owner_id = event.get("requestContext", {}).get("authorizer", {}).get("claims", {}).get("sub")
+        # HTTP API v2 format: requestContext.authorizer.jwt.claims.sub
+        # REST API v1 format: requestContext.authorizer.claims.sub
+        authorizer = event.get("requestContext", {}).get("authorizer", {})
+        claims = authorizer.get("jwt", {}).get("claims", {}) or authorizer.get("claims", {})
+        request_owner_id = claims.get("sub")
+        
         if not request_owner_id:
+            logger.error(f"No owner_id found. Event structure: {json.dumps(event.get('requestContext', {}), default=str)}")
             return _error_response(401, "Unauthorized: missing owner_id")
         
         if not task_id:

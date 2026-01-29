@@ -382,19 +382,50 @@ export const TaskManager: React.FC<TaskManagerProps> = ({ signOut }) => {
       ['in_progress', 'pending_approval', 'queued'].includes(task.status)
     );
     
-    // Convert completed executions to TaskSummary format
-    const completedTasks = completedExecutions.map(exec => ({
-      task_id: exec.executionArn || exec.execution_id || '',
-      task_summary: exec.name || 'Completed Execution',
-      agent_name: 'System',
-      status: exec.status?.toLowerCase().replace('_', ' ') || 'completed',
-      current_step_name: exec.status || 'Completed',
-      progress_percentage: 100,
-      workflow_name: 'Legacy Workflow',
-      created_at: exec.startDate ? new Date(exec.startDate).getTime() : Date.now(),
-      is_interruption: false,
-      artifacts_count: 0,
-    }));
+    // Convert completed executions to TaskSummary format with proper status mapping
+    const completedTasks = completedExecutions
+      .map(exec => {
+        // Map AWS Step Functions status to internal status format
+        let mappedStatus = 'completed';
+        const awsStatus = exec.status?.toUpperCase() || 'SUCCEEDED';
+        
+        if (awsStatus === 'FAILED') {
+          mappedStatus = 'failed';
+        } else if (awsStatus === 'ABORTED' || awsStatus === 'TIMED_OUT') {
+          mappedStatus = 'cancelled';
+        } else if (awsStatus === 'SUCCEEDED') {
+          mappedStatus = 'completed';
+        } else if (awsStatus === 'RUNNING') {
+          mappedStatus = 'in_progress';
+        }
+
+        return {
+          task_id: exec.executionArn || exec.execution_id || '',
+          task_summary: exec.name || 'Completed Execution',
+          agent_name: 'System',
+          status: mappedStatus,
+          current_step_name: exec.status || 'Completed',
+          progress_percentage: mappedStatus === 'failed' ? 0 : 100,
+          workflow_name: 'Legacy Workflow',
+          created_at: exec.startDate ? new Date(exec.startDate).getTime() : Date.now(),
+          is_interruption: false,
+          artifacts_count: 0,
+        };
+      })
+      .filter(task => {
+        // Apply status filter for completed executions
+        if (statusFilter !== 'all' && task.status !== statusFilter) {
+          return false;
+        }
+        
+        // Apply search filter
+        if (searchQuery && !task.task_summary?.toLowerCase().includes(searchQuery.toLowerCase()) &&
+            !task.agent_name?.toLowerCase().includes(searchQuery.toLowerCase())) {
+          return false;
+        }
+        
+        return true;
+      });
 
     return {
       inProgress: inProgressTasks,

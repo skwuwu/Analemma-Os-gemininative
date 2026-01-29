@@ -612,11 +612,11 @@ def partition_workflow_advanced(config: Dict[str, Any]) -> Dict[str, Any]:
             local_current_nodes[node_id] = node
             visited_nodes.add(node_id)
             
-            # 특수 타입 처리
-            if is_llm:
-                flush_local("llm")
-            elif is_hitp_start:
+            # 특수 타입 처리 - HITP가 LLM보다 우선순위 높음 (HITP는 인간 개입 필요)
+            if is_hitp_start:
                 flush_local("hitp")
+            elif is_llm:
+                flush_local("llm")
             
             # 다음 노드 탐색
             for out_edge in outgoing_edges.get(node_id, []):

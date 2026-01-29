@@ -482,7 +482,8 @@
         "new_history_logs.$": "$.Payload.new_history_logs",
         "error_info.$": "$.Payload.error_info",
         "branches.$": "$.Payload.branches",
-        "segment_type.$": "$.Payload.segment_type"
+        "segment_type.$": "$.Payload.segment_type",
+        "inner_partition_map.$": "$.Payload.inner_partition_map"
       },
       "ResultPath": "$.execution_result",
       "Retry": [
@@ -761,8 +762,8 @@
             "Comment": "🛡️ [Kernel Defense] Lambda 예외 에러를 Partial Success로 변환",
             "Parameters": {
               "status": "PARTIAL_FAILURE",
-              "final_state.$": "$.state_data.current_state",
-              "final_state_s3_path": null,
+              "final_state": null,
+              "final_state_s3_path.$": "$.state_data.state_s3_path",
               "next_segment_to_run": null,
               "new_history_logs": [],
               "error_info": {
@@ -996,7 +997,8 @@
       "Comment": "🛡️ [Infrastructure Guard] Ensure execution_result structure exists to prevent 'Invalid Path' errors in subsequent choices",
       "Parameters": {
         "status": "FAILED",
-        "final_state.$": "$.state_data.current_state",
+        "final_state": null,
+        "final_state_s3_path.$": "$.state_data.state_s3_path",
         "next_segment_to_run": null,
         "new_history_logs": [],
         "error_info": {
@@ -1503,7 +1505,7 @@
               "notification_type": "execution_progress",
               "message": "Workflow completed successfully",
               "state_data.$": "$",
-              "final_result.$": "$.state_data.current_state"
+              "final_result.$": "$.execution_result.final_state"
             }
           }
         ]
