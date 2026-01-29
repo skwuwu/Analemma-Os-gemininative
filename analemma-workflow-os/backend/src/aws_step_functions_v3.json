@@ -43,8 +43,8 @@
         }
       },
       "ResultSelector": {
-        "existing_arn": "$.Item.executionArn.S",
-        "existing_status": "$.Item.status.S"
+        "existing_arn.$": "$.Item.executionArn.S",
+        "existing_status.$": "$.Item.status.S"
       },
       "ResultPath": "$.idempotency_check",
       "Retry": [
@@ -138,9 +138,9 @@
         "Payload.$": "$"
       },
       "ResultSelector": {
-        "state_data": "$.Payload"
+        "bag.$": "$.Payload"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -205,10 +205,10 @@
             "Detail": {
               "event_type": "STARTED",
               "execution_id.$": "$$.Execution.Id",
-              "ownerId.$": "$.state_data.ownerId",
-              "workflowId.$": "$.state_data.workflowId",
-              "total_segments.$": "$.state_data.total_segments",
-              "distributed_strategy.$": "$.state_data.distributed_strategy",
+              "ownerId.$": "$.state_data.bag.ownerId",
+              "workflowId.$": "$.state_data.bag.workflowId",
+              "total_segments.$": "$.state_data.bag.total_segments",
+              "distributed_strategy.$": "$.state_data.bag.distributed_strategy",
               "timestamp.$": "$$.State.EnteredTime"
             }
           }
@@ -231,12 +231,12 @@
       "Comment": "🚀 Hybrid Mode: Route based on distributed_strategy",
       "Choices": [
         {
-          "Variable": "$.state_data.distributed_strategy",
+          "Variable": "$.state_data.bag.distributed_strategy",
           "StringEquals": "MAP_REDUCE",
           "Next": "ExecuteMapReduceMode"
         },
         {
-          "Variable": "$.state_data.distributed_strategy",
+          "Variable": "$.state_data.bag.distributed_strategy",
           "StringEquals": "BATCHED",
           "Next": "ExecuteBatchedMode"
         }
@@ -246,13 +246,13 @@
     "ExecuteMapReduceMode": {
       "Type": "Map",
       "Comment": "🚀 MAP_REDUCE: High-concurrency parallel execution",
-      "MaxConcurrencyPath": "$.state_data.max_concurrency",
-      "ItemsPath": "$.state_data.segment_manifest",
+      "MaxConcurrencyPath": "$.state_data.bag.max_concurrency",
+      "ItemsPath": "$.state_data.bag.segment_manifest",
       "Parameters": {
         "segment_config.$": "$$.Map.Item.Value.segment_config",
         "segment_id.$": "$$.Map.Item.Value.segment_id",
         "execution_order.$": "$$.Map.Item.Value.execution_order",
-        "state_data.$": "$.state_data",
+        "state_data.$": "$.state_data.bag",
         "execution_mode": "MAP_REDUCE"
       },
       "Iterator": {
@@ -266,9 +266,9 @@
               "Payload.$": "$"
             },
             "ResultSelector": {
-              "status": "$.Payload.status",
-              "segment_id": "$.Payload.segment_id",
-              "output_s3_path": "$.Payload.final_state_s3_path"
+              "status.$": "$.Payload.status",
+              "segment_id.$": "$.Payload.segment_id",
+              "output_s3_path.$": "$.Payload.final_state_s3_path"
             },
             "Retry": [
               {
@@ -286,22 +286,31 @@
         }
       },
       "ResultSelector": {
-        "segment_results": "$[*].{segment_id: segment_id, status: status, s3_path: output_s3_path}"
+        "segment_results.$": "$[*].{segment_id: segment_id, status: status, s3_path: output_s3_path}"
       },
       "ResultPath": "$.execution_result",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.last_error",
+          "Next": "HandleMapReduceFailure"
+        }
+      ],
       "Next": "SyncStateAfterDistributed"
     },
     "ExecuteBatchedMode": {
       "Type": "Map",
       "Comment": "🚀 BATCHED: Controlled batch processing",
       "MaxConcurrency": 10,
-      "ItemsPath": "$.state_data.segment_manifest",
+      "ItemsPath": "$.state_data.bag.segment_manifest",
       "Parameters": {
         "segment_config.$": "$$.Map.Item.Value.segment_config",
         "segment_id.$": "$$.Map.Item.Value.segment_id",
         "execution_order.$": "$$.Map.Item.Value.execution_order",
         "dependencies.$": "$$.Map.Item.Value.dependencies",
-        "state_data.$": "$.state_data",
+        "state_data.$": "$.state_data.bag",
         "execution_mode": "BATCHED"
       },
       "Iterator": {
@@ -315,9 +324,9 @@
               "Payload.$": "$"
             },
             "ResultSelector": {
-              "status": "$.Payload.status",
-              "segment_id": "$.Payload.segment_id",
-              "final_state": "$.Payload.final_state"
+              "status.$": "$.Payload.status",
+              "segment_id.$": "$.Payload.segment_id",
+              "final_state.$": "$.Payload.final_state"
             },
             "Retry": [
               {
@@ -335,9 +344,48 @@
         }
       },
       "ResultSelector": {
-        "segment_results": "$[*].{segment_id: segment_id, status: status, s3_path: final_state}"
+        "segment_results.$": "$[*].{segment_id: segment_id, status: status, s3_path: final_state}"
       },
       "ResultPath": "$.execution_result",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.last_error",
+          "Next": "HandleBatchedFailure"
+        }
+      ],
+      "Next": "SyncStateAfterDistributed"
+    },
+    "HandleMapReduceFailure": {
+      "Type": "Pass",
+      "Comment": "🛡️ Convert MAP_REDUCE failure to partial results for graceful degradation",
+      "Parameters": {
+        "execution_result": {
+          "segment_results": [],
+          "partial_failure": true,
+          "error_info.$": "$.last_error"
+        },
+        "state_data": {
+          "bag.$": "$.state_data.bag"
+        }
+      },
+      "Next": "SyncStateAfterDistributed"
+    },
+    "HandleBatchedFailure": {
+      "Type": "Pass",
+      "Comment": "🛡️ Convert BATCHED failure to partial results for graceful degradation",
+      "Parameters": {
+        "execution_result": {
+          "segment_results": [],
+          "partial_failure": true,
+          "error_info.$": "$.last_error"
+        },
+        "state_data": {
+          "bag.$": "$.state_data.bag"
+        }
+      },
       "Next": "SyncStateAfterDistributed"
     },
     "SyncStateAfterDistributed": {
@@ -348,13 +396,15 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "aggregate_distributed",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "execution_result.$": "$.execution_result"
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "final_status": "$.Payload.final_status"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "final_status.$": "$.Payload.final_status"
       },
       "ResultPath": "$",
       "Next": "NotifyWorkflowCompleted"
@@ -368,7 +418,7 @@
         "Payload.$": "$"
       },
       "ResultSelector": {
-        "result": "$.Payload"
+        "result.$": "$.Payload"
       },
       "ResultPath": "$.execution_result",
       "Retry": [
@@ -404,7 +454,7 @@
           "ErrorEquals": [
             "States.ALL"
           ],
-          "ResultPath": "$.execution_result.error",
+          "ResultPath": "$.last_error",
           "Next": "NotifyAndFail"
         }
       ],
@@ -418,13 +468,15 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "sync",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "execution_result.$": "$.execution_result.result"
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "next_action": "$.Payload.next_action"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "next_action.$": "$.Payload.next_action"
       },
       "ResultPath": "$",
       "Retry": [
@@ -445,7 +497,7 @@
           "ErrorEquals": [
             "States.ALL"
           ],
-          "ResultPath": "$.sync_error",
+          "ResultPath": "$.last_error",
           "Next": "NotifyAndFail"
         }
       ],
@@ -508,8 +560,8 @@
       "Comment": "🛡️ [Safety Valve] Prevent infinite loops",
       "Choices": [
         {
-          "Variable": "$.state_data.loop_counter",
-          "NumericGreaterThanPath": "$.state_data.max_loop_iterations",
+          "Variable": "$.state_data.bag.loop_counter",
+          "NumericGreaterThanPath": "$.state_data.bag.max_loop_iterations",
           "Next": "FailLoopLimitExceeded"
         }
       ],
@@ -518,20 +570,20 @@
     "FailLoopLimitExceeded": {
       "Type": "Fail",
       "Error": "LoopLimitExceeded",
-      "CausePath": "States.Format('Exceeded max iterations: {}', $.state_data.max_loop_iterations)"
+      "CausePath": "States.Format('Exceeded max iterations: {}', $.state_data.bag.max_loop_iterations)"
     },
     "ProcessParallelBranches": {
       "Type": "Map",
       "Comment": "🌿 [Fork] Execute parallel branches with dynamic concurrency",
-      "ItemsPath": "$.state_data.pending_branches",
-      "MaxConcurrencyPath": "$.state_data.max_concurrency",
+      "ItemsPath": "$.state_data.bag.pending_branches",
+      "MaxConcurrencyPath": "$.state_data.bag.max_concurrency",
       "Parameters": {
         "branch_config.$": "$$.Map.Item.Value",
         "branch_index.$": "$$.Map.Item.Index",
-        "state_data.$": "$.state_data"
+        "state_data.$": "$.state_data.bag"
       },
       "ResultSelector": {
-        "branches": "$[*].{branch_id: branch_id, status: status, s3_path: final_state_s3_path}"
+        "branches.$": "$[*].{branch_id: branch_id, status: status, s3_path: final_state_s3_path}"
       },
       "Iterator": {
         "StartAt": "InitBranchState",
@@ -562,7 +614,7 @@
               }
             },
             "ResultSelector": {
-              "result": "$.Payload"
+              "result.$": "$.Payload"
             },
             "ResultPath": "$.execution_result",
             "Retry": [
@@ -600,8 +652,8 @@
               }
             },
             "ResultSelector": {
-              "branch_state": "$.Payload.branch_state",
-              "next_action": "$.Payload.next_action"
+              "branch_state.$": "$.Payload.branch_state",
+              "next_action.$": "$.Payload.next_action"
             },
             "ResultPath": "$",
             "Next": "EvaluateBranchNext"
@@ -681,10 +733,13 @@
     },
     "HandleMapError": {
       "Type": "Pass",
-      "Comment": "🛡️ Convert Map error to aggregatable result",
+      "Comment": "🛡️ Convert Map error to aggregatable result while preserving bag layer",
       "Parameters": {
         "parallel_results": [],
-        "map_error.$": "$.map_error"
+        "map_error.$": "$.map_error",
+        "state_data": {
+          "bag.$": "$.state_data.bag"
+        }
       },
       "Next": "AggregateParallelResults"
     },
@@ -696,15 +751,17 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "aggregate_branches",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "branch_pointers.$": "$.parallel_results.branches",
           "map_error.$": "$.map_error",
           "load_from_s3": true
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "next_action": "$.Payload.next_action"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "next_action.$": "$.Payload.next_action"
       },
       "ResultPath": "$",
       "Next": "EvaluateNextAction"
@@ -713,16 +770,51 @@
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
       "Comment": "⏸️ [HITP] Store TaskToken and wait for external resume",
+      "HeartbeatSeconds": 86400,
       "Parameters": {
         "FunctionName": "${StoreTaskTokenArn}",
         "Payload": {
           "TaskToken.$": "$$.Task.Token",
           "execution_id.$": "$$.Execution.Id",
-          "state_data.$": "$.state_data"
+          "state_data.$": "$.state_data.bag"
         }
       },
       "ResultPath": "$.callback_result",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.Timeout",
+            "States.HeartbeatTimeout"
+          ],
+          "ResultPath": "$.last_error",
+          "Next": "HandleHITPTimeout"
+        }
+      ],
       "Next": "MergeCallbackResult"
+    },
+    "HandleHITPTimeout": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Comment": "⏰ Notify user about HITP timeout and trigger retry notification",
+      "Parameters": {
+        "Entries": [
+          {
+            "EventBusName": "${WorkflowEventBusArn}",
+            "Source": "analemma.orchestrator",
+            "DetailType": "WorkflowLifecycleEvent",
+            "Detail": {
+              "event_type": "HITP_TIMEOUT",
+              "execution_id.$": "$$.Execution.Id",
+              "ownerId.$": "$.state_data.bag.ownerId",
+              "workflowId.$": "$.state_data.bag.workflowId",
+              "message": "Human-in-the-loop callback timed out - please respond",
+              "timestamp.$": "$$.State.EnteredTime"
+            }
+          }
+        ]
+      },
+      "ResultPath": null,
+      "Next": "NotifyAndFail"
     },
     "MergeCallbackResult": {
       "Type": "Task",
@@ -732,13 +824,15 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "merge_callback",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "callback_result.$": "$.callback_result"
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "next_action": "$.Payload.next_action"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "next_action.$": "$.Payload.next_action"
       },
       "ResultPath": "$",
       "Catch": [
@@ -746,7 +840,7 @@
           "ErrorEquals": [
             "States.ALL"
           ],
-          "ResultPath": "$.merge_error",
+          "ResultPath": "$.last_error",
           "Next": "NotifyAndFail"
         }
       ],
@@ -765,8 +859,8 @@
             "Detail": {
               "event_type": "ASYNC_LLM_PROCESSING",
               "execution_id.$": "$$.Execution.Id",
-              "ownerId.$": "$.state_data.ownerId",
-              "workflowId.$": "$.state_data.workflowId",
+              "ownerId.$": "$.state_data.bag.ownerId",
+              "workflowId.$": "$.state_data.bag.workflowId",
               "message": "Large language model processing asynchronously",
               "timestamp.$": "$$.State.EnteredTime"
             }
@@ -785,7 +879,7 @@
         "Payload": {
           "TaskToken.$": "$$.Task.Token",
           "execution_id.$": "$$.Execution.Id",
-          "state_data.$": "$.state_data"
+          "state_data.$": "$.state_data.bag"
         }
       },
       "ResultPath": "$.async_result",
@@ -799,13 +893,15 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "merge_async",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "async_result.$": "$.async_result"
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "next_action": "$.Payload.next_action"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "next_action.$": "$.Payload.next_action"
       },
       "ResultPath": "$",
       "Next": "EvaluateNextAction"
@@ -823,12 +919,12 @@
             "Detail": {
               "event_type": "COMPLETED",
               "execution_id.$": "$$.Execution.Id",
-              "ownerId.$": "$.state_data.ownerId",
-              "workflowId.$": "$.state_data.workflowId",
-              "final_state_s3_path.$": "$.state_data.state_s3_path",
-              "total_segments.$": "$.state_data.total_segments",
-              "loop_counter.$": "$.state_data.loop_counter",
-              "start_time.$": "$.state_data.start_time",
+              "ownerId.$": "$.state_data.bag.ownerId",
+              "workflowId.$": "$.state_data.bag.workflowId",
+              "final_state_s3_path.$": "$.state_data.bag.state_s3_path",
+              "total_segments.$": "$.state_data.bag.total_segments",
+              "loop_counter.$": "$.state_data.bag.loop_counter",
+              "start_time.$": "$.state_data.bag.start_time",
               "timestamp.$": "$$.State.EnteredTime"
             }
           }
@@ -843,14 +939,14 @@
       "Parameters": {
         "status": "SUCCEEDED",
         "execution_id.$": "$$.Execution.Id",
-        "ownerId.$": "$.state_data.ownerId",
-        "workflowId.$": "$.state_data.workflowId",
-        "final_state_s3_path.$": "$.state_data.state_s3_path",
-        "total_segments.$": "$.state_data.total_segments",
-        "loop_counter.$": "$.state_data.loop_counter",
-        "start_time.$": "$.state_data.start_time",
-        "llm_segments.$": "$.state_data.llm_segments",
-        "hitp_segments.$": "$.state_data.hitp_segments"
+        "ownerId.$": "$.state_data.bag.ownerId",
+        "workflowId.$": "$.state_data.bag.workflowId",
+        "final_state_s3_path.$": "$.state_data.bag.state_s3_path",
+        "total_segments.$": "$.state_data.bag.total_segments",
+        "loop_counter.$": "$.state_data.bag.loop_counter",
+        "start_time.$": "$.state_data.bag.start_time",
+        "llm_segments.$": "$.state_data.bag.llm_segments",
+        "hitp_segments.$": "$.state_data.bag.hitp_segments"
       },
       "Next": "WorkflowSucceeded"
     },
@@ -861,7 +957,7 @@
     "NotifyAndFail": {
       "Type": "Task",
       "Resource": "arn:aws:states:::events:putEvents",
-      "Comment": "❌ [P2 Optimized] Lightweight failure signal - pointers only, full context in CloudWatch/S3",
+      "Comment": "🛡️ [Hardened] Safe failure notification - dumps full context to avoid field reference crashes",
       "Parameters": {
         "Entries": [
           {
@@ -874,11 +970,9 @@
               "execution_name.$": "$$.Execution.Name",
               "ownerId.$": "$$.Execution.Input.ownerId",
               "workflowId.$": "$$.Execution.Input.workflowId",
-              "state_s3_path.$": "$.state_data.state_s3_path",
-              "error_type.$": "$.sync_error.Error",
-              "error_cause.$": "$.sync_error.Cause",
+              "error_context.$": "States.JsonToString($)",
               "timestamp.$": "$$.State.EnteredTime",
-              "debug_hint": "Full error context available in CloudWatch Logs and S3 state path"
+              "debug_hint": "Full execution context dumped in error_context field. Check CloudWatch Logs for parsed details."
             }
           }
         ]

@@ -125,9 +125,9 @@
         "Payload.$": "$"
       },
       "ResultSelector": {
-        "state_data": "$.Payload"
+        "bag.$": "$.Payload"
       },
-      "ResultPath": "$",
+      "ResultPath": "$.state_data",
       "Retry": [
         {
           "ErrorEquals": [
@@ -185,11 +185,11 @@
         {
           "Or": [
             {
-              "Variable": "$.state_data.total_segments",
+              "Variable": "$.state_data.bag.total_segments",
               "NumericGreaterThan": 300
             },
             {
-              "Variable": "$.state_data.max_concurrency",
+              "Variable": "$.state_data.bag.max_concurrency",
               "NumericGreaterThan": 50
             }
           ],
@@ -205,7 +205,7 @@
       "Parameters": {
         "FunctionName": "${PrepareDistributedExecutionArn}",
         "Payload": {
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "chunk_size": 100,
           "max_chunks": 100,
           "state_bucket": "${WorkflowStateBucket}",
@@ -213,10 +213,10 @@
         }
       },
       "ResultSelector": {
-        "chunks_bucket": "$.Payload.chunks_bucket",
-        "chunks_key": "$.Payload.chunks_key",
-        "total_chunks": "$.Payload.total_chunks",
-        "result_prefix": "$.Payload.result_prefix"
+        "chunks_bucket.$": "$.Payload.chunks_bucket",
+        "chunks_key.$": "$.Payload.chunks_key",
+        "total_chunks.$": "$.Payload.total_chunks",
+        "result_prefix.$": "$.Payload.result_prefix"
       },
       "ResultPath": "$.distributed_config",
       "Next": "NotifyDistributedStarted"
@@ -233,11 +233,11 @@
             "Detail": {
               "event_type": "DISTRIBUTED_STARTED",
               "execution_id.$": "$$.Execution.Id",
-              "ownerId.$": "$.state_data.ownerId",
-              "workflowId.$": "$.state_data.workflowId",
-              "total_segments.$": "$.state_data.total_segments",
+              "ownerId.$": "$.state_data.bag.ownerId",
+              "workflowId.$": "$.state_data.bag.workflowId",
+              "total_segments.$": "$.state_data.bag.total_segments",
               "total_chunks.$": "$.distributed_config.total_chunks",
-              "max_concurrency.$": "$.state_data.max_concurrency",
+              "max_concurrency.$": "$.state_data.bag.max_concurrency",
               "timestamp.$": "$$.State.EnteredTime"
             }
           }
@@ -254,14 +254,14 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "create_snapshot",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "snapshot_type": "PRE_DISTRIBUTED",
           "execution_id.$": "$$.Execution.Id"
         }
       },
       "ResultSelector": {
-        "snapshot_s3_path": "$.Payload.snapshot_s3_path",
-        "snapshot_id": "$.Payload.snapshot_id"
+        "snapshot_s3_path.$": "$.Payload.snapshot_s3_path",
+        "snapshot_id.$": "$.Payload.snapshot_id"
       },
       "ResultPath": "$.pre_snapshot",
       "Next": "ExecuteDistributedChunks"
@@ -297,7 +297,7 @@
               }
             },
             "ResultSelector": {
-              "delta": "$.Payload"
+              "delta.$": "$.Payload"
             },
             "ResultPath": "$.chunk_result",
             "Retry": [
@@ -352,7 +352,7 @@
                 "chunk_result.$": "$.chunk_result.delta",
                 "distributed_context": {
                   "is_child_execution": true,
-                  "parent_execution_id.$": "$.state_data.idempotency_key",
+                  "parent_execution_id.$": "$.state_data.bag.idempotency_key",
                   "chunk_index.$": "$.chunk_index",
                   "paused_segment_id.$": "$.chunk_result.delta.paused_segment_id"
                 }
@@ -387,7 +387,7 @@
               }
             },
             "ResultSelector": {
-              "delta": "$.Payload"
+              "delta.$": "$.Payload"
             },
             "ResultPath": "$.chunk_result",
             "Next": "EvaluateChunkResult"
@@ -444,7 +444,7 @@
         "Resource": "arn:aws:states:::s3:putObject",
         "Parameters": {
           "Bucket": "${WorkflowStateBucket}",
-          "Prefix": "distributed-results"
+          "Prefix.$": "States.Format('distributed-results/{}/chunks', $$.Execution.Name)"
         }
       },
       "ResultPath": "$.distributed_results",
@@ -461,9 +461,14 @@
     },
     "HandleDistributedMapError": {
       "Type": "Pass",
+      "Comment": "🛡️ Preserve bag layer on distributed map failure",
       "Parameters": {
         "distributed_results": [],
-        "map_error.$": "$.map_error"
+        "map_error.$": "$.map_error",
+        "state_data": {
+          "bag.$": "$.state_data.bag"
+        },
+        "pre_snapshot.$": "$.pre_snapshot"
       },
       "Next": "AggregateDistributedResults"
     },
@@ -475,7 +480,7 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "aggregate_distributed",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "distributed_results.$": "$.distributed_results",
           "pre_snapshot.$": "$.pre_snapshot",
           "map_error.$": "$.map_error",
@@ -484,9 +489,11 @@
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "final_status": "$.Payload.final_status",
-        "failed_chunks": "$.Payload.failed_chunks"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "final_status.$": "$.Payload.final_status",
+        "failed_chunks.$": "$.Payload.failed_chunks"
       },
       "ResultPath": "$",
       "Next": "EvaluateDistributedResult"
@@ -515,9 +522,9 @@
             "Detail": {
               "event_type": "STARTED",
               "execution_id.$": "$$.Execution.Id",
-              "ownerId.$": "$.state_data.ownerId",
-              "workflowId.$": "$.state_data.workflowId",
-              "total_segments.$": "$.state_data.total_segments",
+              "ownerId.$": "$.state_data.bag.ownerId",
+              "workflowId.$": "$.state_data.bag.workflowId",
+              "total_segments.$": "$.state_data.bag.total_segments",
               "timestamp.$": "$$.State.EnteredTime"
             }
           }
@@ -533,11 +540,11 @@
       "Parameters": {
         "FunctionName": "${ExecuteSegmentArn}",
         "Payload": {
-          "state_data.$": "$.state_data"
+          "state_data.$": "$.state_data.bag"
         }
       },
       "ResultSelector": {
-        "result": "$.Payload"
+        "result.$": "$.Payload"
       },
       "ResultPath": "$.execution_result",
       "Retry": [
@@ -571,13 +578,15 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "sync",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "execution_result.$": "$.execution_result.result"
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "next_action": "$.Payload.next_action"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "next_action.$": "$.Payload.next_action"
       },
       "ResultPath": "$",
       "Retry": [
@@ -638,8 +647,8 @@
       "Type": "Choice",
       "Choices": [
         {
-          "Variable": "$.state_data.loop_counter",
-          "NumericGreaterThanPath": "$.state_data.max_loop_iterations",
+          "Variable": "$.state_data.bag.loop_counter",
+          "NumericGreaterThanPath": "$.state_data.bag.max_loop_iterations",
           "Next": "FailLoopLimitExceeded"
         }
       ],
@@ -648,20 +657,20 @@
     "FailLoopLimitExceeded": {
       "Type": "Fail",
       "Error": "LoopLimitExceeded",
-      "CausePath": "States.Format('Exceeded max iterations: {}', $.state_data.max_loop_iterations)"
+      "CausePath": "States.Format('Exceeded max iterations: {}', $.state_data.bag.max_loop_iterations)"
     },
     "ProcessParallelBranches": {
       "Type": "Map",
       "Comment": "🌿 [P0 Optimized] 병렬 브랜치 - 결과는 포인터만 반환",
-      "ItemsPath": "$.state_data.pending_branches",
-      "MaxConcurrencyPath": "$.state_data.max_concurrency",
+      "ItemsPath": "$.state_data.bag.pending_branches",
+      "MaxConcurrencyPath": "$.state_data.bag.max_concurrency",
       "ItemSelector": {
-        "state_data.$": "$.state_data",
+        "state_data.$": "$.state_data.bag",
         "branch_config.$": "$$.Map.Item.Value",
         "branch_index.$": "$$.Map.Item.Index"
       },
       "ResultSelector": {
-        "branches": "$[*].{branch_index: branch_index, status: status, s3_path: result_s3_path}"
+        "branches.$": "$[*].{branch_index: branch_index, status: status, s3_path: result_s3_path}"
       },
       "ItemProcessor": {
         "ProcessorConfig": {
@@ -682,7 +691,7 @@
               }
             },
             "ResultSelector": {
-              "delta": "$.Payload"
+              "delta.$": "$.Payload"
             },
             "ResultPath": "$.branch_result",
             "Retry": [
@@ -746,7 +755,7 @@
               }
             },
             "ResultSelector": {
-              "delta": "$.Payload"
+              "delta.$": "$.Payload"
             },
             "ResultPath": "$.branch_result",
             "Next": "EvaluateBranchResult"
@@ -786,9 +795,13 @@
     },
     "HandleParallelMapError": {
       "Type": "Pass",
+      "Comment": "🛡️ Preserve bag layer on parallel map failure",
       "Parameters": {
         "parallel_results": [],
-        "map_error.$": "$.map_error"
+        "map_error.$": "$.map_error",
+        "state_data": {
+          "bag.$": "$.state_data.bag"
+        }
       },
       "Next": "AggregateParallelResults"
     },
@@ -800,15 +813,17 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "aggregate_branches",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "branch_pointers.$": "$.parallel_results.branches",
           "map_error.$": "$.map_error",
           "load_from_s3": true
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "next_action": "$.Payload.next_action"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "next_action.$": "$.Payload.next_action"
       },
       "ResultPath": "$",
       "Next": "EvaluateNextAction"
@@ -823,7 +838,7 @@
         "Payload": {
           "TaskToken.$": "$$.Task.Token",
           "execution_id.$": "$$.Execution.Id",
-          "state_data.$": "$.state_data"
+          "state_data.$": "$.state_data.bag"
         }
       },
       "ResultPath": "$.callback_result",
@@ -836,13 +851,15 @@
         "FunctionName": "${StateDataManagerArn}",
         "Payload": {
           "action": "merge_callback",
-          "state_data.$": "$.state_data",
+          "state_data.$": "$.state_data.bag",
           "callback_result.$": "$.callback_result"
         }
       },
       "ResultSelector": {
-        "state_data": "$.Payload.state_data",
-        "next_action": "$.Payload.next_action"
+        "state_data": {
+          "bag.$": "$.Payload.state_data"
+        },
+        "next_action.$": "$.Payload.next_action"
       },
       "ResultPath": "$",
       "Next": "EvaluateNextAction"
@@ -860,11 +877,11 @@
             "Detail": {
               "event_type": "COMPLETED",
               "execution_id.$": "$$.Execution.Id",
-              "ownerId.$": "$.state_data.ownerId",
-              "workflowId.$": "$.state_data.workflowId",
-              "final_state_s3_path.$": "$.state_data.state_s3_path",
-              "total_segments.$": "$.state_data.total_segments",
-              "loop_counter.$": "$.state_data.loop_counter",
+              "ownerId.$": "$.state_data.bag.ownerId",
+              "workflowId.$": "$.state_data.bag.workflowId",
+              "final_state_s3_path.$": "$.state_data.bag.state_s3_path",
+              "total_segments.$": "$.state_data.bag.total_segments",
+              "loop_counter.$": "$.state_data.bag.loop_counter",
               "timestamp.$": "$$.State.EnteredTime"
             }
           }
@@ -878,11 +895,11 @@
       "Parameters": {
         "status": "SUCCEEDED",
         "execution_id.$": "$$.Execution.Id",
-        "ownerId.$": "$.state_data.ownerId",
-        "workflowId.$": "$.state_data.workflowId",
-        "final_state_s3_path.$": "$.state_data.state_s3_path",
-        "total_segments.$": "$.state_data.total_segments",
-        "loop_counter.$": "$.state_data.loop_counter",
+        "ownerId.$": "$.state_data.bag.ownerId",
+        "workflowId.$": "$.state_data.bag.workflowId",
+        "final_state_s3_path.$": "$.state_data.bag.state_s3_path",
+        "total_segments.$": "$.state_data.bag.total_segments",
+        "loop_counter.$": "$.state_data.bag.loop_counter",
         "distributed_execution": true
       },
       "Next": "WorkflowSucceeded"
@@ -893,7 +910,7 @@
     "NotifyAndFail": {
       "Type": "Task",
       "Resource": "arn:aws:states:::events:putEvents",
-      "Comment": "❌ [P2 Optimized] Lightweight failure signal - pointers only",
+      "Comment": "🛡️ [Hardened] Safe failure notification - dumps full context to prevent field reference crashes",
       "Parameters": {
         "Entries": [
           {
@@ -906,11 +923,9 @@
               "execution_name.$": "$$.Execution.Name",
               "ownerId.$": "$$.Execution.Input.ownerId",
               "workflowId.$": "$$.Execution.Input.workflowId",
-              "state_s3_path.$": "$.state_data.state_s3_path",
-              "pre_snapshot_path.$": "$.pre_snapshot.snapshot_s3_path",
-              "error_type.$": "$.sync_error.Error",
+              "error_context.$": "States.JsonToString($)",
               "timestamp.$": "$$.State.EnteredTime",
-              "debug_hint": "Full context in CloudWatch Logs and S3"
+              "debug_hint": "Full execution context dumped in error_context. Check CloudWatch Logs for parsed details."
             }
           }
         ]

@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
-from src.common.aws_clients import get_dynamodb_resource, get_s3_client
+from src.common.aws_clients import get_dynamodb_resource, get_s3_client, get_stepfunctions_client
 from src.common.constants import DynamoDBConfig
 from src.models.task_context import (
     TaskContext,
@@ -65,6 +65,25 @@ TASK_EVENTS_TABLE = os.environ.get('TASK_EVENTS_TABLE', 'TaskEventsTable')
 WORKFLOW_STATE_BUCKET = os.environ.get('WORKFLOW_STATE_BUCKET', '')
 
 
+def extract_execution_name(task_id: str) -> str:
+    """
+    [v2.1] task_id에서 execution name 추출
+    
+    UI에서 전체 executionArn을 보내는 경우 execution name만 추출합니다.
+    
+    형식: arn:aws:states:region:account:execution:stateMachine:executionName
+    
+    Args:
+        task_id: execution_id 또는 전체 executionArn
+        
+    Returns:
+        execution name (UUID 형식)
+    """
+    if task_id.startswith('arn:aws:states:'):
+        return task_id.split(':')[-1]
+    return task_id
+
+
 class TaskService:
     """
     Task Manager 서비스
@@ -98,6 +117,7 @@ class TaskService:
         self._notification_table = None
         self._task_events_table = None
         self._s3_client = None
+        self._sfn_client = None
     
     @property
     def execution_table(self):
@@ -129,6 +149,13 @@ class TaskService:
         if self._s3_client is None:
             self._s3_client = get_s3_client()
         return self._s3_client
+
+    @property
+    def sfn_client(self):
+        """지연 초기화된 Step Functions 클라이언트"""
+        if self._sfn_client is None:
+            self._sfn_client = get_stepfunctions_client()
+        return self._sfn_client
 
     async def get_tasks(
         self,
@@ -172,7 +199,41 @@ class TaskService:
             items = response.get('Items', [])
             tasks = []
             
+            # [v2.2] RUNNING 상태인 항목들에 대해 Step Functions 실제 상태 동기화
+            ACTIVE_STATUSES = ['RUNNING', 'IN_PROGRESS', 'STARTED', 'PAUSED_FOR_HITP', 'WAITING_FOR_INPUT']
+            sync_tasks = []
+            
             for item in items:
+                db_status = item.get('status', '')
+                execution_arn = item.get('executionArn', '')
+                
+                # RUNNING 상태이고 executionArn이 있으면 실제 상태 확인
+                if db_status.upper() in ACTIVE_STATUSES and execution_arn:
+                    sync_tasks.append((item, execution_arn, db_status))
+            
+            # 병렬로 상태 동기화 (최대 5개씩)
+            if sync_tasks:
+                for batch_start in range(0, len(sync_tasks), 5):
+                    batch = sync_tasks[batch_start:batch_start + 5]
+                    sync_results = await asyncio.gather(
+                        *[self._sync_and_get_actual_status(arn, status, owner_id) 
+                          for item, arn, status in batch],
+                        return_exceptions=True
+                    )
+                    
+                    # 동기화된 상태 적용
+                    for (item, arn, old_status), new_status in zip(batch, sync_results):
+                        if isinstance(new_status, str) and new_status != old_status:
+                            item['status'] = new_status
+                            # NOT_FOUND인 경우 목록에서 제외하도록 마킹
+                            if new_status == 'NOT_FOUND':
+                                item['_exclude'] = True
+            
+            for item in items:
+                # NOT_FOUND로 마킹된 항목 제외
+                if item.get('_exclude'):
+                    continue
+                    
                 task = self._convert_execution_to_task(item)
                 if task:
                     # 필터 적용
@@ -234,8 +295,11 @@ class TaskService:
         - 기존: FilterExpression으로 전체 스캔 후 필터링 (RCU 낭비)
         - 개선: ExecutionIdIndex GSI로 직접 조회 (O(1) 조회)
         
+        [v2.1] ARN 형식 호환성 추가
+        - task_id가 전체 executionArn 형식이면 execution name만 추출
+        
         Args:
-            task_id: Task ID (execution_id)
+            task_id: Task ID (execution_id 또는 전체 executionArn)
             owner_id: 사용자 ID
             include_technical_logs: 기술 로그 포함 여부 (권한에 따라)
             
@@ -243,6 +307,12 @@ class TaskService:
             Task 상세 정보
         """
         try:
+            # [v2.1] ARN 형식이면 execution name만 추출
+            original_task_id = task_id
+            task_id = extract_execution_name(task_id)
+            if task_id != original_task_id:
+                logger.info(f"Extracted execution name from ARN: {task_id[:8]}... (original: {original_task_id[:30]}...)")
+            
             # [v2.0] GSI를 사용한 효율적인 조회
             # ExecutionIdIndex: ownerId (PK), execution_id (SK)
             execution_id_index = os.environ.get(
@@ -502,10 +572,10 @@ class TaskService:
             get_func = partial(
                 self.execution_table.query,
                 KeyConditionExpression="ownerId = :oid",
-                FilterExpression="executionArn LIKE :arn_pattern",
+                FilterExpression="contains(executionArn, :task_id_suffix)",
                 ExpressionAttributeValues={
                     ":oid": owner_id,
-                    ":arn_pattern": f"%:{task_id}"  # executionArn 끝이 :task_id로 끝나는 패턴
+                    ":task_id_suffix": f":{task_id}"  # executionArn에 :task_id가 포함되는 패턴
                 },
                 Limit=10  # 여러 개 가져와서 확인
             )
@@ -547,6 +617,75 @@ class TaskService:
         except ClientError as e:
             logger.error(f"Failed to get task from executions table: {e}")
             return None
+
+    async def _sync_and_get_actual_status(
+        self,
+        execution_arn: str,
+        db_status: str,
+        owner_id: str
+    ) -> str:
+        """
+        [v2.2] Step Functions에서 실제 상태를 조회하고 DynamoDB와 동기화
+        
+        EventBridge 이벤트가 누락된 경우를 대비하여 실제 상태를 확인하고
+        DynamoDB를 업데이트합니다.
+        
+        Args:
+            execution_arn: Step Functions 실행 ARN
+            db_status: DynamoDB에 저장된 상태
+            owner_id: 소유자 ID (DynamoDB 키)
+            
+        Returns:
+            실제 상태 문자열 (RUNNING, SUCCEEDED, FAILED 등)
+        """
+        # 이미 완료된 상태면 동기화 불필요
+        TERMINAL_STATUSES = ['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'ABORTED', 'COMPLETE', 'COMPLETED']
+        if db_status.upper() in TERMINAL_STATUSES:
+            return db_status
+        
+        try:
+            # Step Functions에서 실제 상태 조회
+            describe_func = partial(
+                self.sfn_client.describe_execution,
+                executionArn=execution_arn
+            )
+            response = await asyncio.get_event_loop().run_in_executor(None, describe_func)
+            
+            actual_status = response.get('status', db_status)
+            
+            # 상태가 다르면 DynamoDB 업데이트
+            if actual_status.upper() != db_status.upper():
+                logger.info(f"[StateSync] Status mismatch detected - DB: {db_status}, SFN: {actual_status}")
+                
+                try:
+                    # DynamoDB 업데이트 (비동기)
+                    update_func = partial(
+                        self.execution_table.update_item,
+                        Key={
+                            'ownerId': owner_id,
+                            'executionArn': execution_arn
+                        },
+                        UpdateExpression="SET #st = :status, updatedAt = :ts",
+                        ExpressionAttributeNames={'#st': 'status'},
+                        ExpressionAttributeValues={
+                            ':status': actual_status,
+                            ':ts': int(time.time())
+                        }
+                    )
+                    await asyncio.get_event_loop().run_in_executor(None, update_func)
+                    logger.info(f"[StateSync] DynamoDB updated: {db_status} -> {actual_status}")
+                except Exception as e:
+                    logger.warning(f"[StateSync] Failed to update DynamoDB: {e}")
+            
+            return actual_status
+            
+        except self.sfn_client.exceptions.ExecutionDoesNotExist:
+            # Step Functions에 실행이 존재하지 않음 (삭제됨/만료됨)
+            logger.warning(f"[StateSync] Execution no longer exists in Step Functions: {execution_arn[:60]}...")
+            return "NOT_FOUND"
+        except Exception as e:
+            logger.warning(f"[StateSync] Failed to describe execution: {e}")
+            return db_status
 
     def _convert_execution_to_task(
         self,

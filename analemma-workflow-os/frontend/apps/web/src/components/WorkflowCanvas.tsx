@@ -400,13 +400,15 @@ const WorkflowCanvasInner = () => {
     [nodes, handleNodeDelete]
   );
 
-  // Make edges non-editable (deletable and reconnectable disabled)
+  // Make edges non-editable (deletable, reconnectable, and selectable disabled)
   const edgesWithRestrictions = useMemo(
     () =>
       edges.map((edge) => ({
         ...edge,
         deletable: false,
         reconnectable: false,
+        selectable: false,
+        focusable: false,
       })),
     [edges]
   );
