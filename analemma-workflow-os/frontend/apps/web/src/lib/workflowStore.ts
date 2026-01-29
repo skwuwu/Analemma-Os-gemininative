@@ -210,7 +210,7 @@ export const useWorkflowStore = create<WorkflowState>()(
 
         const createsBackEdge = wouldCreateCycle();
         
-        // 검증 통과: 새 엣지 추가
+        // 검증 통과: 새 엣지 생성 (아직 추가하지 않음)
         const newEdge = {
           ...connection,
           animated: true,
@@ -222,133 +222,174 @@ export const useWorkflowStore = create<WorkflowState>()(
           }
         };
 
-        set((state) => ({
-          edges: addEdge(newEdge, state.edges),
-        }));
-
-        // 🔄 Back-edge (Loop) 감지 시 While Control Block 제안
+        // 🔄 Back-edge (Loop) 감지 시 While Control Block 자동 생성
         if (createsBackEdge) {
           const sourceNode = state.nodes.find(n => n.id === connection.source);
           const targetNode = state.nodes.find(n => n.id === connection.target);
           
           if (sourceNode && targetNode) {
-            toast.info('🔄 Loop detected! Would you like to create a While Control Block for better visualization?', {
-              duration: 10000,
-              action: {
-                label: 'Create Loop Block',
-                onClick: () => {
-                  // While Loop Control Block 생성
-                  const controlBlockPosition = {
-                    x: (sourceNode.position.x + targetNode.position.x) / 2,
-                    y: sourceNode.position.y + 80
-                  };
+            // While Loop Control Block 자동 생성 (사용자 확인 없이)
+            const controlBlockPosition = {
+              x: (sourceNode.position.x + targetNode.position.x) / 2,
+              y: sourceNode.position.y + 80
+            };
 
-                  const controlBlockNode = {
-                    id: `loop_block_${Date.now()}`,
-                    type: 'control_block',
-                    position: controlBlockPosition,
-                    data: {
-                      label: 'Loop Control',
-                      blockType: 'while',
-                      branches: [],
-                      max_iterations: 10,
-                      natural_condition: '',
-                      back_edge_source: targetNode.id
-                    }
-                  };
-
-                  // 🔍 Exit edge 찾기: back-edge source에서 나가는 다른 엣지
-                  // (루프 종료 후 다음 노드로 진행하는 엣지)
-                  const existingEdges = state.edges;
-                  const exitEdges = existingEdges.filter(e => 
-                    e.source === connection.source && 
-                    e.target !== connection.target && // back-edge 제외
-                    !e.data?.isBackEdge
-                  );
-
-                  // 원래 back-edge 제거하고 Control Block을 통한 엣지로 교체
-                  const newSourceToBlock = {
-                    id: `${connection.source}-${controlBlockNode.id}`,
-                    source: connection.source!,
-                    target: controlBlockNode.id,
-                    type: 'smart',
-                    animated: true
-                  };
-
-                  const newBlockToTarget = {
-                    id: `${controlBlockNode.id}-${connection.target}`,
-                    source: controlBlockNode.id,
-                    target: connection.target!,
-                    type: 'smart',
-                    animated: true,
-                    data: {
-                      loopType: 'while',
-                      isBackEdge: true
-                    }
-                  };
-
-                  // 🚪 Exit edge 생성: control block → next node (루프 종료 시)
-                  const exitEdgesFromBlock = exitEdges.map(exitEdge => ({
-                    id: `${controlBlockNode.id}-exit-${exitEdge.target}`,
-                    source: controlBlockNode.id,
-                    target: exitEdge.target,
-                    type: 'smart',
-                    animated: false,
-                    data: {
-                      ...exitEdge.data,
-                      isLoopExit: true // 루프 종료 엣지 표시
-                    }
-                  }));
-
-                  set((state) => ({
-                    nodes: [...state.nodes, controlBlockNode],
-                    edges: [
-                      ...state.edges.filter(e => 
-                        // 원래 back-edge와 exit edge들 제거
-                        !(e.source === connection.source && 
-                          (e.target === connection.target || exitEdges.some(exit => exit.id === e.id)))
-                      ),
-                      newSourceToBlock,
-                      newBlockToTarget,
-                      ...exitEdgesFromBlock
-                    ]
-                  }));
-
-                  toast.success('While Loop Control Block created!');
-                }
-              },
-              cancel: {
-                label: 'Keep as is',
-                onClick: () => {
-                  toast.info('Keeping as back-edge. You can convert to Control Block later.');
-                }
+            const controlBlockNode = {
+              id: `loop_block_${Date.now()}`,
+              type: 'control_block',
+              position: controlBlockPosition,
+              data: {
+                label: 'Loop Control',
+                blockType: 'while',
+                branches: [],
+                max_iterations: 10,
+                natural_condition: '',
+                back_edge_source: targetNode.id
               }
-            });
+            };
+
+            // 🔍 Exit edge 찾기: back-edge source에서 나가는 다른 엣지
+            // (루프 종료 후 다음 노드로 진행하는 엣지)
+            const existingEdges = state.edges;
+            const exitEdges = existingEdges.filter(e => 
+              e.source === connection.source && 
+              e.target !== connection.target && // back-edge 제외
+              !e.data?.isBackEdge
+            );
+
+            // 원래 back-edge 제거하고 Control Block을 통한 엣지로 교체
+            const newSourceToBlock = {
+              id: `${connection.source}-${controlBlockNode.id}`,
+              source: connection.source!,
+              target: controlBlockNode.id,
+              type: 'smart',
+              animated: true
+            };
+
+            const newBlockToTarget = {
+              id: `${controlBlockNode.id}-${connection.target}`,
+              source: controlBlockNode.id,
+              target: connection.target!,
+              type: 'smart',
+              animated: true,
+              data: {
+                loopType: 'while',
+                isBackEdge: true
+              }
+            };
+
+            // 🚪 Exit edge 생성: control block → next node (루프 종료 시)
+            const exitEdgesFromBlock = exitEdges.map(exitEdge => ({
+              id: `${controlBlockNode.id}-exit-${exitEdge.target}`,
+              source: controlBlockNode.id,
+              target: exitEdge.target,
+              type: 'smart',
+              animated: false,
+              data: {
+                ...exitEdge.data,
+                isLoopExit: true // 루프 종료 엣지 표시
+              }
+            }));
+
+            set((state) => ({
+              nodes: [...state.nodes, controlBlockNode],
+              edges: [
+                ...state.edges.filter(e => 
+                  // 원래 back-edge와 exit edge들 제거
+                  !(e.source === connection.source && 
+                    (e.target === connection.target || exitEdges.some(exit => exit.id === e.id)))
+                ),
+                newSourceToBlock,
+                newBlockToTarget,
+                ...exitEdgesFromBlock
+              ]
+            }));
+
+            toast.success('Loop Control Block created automatically');
           }
+          // Back-edge인 경우 Control Block 생성 후 종료
+          return;
         }
 
         // 🔀 분기 패턴 감지 및 Conditional Control Block 자동 생성
-        const suggestion = detectAndSuggestControlBlock(
-          connection.source!,
-          state.nodes,
-          [...state.edges, newEdge]
-        );
-
-        if (suggestion && !createsBackEdge) {  // Loop 제안과 중복 방지
-          // Control Block 자동 생성 (사용자 확인 없이)
+        const sourceNode = state.nodes.find(n => n.id === connection.source);
+        
+        // Case 1: Source가 이미 Control Block인 경우 → 기존 Control Block에 분기 추가
+        if (sourceNode?.type === 'control_block') {
+          const blockData = sourceNode.data as any;
+          
+          // while 타입은 여러 분기를 가질 수 없음
+          if (blockData.blockType === 'while') {
+            toast.error('While loop blocks cannot have multiple branches');
+            return;
+          }
+          
+          // 새로운 분기 추가
+          const newBranch = {
+            id: `branch_${blockData.branches.length}`,
+            label: `Branch ${blockData.branches.length + 1}`,
+            targetNodeId: connection.target!,
+            natural_condition: ''
+          };
+          
+          // Control Block 데이터 업데이트
           set((currentState) => ({
-            nodes: [...currentState.nodes, suggestion.controlBlockNode],
+            nodes: currentState.nodes.map(n =>
+              n.id === connection.source
+                ? { ...n, data: { ...n.data, branches: [...blockData.branches, newBranch] } }
+                : n
+            ),
             edges: [
-              ...currentState.edges.filter(e => !suggestion.originalEdges.includes(e)),
-              ...suggestion.newEdges
+              ...currentState.edges,
+              {
+                id: `${connection.source}-${connection.target}`,
+                source: connection.source!,
+                sourceHandle: newBranch.id,
+                target: connection.target!,
+                type: 'smart'
+              }
             ]
           }));
           
-          toast.success(`Control Block created for branching at ${sourceNode?.data?.label || connection.source}`);
-          
-          // 원래 엣지 연결 취소 (Control Block을 통해서만 연결되도록)
+          toast.success(`Branch added to Control Block`);
           return;
         }
+        
+        // Case 2: 일반 노드에서 분기가 발생하는 경우
+        // 현재 source 노드에서 나가는 엣지 개수 확인
+        const existingOutgoingEdges = state.edges.filter(e => e.source === connection.source);
+        
+        // 이미 1개 이상의 outgoing edge가 있고, 새로운 엣지를 추가하려는 경우
+        // = 분기가 발생하는 시점 → Control Block 생성
+        if (existingOutgoingEdges.length >= 1) {
+          const suggestion = detectAndSuggestControlBlock(
+            connection.source!,
+            state.nodes,
+            state.edges,
+            connection.target! // 새로 추가하려는 target 노드 전달
+          );
+
+          if (suggestion) {
+            // Control Block 자동 생성 (사용자 확인 없이)
+            set((currentState) => ({
+              nodes: [...currentState.nodes, suggestion.controlBlockNode],
+              edges: [
+                ...currentState.edges.filter(e => !suggestion.originalEdges.some(orig => orig.id === e.id)),  // 기존 분기 엣지들 제거
+                ...suggestion.newEdges  // Control Block을 통한 새 엣지만 추가
+              ]
+            }));
+            
+            toast.success(`Control Block created for branching at ${sourceNode?.data?.label || connection.source}`);
+            
+            // 원래 엣지 연결 취소 (Control Block을 통해서만 연결되도록)
+            return;
+          }
+        }
+
+        // Control Block이 생성되지 않은 경우에만 일반 엣지 추가
+        set((state) => ({
+          edges: addEdge(newEdge, state.edges),
+        }));
       },
 
       // 선택된 노드들을 그룹(서브그래프)으로 묶기

@@ -400,6 +400,17 @@ const WorkflowCanvasInner = () => {
     [nodes, handleNodeDelete]
   );
 
+  // Make edges non-editable (deletable and reconnectable disabled)
+  const edgesWithRestrictions = useMemo(
+    () =>
+      edges.map((edge) => ({
+        ...edge,
+        deletable: false,
+        reconnectable: false,
+      })),
+    [edges]
+  );
+
   // 다이얼로그에 전달할 연결 데이터를 미리 계산
   const dialogConnectionData = useMemo(() => {
     if (!selectedNode || !editorOpen) return null;
@@ -623,7 +634,7 @@ const WorkflowCanvasInner = () => {
 
           <ReactFlow
             nodes={nodesWithHandlers}
-            edges={edges}
+            edges={edgesWithRestrictions}
             onNodesChange={onNodesChangeWithTracking}
             onEdgesChange={onEdgesChangeWithTracking}
             onConnect={onConnect}
@@ -690,7 +701,6 @@ const WorkflowCanvasInner = () => {
             <AuditPanel 
               standalone 
               className="flex-1 overflow-hidden"
-              onRefresh={handleAuditRefresh}
               onClose={() => setAuditPanelOpen(false)}
               key="audit-panel"
             />

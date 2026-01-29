@@ -422,6 +422,84 @@ const ControlSettings = ({ data, updateField }: any) => {
 };
 
 /**
+ * Control Block Settings (for control_block node type)
+ */
+const ControlBlockSettings = ({ data, updateField }: any) => {
+  return (
+    <div className="space-y-4 border rounded-xl p-4 bg-slate-50/50">
+      {/* Block Type Selection */}
+      <div className="space-y-2">
+        <Label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Block Type</Label>
+        <Select 
+          value={data.blockType || 'parallel'} 
+          onValueChange={(val) => updateField('blockType', val)}
+        >
+          <SelectTrigger className="h-9 bg-white">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="conditional">Conditional Branch</SelectItem>
+            <SelectItem value="parallel">Parallel Execution</SelectItem>
+            <SelectItem value="for_each">For Each Loop</SelectItem>
+            <SelectItem value="while">While Loop</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-[9px] text-slate-500 mt-1">
+          {data.blockType === 'conditional' && '조건에 따라 분기를 선택합니다'}
+          {data.blockType === 'parallel' && '모든 분기를 동시에 실행합니다'}
+          {data.blockType === 'for_each' && '배열의 각 항목에 대해 반복 실행합니다'}
+          {data.blockType === 'while' && '조건이 참인 동안 반복 실행합니다'}
+        </p>
+      </div>
+
+      {/* While specific settings */}
+      {data.blockType === 'while' && (
+        <div className="space-y-3 pt-1">
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-bold text-slate-400">Loop Condition (Natural Language)</Label>
+            <Textarea
+              value={data.natural_condition || ''}
+              onChange={(e) => updateField('natural_condition', e.target.value)}
+              placeholder="e.g., content is not detailed enough"
+              className="min-h-[60px] text-xs bg-white resize-none"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-bold text-slate-400">Max Iterations</Label>
+            <Input
+              type="number"
+              value={data.maxIterations || 10}
+              onChange={(e) => updateField('maxIterations', parseInt(e.target.value))}
+              min={1}
+              max={100}
+              className="h-8 text-xs bg-white"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Branches info (read-only for now) */}
+      {data.blockType !== 'while' && data.branches && data.branches.length > 0 && (
+        <div className="space-y-2 pt-2 border-t">
+          <Label className="text-[10px] font-bold text-slate-400">Branches ({data.branches.length})</Label>
+          <div className="space-y-1">
+            {data.branches.map((branch: any, idx: number) => (
+              <div key={branch.id} className="text-[10px] text-slate-600 bg-white p-2 rounded border">
+                {idx + 1}. {branch.label}
+                {branch.natural_condition && <span className="text-slate-400 ml-2">({branch.natural_condition})</span>}
+              </div>
+            ))}
+          </div>
+          <p className="text-[9px] text-slate-500 italic">
+            Add/remove branches by connecting/disconnecting edges to the Control Block
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
  * 연결 내비게이션 및 생성 관리
  */
 const ConnectionManager = ({
@@ -618,6 +696,10 @@ const NodeForm = ({
     whileCondition: node?.data.whileCondition || '',
     maxIterations: node?.data.max_iterations || node?.data.maxIterations || 10,
     items_path: node?.data.items_path || 'state.items',
+    // Control Block specific
+    blockType: node?.data.blockType || 'parallel',
+    branches: node?.data.branches || [],
+    natural_condition: node?.data.natural_condition || '',
     item_key: node?.data.item_key || 'item',
     output_key: node?.data.output_key || 'results',
     strategy: node?.data.strategy || 'auto',
@@ -693,6 +775,14 @@ const NodeForm = ({
           updates.approval_message = formData.approval_message;
         }
         break;
+      case 'control_block':
+        updates.blockType = formData.blockType;
+        updates.branches = formData.branches;
+        if (formData.blockType === 'while') {
+          updates.natural_condition = formData.natural_condition;
+          updates.max_iterations = Number(formData.maxIterations);
+        }
+        break;
     }
     onUpdate(updates);
     toast.success("Configuration preserved successfully.");
@@ -741,6 +831,7 @@ const NodeForm = ({
           )}
           {nodeType === 'trigger' && <TriggerSettings data={formData} updateField={updateField} />}
           {nodeType === 'control' && <ControlSettings data={formData} updateField={updateField} />}
+          {nodeType === 'control_block' && <ControlBlockSettings data={formData} updateField={updateField} />}
         </div>
       </div>
 

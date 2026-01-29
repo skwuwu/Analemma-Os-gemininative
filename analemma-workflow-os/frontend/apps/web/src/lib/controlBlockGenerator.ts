@@ -23,18 +23,23 @@ export interface ControlBlockSuggestion {
 /**
  * 분기 패턴 감지 및 Control Block 제안
  * 
+ * @param sourceNodeId - 분기 시작 노드 ID
+ * @param nodes - 전체 노드 목록
+ * @param edges - 현재 엣지 목록 (새 엣지는 포함되지 않음)
+ * @param newTargetNodeId - 새로 추가하려는 target 노드 ID (optional)
  * @returns null if no pattern detected, ControlBlockSuggestion if pattern found
  */
 export function detectAndSuggestControlBlock(
   sourceNodeId: string,
   nodes: Node[],
-  edges: Edge[]
+  edges: Edge[],
+  newTargetNodeId?: string
 ): ControlBlockSuggestion | null {
   const outgoingEdges = edges.filter(e => e.source === sourceNodeId);
   
-  // 1. 다중 분기 감지 (2개 이상의 나가는 엣지)
-  if (outgoingEdges.length >= 2) {
-    return createConditionalBranchSuggestion(sourceNodeId, outgoingEdges, nodes);
+  // 1. 다중 분기 감지: 기존 엣지가 1개 이상 있고, 새 엣지를 추가하려는 경우
+  if (outgoingEdges.length >= 1 && newTargetNodeId) {
+    return createConditionalBranchSuggestion(sourceNodeId, outgoingEdges, nodes, newTargetNodeId);
   }
   
   // 2. Back-edge 감지 (While Loop)
@@ -52,16 +57,22 @@ export function detectAndSuggestControlBlock(
  * [Fix] 분기 타입 자동 감지:
  * - 모든 엣지에 condition이 있으면 → conditional
  * - 그 외 → parallel (사용자가 나중에 for_each로 변경 가능)
+ * 
+ * @param sourceNodeId - 분기 시작 노드 ID
+ * @param outgoingEdges - 기존 outgoing edges (새 엣지는 포함되지 않음)
+ * @param nodes - 전체 노드 목록
+ * @param newTargetNodeId - 새로 추가하려는 target 노드 ID
  */
 function createConditionalBranchSuggestion(
   sourceNodeId: string,
   outgoingEdges: Edge[],
-  nodes: Node[]
+  nodes: Node[],
+  newTargetNodeId: string
 ): ControlBlockSuggestion {
   const sourceNode = nodes.find(n => n.id === sourceNodeId);
   if (!sourceNode) throw new Error(`Source node ${sourceNodeId} not found`);
   
-  // 분기 타입 자동 감지
+  // 분기 타입 자동 감지 (기존 엣지들만 확인)
   const allHaveCondition = outgoingEdges.every(
     e => e.data?.condition !== undefined && e.data?.condition !== null && e.data?.condition !== ''
   );
@@ -73,13 +84,22 @@ function createConditionalBranchSuggestion(
     y: sourceNode.position.y
   };
   
-  // Branches 생성
-  const branches: BranchConfig[] = outgoingEdges.map((edge, idx) => ({
-    id: `branch_${idx}`,
-    label: edge.data?.condition || `Branch ${idx + 1}`,
-    targetNodeId: edge.target,
-    natural_condition: edge.data?.condition
-  }));
+  // Branches 생성: 기존 엣지들 + 새로 추가하려는 엣지
+  const branches: BranchConfig[] = [
+    ...outgoingEdges.map((edge, idx) => ({
+      id: `branch_${idx}`,
+      label: (edge.data?.condition as string) || `Branch ${idx + 1}`,
+      targetNodeId: edge.target,
+      natural_condition: edge.data?.condition as string | undefined
+    })),
+    // 새로운 branch 추가
+    {
+      id: `branch_${outgoingEdges.length}`,
+      label: `Branch ${outgoingEdges.length + 1}`,
+      targetNodeId: newTargetNodeId,
+      natural_condition: ''
+    }
+  ];
   
   // Control Block 노드 생성
   const controlBlockNode: Node<ControlBlockData> = {
@@ -102,7 +122,7 @@ function createConditionalBranchSuggestion(
     type: 'smart'
   };
   
-  // 2. Control Block → Target 노드들
+  // 2. Control Block → Target 노드들 (기존 + 새로운)
   const blockToTargets: Edge[] = branches.map(branch => ({
     id: `${controlBlockNode.id}-${branch.targetNodeId}`,
     source: controlBlockNode.id,
@@ -113,9 +133,9 @@ function createConditionalBranchSuggestion(
   
   return {
     controlBlockNode,
-    originalEdges: outgoingEdges,
+    originalEdges: outgoingEdges, // 기존 엣지들만 제거 대상
     newEdges: [sourceToBlock, ...blockToTargets],
-    message: `Detected ${branches.length} branches from this node. Would you like to create a Control Block for better organization?`
+    message: `Detected ${branches.length} branches from this node. Creating Control Block for better organization.`
   };
 }
 

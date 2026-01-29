@@ -305,6 +305,7 @@ export const ControlBlockNode = ({ data, id, selected }: ControlBlockNodeProps) 
       )}
 
       {/* 출력 핸들 (분기 수만큼 생성) */}
+      {/* 🎨 시각 효과: 모든 handle을 같은 위치에 배치하여 하나의 점에서 나가는 것처럼 보이게 함 */}
       {data.blockType !== 'while' && data.branches.map((branch, idx) => (
         <Handle
           key={branch.id}
@@ -314,7 +315,8 @@ export const ControlBlockNode = ({ data, id, selected }: ControlBlockNodeProps) 
           className="w-3 h-3"
           style={{
             backgroundColor: `hsl(${config.color})`,
-            top: `${30 + (idx * 20)}%`,
+            top: '50%', // 모든 handle을 중앙에 배치
+            transform: 'translateY(-50%)', // 정확한 중앙 정렬
           }}
         />
       ))}
