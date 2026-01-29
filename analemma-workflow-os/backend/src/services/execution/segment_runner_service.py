@@ -2737,67 +2737,28 @@ class SegmentRunnerService:
 
         # ====================================================================
         # [Hydration] [v3.10] Unified State Bag - Single Source of Truth
-        # Extract S3 path from state_data BEFORE normalize_inplace removes it
         # ====================================================================
-        # 🛡️ [v3.4] _safe_get_from_bag 사용
-        config_s3_path = _safe_get_from_bag(event, 'workflow_config_s3_path')
+        # [v3.6] workflow_config는 StateBag에서 직접 조회
+        # bag 전체가 hydration되면 workflow_config도 포함됨 (별도 S3 조회 불필요)
+        # ====================================================================
         
-        # [Fix] [v3.10] Normalize Event AFTER extracting S3 path but BEFORE hydration
-        # Remove potentially huge state_data from event to save memory
-        normalize_inplace(event, remove_state_data=True)
-        
-        if config_s3_path:
-            try:
-                logger.info(f"⬇️ [Hydration] Downloading workflow_config from State Bag S3: {config_s3_path}")
-                
-                # S3 Download with Retry (Eventual Consistency Protection)
-                def _download_config():
-                    bucket_name = config_s3_path.replace("s3://", "").split("/")[0]
-                    key_name = "/".join(config_s3_path.replace("s3://", "").split("/")[1:])
-                    s3_client = self.state_manager.s3_client
-                    obj = s3_client.get_object(Bucket=bucket_name, Key=key_name)
-                    content = obj['Body'].read().decode('utf-8')
-                    return self._safe_json_load(content)
-
-                if RETRY_UTILS_AVAILABLE:
-                    workflow_config = retry_call(
-                        _download_config,
-                        max_retries=3,
-                        base_delay=0.5,
-                        max_delay=3.0,
-                        exceptions=(Exception,)
-                    )
-                else:
-                    workflow_config = _download_config()
-
-                # ⚠️ DO NOT add to event to avoid 256KB limit
-                # Keep as local variable only
-                    
-                logger.info(f"✅ [Hydration] Config restored from State Bag ({len(json.dumps(workflow_config))} bytes)")
-                
-            except Exception as e:
-                logger.error(f"❌ [Hydration] Failed to download config from State Bag S3: {e}")
-                return _finalize_response({
-                    "status": "FAILED",
-                    "error_info": {
-                        "error": f"Config Hydration Failed: {str(e)}",
-                        "error_type": "HydrationError"
-                    }
-                })
-
-        # 4. Resolve Segment Config - Single Source of Truth
-        # workflow_config already set from hydration above, or fallback to initial_state
-        if 'workflow_config' not in locals() or workflow_config is None:
-            # Fallback: Check initial_state for inline workflow_config (backward compatibility)
-            if isinstance(initial_state, dict):
-                workflow_config = initial_state.get('workflow_config')
-            else:
-                workflow_config = None
-        
-        # Extract partition_map from State Bag (state_data has partition_map)
-        # 🛡️ [v3.4] _safe_get_from_bag 사용 - bag이 None일 때 AttributeError 방지
+        # ====================================================================
+        # [v3.6] Extract ALL bag data BEFORE normalize_inplace removes state_data
+        # StateBag as Single Source of Truth - 모든 데이터는 bag에서 가져옴
+        # 로컬 변수로만 유지 (event에 저장 X - StateBag 오염 방지)
+        # ====================================================================
+        workflow_config = _safe_get_from_bag(event, 'workflow_config')
         partition_map = _safe_get_from_bag(event, 'partition_map')
         partition_map_s3_path = _safe_get_from_bag(event, 'partition_map_s3_path')
+        execution_mode = _safe_get_from_bag(event, 'execution_mode')
+        distributed_mode = _safe_get_from_bag(event, 'distributed_mode')
+        
+        # [Fix] [v3.10] Normalize Event AFTER state extraction but BEFORE processing
+        # Remove potentially huge state_data from event to save memory
+        normalize_inplace(event, remove_state_data=True)
+
+        # 4. Resolve Segment Config - Single Source of Truth
+        # workflow_config는 bag 최상위에 있음 (위에서 이미 추출됨)
         
         # 👉 [Critical Fix] Branch Execution: partition_map fallback from branch_config
         # ASL의 ProcessParallelSegments에서 branch_config에 전체 브랜치 정보가 전달됨
@@ -2813,8 +2774,7 @@ class SegmentRunnerService:
         
         # 🚀🚀 [Hybrid Mode] Direct segment_config support for MAP_REDUCE/BATCHED modes
         direct_segment_config = event.get('segment_config')
-        # 🛡️ [v3.4] _safe_get_from_bag 사용 - execution_mode 안전 추출
-        execution_mode = _safe_get_from_bag(event, 'execution_mode')
+        # execution_mode는 위에서 이미 추출됨
         
         if direct_segment_config and execution_mode in ('MAP_REDUCE', 'BATCHED'):
             logger.info(f"[Hybrid Mode] Using direct segment_config for {execution_mode} mode")
@@ -3433,9 +3393,8 @@ class SegmentRunnerService:
         # 각 iteration 결과가 개별적으로는 작아도 Distributed Map이 모든 결과를
         # 배열로 수집하면 256KB 제한을 초과할 수 있음
         # [Fix] distributed_mode가 null(JSON)/None(Python)일 수 있으므로 명시적 True 체크
-        # 🛡️ [v3.4] _safe_get_from_bag 사용 - distributed_mode 안전 추출
-        is_distributed_mode = _safe_get_from_bag(event, 'distributed_mode')
-        is_distributed_mode = is_distributed_mode is True
+        # 🛡️ [v3.6] 함수 스코프에서 이미 추출된 로컬 변수 사용
+        is_distributed_mode = distributed_mode is True
         
         # [Critical Fix] Map State 브랜치 실행도 강제 오프로딩 필요
         # Map State가 모든 브랜치 결과를 수집할 때 256KB 제한 초과 방지
