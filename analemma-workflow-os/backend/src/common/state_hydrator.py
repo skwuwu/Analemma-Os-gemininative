@@ -31,7 +31,12 @@ Usage:
     state["llm_response"] = call_llm(...)
     
     # Lambda 반환 (자동 오프로드)
-    return hydrator.dehydrate(state)  # 큰 필드는 S3로, 포인터만 반환
+    return hydrator.dehydrate(
+        state=state,
+        owner_id=event.get('ownerId'),
+        workflow_id=event.get('workflowId'),
+        execution_id=event.get('execution_id')
+    )  # 큰 필드는 S3로, 포인터만 반환
 
 Author: Analemma OS Team
 Version: 1.0.0

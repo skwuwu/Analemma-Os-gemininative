@@ -352,6 +352,13 @@ def lambda_handler(event, context):
     workflow_id = raw_input.get('workflowId', "")
     current_time = int(time.time())
     
+    # Generate execution_id for state tracking
+    # Use idempotency_key if provided, otherwise generate unique ID
+    execution_id = raw_input.get('idempotency_key') or raw_input.get('execution_id')
+    if not execution_id:
+        import uuid
+        execution_id = f"init-{workflow_id}-{int(time.time())}-{str(uuid.uuid4())[:8]}"
+    
     # 2.1 Load Config & Partition Map
     # Priority: Input > DB (Precompiled) > Runtime Calc
     
@@ -499,6 +506,7 @@ def lambda_handler(event, context):
         state=bag,
         owner_id=owner_id,
         workflow_id=workflow_id,
+        execution_id=execution_id,
         return_delta=False,
         force_offload_fields=force_offload
     )
