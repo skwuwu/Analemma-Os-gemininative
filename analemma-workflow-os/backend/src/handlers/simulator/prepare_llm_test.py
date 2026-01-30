@@ -16,6 +16,7 @@ logger.setLevel(logging.INFO)
 DISTRIBUTED_ORCHESTRATOR_ARN = os.environ.get('WORKFLOW_DISTRIBUTED_ORCHESTRATOR_ARN')
 STANDARD_ORCHESTRATOR_ARN = os.environ.get('WORKFLOW_ORCHESTRATOR_ARN')
 MOCK_MODE = 'false'  # LLM Simulator는 항상 MOCK_MODE=false
+AUTO_RESUME_HITP = 'true'  # [v3.21] HITP 자동 승인 (시뮬레이터 무한대기 방지)
 
 # LLM Test Workflow Mappings
 LLM_TEST_WORKFLOW_MAPPINGS = {
@@ -260,6 +261,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         execution_name = f"llm-{short_sim_id}-{safe_scenario}-{random_suffix}"
         
         # Prepare payload
+        # ⚠️ AUTO_RESUME_HITP는 initial_state 안에 넣어야 함!
+        # ASL WaitForCallback이 store_task_token에 state_data.bag만 전달하기 때문
         payload = {
             'workflowId': f'llm-test-{scenario_key.lower()}',
             'ownerId': 'system',
@@ -269,6 +272,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'test_keyword': test_keyword,
                 'llm_test_scenario': scenario_key,
                 'llm_execution_id': execution_name,
+                'AUTO_RESUME_HITP': AUTO_RESUME_HITP,  # [v3.21] HITP 자동 승인 (StateBag에 포함)
                 **input_data
             },
             'idempotency_key': f"llm#{scenario_key}#{execution_name}",
@@ -278,6 +282,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         logger.info(f"✅ Prepared LLM test: {scenario_key} -> {test_keyword}")
         logger.info(f"⚠️  MOCK_MODE=false - This will make REAL LLM API calls!")
+        logger.info(f"🔄 AUTO_RESUME_HITP={AUTO_RESUME_HITP} - HITP 자동 승인 활성화")
         
         return {
             "targetArn": DISTRIBUTED_ORCHESTRATOR_ARN,

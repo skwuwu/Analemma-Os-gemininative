@@ -454,28 +454,50 @@ def lambda_handler(event, context):
             )
             logger.info(f"HITP notification sent: {notification_sent}")
             
-            # --- 🆕 MOCK_MODE: 자동 Resume (시뮬레이터 E2E 테스트용) ---
-            # MOCK_MODE가 활성화된 경우 사람의 승인을 모킹하여 자동으로 워크플로우 재개
-            # MOCK_MODE는 payload 직접, bag 내부, 또는 환경변수에서 찾을 수 있음
-            # [v3.20] state_data → bag 변경 (Kernel Protocol 표준)
+            # --- 🆕 자동 Resume 로직 (MOCK_MODE 또는 AUTO_RESUME_HITP) ---
+            # 1. MOCK_MODE=true: 즉시 자동 승인 (E2E 테스트용)
+            # 2. AUTO_RESUME_HITP=true: 타임아웃 후 자동 승인 (시뮬레이터용)
+            # [v3.21] AUTO_RESUME_HITP 플래그 추가 - LLM Simulator 무한대기 해결
+            
             mock_mode_value = (
                 payload.get('MOCK_MODE') or 
                 bag.get('MOCK_MODE') or 
                 os.environ.get('MOCK_MODE', 'false')
             )
             mock_mode = str(mock_mode_value).lower() == 'true'
+            
+            auto_resume_value = (
+                payload.get('AUTO_RESUME_HITP') or 
+                bag.get('AUTO_RESUME_HITP') or 
+                os.environ.get('AUTO_RESUME_HITP', 'false')
+            )
+            auto_resume_hitp = str(auto_resume_value).lower() == 'true'
+            
+            # 자동 resume 타임아웃 (초) - 기본 5초, 환경변수로 조정 가능
+            auto_resume_delay = int(
+                payload.get('AUTO_RESUME_DELAY_SECONDS') or
+                bag.get('AUTO_RESUME_DELAY_SECONDS') or
+                os.environ.get('AUTO_RESUME_DELAY_SECONDS', '5')
+            )
+            
             mock_resume_result = None
             
-            logger.info(f"🔍 MOCK_MODE check: payload={payload.get('MOCK_MODE')}, bag={bag.get('MOCK_MODE')}, env={os.environ.get('MOCK_MODE')}, resolved={mock_mode}")
+            logger.info(f"🔍 Auto-resume check: MOCK_MODE={mock_mode}, AUTO_RESUME_HITP={auto_resume_hitp}, delay={auto_resume_delay}s")
             
-            if mock_mode:
-                logger.info(f"🤖 MOCK_MODE detected - initiating auto-resume for HITP")
+            if mock_mode or auto_resume_hitp:
+                if auto_resume_hitp and not mock_mode and auto_resume_delay > 0:
+                    # 타임아웃 기반 자동 resume: Step Functions가 대기 상태 진입할 시간 확보
+                    logger.info(f"⏳ AUTO_RESUME_HITP: waiting {auto_resume_delay}s before auto-resume")
+                    time.sleep(auto_resume_delay)
+                
+                resume_mode = "MOCK_MODE" if mock_mode else "AUTO_RESUME_HITP"
+                logger.info(f"🤖 {resume_mode} detected - initiating auto-resume for HITP")
                 mock_resume_result = _mock_auto_resume(
                     task_token=task_token,
                     payload=payload,
                     max_retries=3
                 )
-                logger.info(f"🤖 MOCK auto-resume result: {mock_resume_result}")
+                logger.info(f"🤖 Auto-resume result: {mock_resume_result}")
 
             # Step Functions expects pure JSON output (not HTTP response format)
             # Return the payload with additional context for next states
