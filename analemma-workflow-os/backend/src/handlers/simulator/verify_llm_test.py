@@ -42,7 +42,8 @@ except ImportError:
             bag = state_data.get('bag')
             if isinstance(bag, dict):
                 return bag
-            return state_data
+            if state_data:
+                return state_data
         return event
 
 
@@ -1902,30 +1903,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     LLM 테스트 결과 검증 Lambda Handler
     
-    Event format:
-    {
-        "scenario_key": "BASIC_LLM_CALL",
-        "final_state": {...},
-        "test_config": {...},
-        "execution_id": "xxx",
-        "verification_type": "standard" | "task_abstraction"  # v2.1
-    }
-    
-    v2.1: Task Manager Abstraction Verification
-    - verification_type: "task_abstraction"으로 설정 시 전용 검증 수행
-    - Provider Cross-validation, Thought Memory Compaction, QuickFix 동적 생성 검증
-    
-    v2.2: S3 Offload Hydration
-    - __s3_offloaded 상태 자동 하이드레이션
-    - Stage 4, 6, 7, 8에서 S3 경로 추적
-    
-    v2.3: Nested final_state 자동 추출
-    - Step Functions 출력이 {status, final_state: {...}} 구조일 때 자동 추출
-    - final_state가 비어있으면 test_result.output에서 추출
-    
-    v3.2: Kernel Protocol 방식 상태 추출
-    - open_state_bag 사용하여 bag/state_data/event 구조 자동 인식
-    - 복잡한 fallback 로직 대신 단일 함수로 추출
+    v3.4: Kernel Protocol 단순화
+    - open_state_bag으로 StateBag 추출 (복잡한 fallback 제거)
+    - S3 포인터 하이드레이션 후 Kernel Protocol로 한 번에 추출
+    - llm_raw_output 존재 여부로 검증 성공 판단
     """
     logger.info(f"Verifying LLM test: {event.get('scenario_key')}")
     
@@ -1935,112 +1916,38 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     verification_type = event.get('verification_type', 'standard')
     
     # ========================================
-    # v3.2: Kernel Protocol 방식 상태 추출
+    # v3.4: Kernel Protocol - 단순화된 StateBag 추출
     # ========================================
-    # open_state_bag은 다음 구조들을 자동으로 처리:
-    # - event.state_data.bag (ASL v3.13 Kernel Protocol)
-    # - event.state_data (legacy)
-    # - event 자체 (직접 전달)
-    # - event.final_state (검증기 호출 구조)
-    # - event.test_result.output (테스트 결과 구조)
+    # 1. S3 포인터 있으면 하이드레이션
+    # 2. open_state_bag으로 StateBag 추출
+    # 3. llm_raw_output 있으면 검증 끝
     
-    if KERNEL_PROTOCOL_AVAILABLE:
-        # Kernel Protocol 우선 시도
-        final_state = open_state_bag(event)
-        
-        # final_state가 비어있으면 test_result.output에서 추출 시도
-        if not final_state or (isinstance(final_state, dict) and not final_state):
-            test_result = event.get('test_result', {})
-            output = test_result.get('output', {})
-            if isinstance(output, str):
-                try:
-                    output = json.loads(output)
-                except (json.JSONDecodeError, ValueError):
-                    output = {}
-            if isinstance(output, dict) and output:
-                final_state = open_state_bag(output)
-                logger.info(f"[v3.2] Extracted state from test_result.output via Kernel Protocol")
-        
-        # 그래도 비어있으면 event.final_state 직접 사용
-        if not final_state or (isinstance(final_state, dict) and not final_state):
-            final_state = event.get('final_state', {})
-        
-        logger.info(f"[v3.2 Kernel Protocol] Extracted state keys: {list(final_state.keys())[:10] if isinstance(final_state, dict) else 'N/A'}")
-    else:
-        # Legacy fallback (Kernel Protocol 없을 때)
-        final_state = event.get('final_state', {})
-        
-        # final_state가 비어있거나 None이면 test_result.output에서 추출
-        if not final_state or (isinstance(final_state, dict) and not final_state):
-            test_result = event.get('test_result', {})
-            output = test_result.get('output', {})
-            
-            # output이 문자열이면 파싱
-            if isinstance(output, str):
-                try:
-                    output = json.loads(output)
-                except (json.JSONDecodeError, ValueError):
-                    logger.warning(f"Failed to parse test_result.output as JSON")
-                    output = {}
-            
-            # output.final_state 또는 output 자체를 사용
-            if isinstance(output, dict):
-                final_state = output.get('final_state', output)
-                logger.info(f"[Fallback] Extracted final_state from test_result.output, keys: {list(final_state.keys())[:5] if isinstance(final_state, dict) else 'N/A'}")
-        
-        # final_state가 문자열이면 파싱
-        if isinstance(final_state, str):
+    # Step 1: 이벤트 전체 하이드레이션 (S3 포인터 복원)
+    hydrated_event = _ensure_hydrated_state(event)
+    
+    # Step 2: Kernel Protocol로 StateBag 추출
+    # open_state_bag은 state_data.bag → state_data → event 순서로 탐색
+    final_state = open_state_bag(hydrated_event)
+    
+    # Step 3: test_result.output에서도 시도 (ASL 출력 구조)
+    if not final_state or not final_state.get('llm_raw_output'):
+        test_result = hydrated_event.get('test_result', {})
+        output = test_result.get('output', {})
+        if isinstance(output, str):
             try:
-                final_state = json.loads(final_state)
-            except (json.JSONDecodeError, ValueError):
-                logger.warning(f"Failed to parse final_state as JSON string")
-                final_state = {}
-        
-        # 중첩된 final_state 추출 (output.final_state 구조)
-        if isinstance(final_state, dict) and 'final_state' in final_state and 'status' in final_state:
-            logger.info(f"[Nested] Extracting nested final_state from Step Functions output structure")
-            nested_state = final_state.get('final_state', {})
-            if isinstance(nested_state, dict) and nested_state:
-                final_state = nested_state
-        
-        # current_state 평탄화 (legacy)
-        if isinstance(final_state, dict) and 'current_state' in final_state:
-            current_state = final_state.get('current_state', {})
-            if isinstance(current_state, dict) and current_state:
-                merged_state = final_state.copy()
-                for key, value in current_state.items():
-                    if key not in merged_state or merged_state.get(key) is None:
-                        merged_state[key] = value
-                    elif key in ('llm_raw_output', 'parsed_summary', 'vision_raw_output', 
-                                 'vision_results', 'partition_results', 'branch_results',
-                                 'test_results', 'slop_detection_results'):
-                        merged_state[key] = value
-                final_state = merged_state
-                logger.info(f"[Legacy] Flattened current_state keys: {list(current_state.keys())[:10]}")
-
-    # ========================================
-    # v3.0: S3 Offload Hydration (Recursive)
-    # ========================================
-    # StateBag 아키텍처 지원: state_s3_path, final_state_s3_path 패턴 추가
-    # Stage 4, 6, 7, 8에서 상태가 S3로 오프로드되면 빈 상태만 보이는 문제 수정
-    # v2.4: 최상위뿐만 아니라 중첩된 필드 (vision_results, partition_results 등)도 하이드레이션
-    if isinstance(final_state, dict):
-        # 1) 최상위가 오프로드된 경우 (__s3_offloaded, state_s3_path, final_state_s3_path)
-        # 2) 또는 중첩 필드 중 하나라도 오프로드된 경우 (Stage 4/6/7/8)
-        has_offloaded_nested = any(
-            isinstance(v, dict) and (v.get('__s3_offloaded') or v.get('state_s3_path') or v.get('final_state_s3_path'))
-            for v in final_state.values()
-        )
-        needs_hydration = (
-            final_state.get('__s3_offloaded') or 
-            final_state.get('state_s3_path') or 
-            final_state.get('final_state_s3_path') or 
-            has_offloaded_nested
-        )
-        if needs_hydration:
-            logger.info(f"[S3 Hydration] Detected offloaded state (legacy: {final_state.get('__s3_offloaded')}, statebag: {final_state.get('state_s3_path')}, nested: {has_offloaded_nested}), hydrating recursively...")
-            final_state = _ensure_hydrated_state(final_state)
-            logger.info(f"[S3 Hydration] Hydration complete. State keys: {list(final_state.keys())[:10]}")
+                output = json.loads(output)
+            except:
+                output = {}
+        if isinstance(output, dict):
+            # output.final_state 또는 output 자체에서 추출
+            candidate = output.get('final_state', output)
+            if isinstance(candidate, dict):
+                candidate = _ensure_hydrated_state(candidate)
+                bag = open_state_bag(candidate)
+                if bag.get('llm_raw_output') or bag.get('parsed_summary') or bag.get('vision_raw_output'):
+                    final_state = bag
+    
+    logger.info(f"[v3.4] StateBag extracted, keys: {list(final_state.keys())[:10] if isinstance(final_state, dict) else 'N/A'}")
     
     # v2.1: Task Abstraction 전용 검증
     if verification_type == 'task_abstraction' or scenario_key == 'TASK_ABSTRACTION':
