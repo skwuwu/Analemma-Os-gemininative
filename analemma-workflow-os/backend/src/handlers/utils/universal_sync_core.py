@@ -508,11 +508,26 @@ def flatten_result(result: Any, context: Optional[SyncContext] = None) -> Dict[s
                     # [v3.20] final_state에 current_state가 없으면 
                     # final_state 자체를 current_state로 사용 (run_workflow 결과)
                     # 단, 메타데이터 키는 제외
+                    # [v3.21] 모든 Stage의 LLM output_key 포함
                     execution_result_keys = {
-                        'llm_raw_output', 'parsed_summary', 'vision_raw_output',
-                        'vision_results', 'partition_results', 'branch_results',
-                        'test_results', 'slop_detection_results', 'usage',
-                        'step_history', 'execution_logs', '__new_history_logs'
+                        # Stage 1, 7, 8: Basic LLM
+                        'llm_raw_output', 'llm_output', 'llm_result', 'parsed_summary',
+                        # Stage 2: Flow Control
+                        'item_result', 'quality_check_result', 'processed_items',
+                        # Stage 3: Vision Basic
+                        'vision_raw_output', 'parsed_vision_data',
+                        # Stage 4: Vision Map
+                        'image_analysis', 'vision_results',
+                        # Stage 5: Hyper Stress
+                        'document_analysis_raw', 'final_report_raw', 'depth_1_results', 'depth_2_results',
+                        # Stage 6: Distributed Map Reduce
+                        'llm_analysis_raw', 'partition_results',
+                        # Stage 7: Parallel Multi LLM
+                        'branch_results', 'claude_branch', 'gemini_branch',
+                        # Stage 8: Slop Detection
+                        'test_results', 'slop_detection_results',
+                        # Common metadata
+                        'usage', 'step_history', 'execution_logs', '__new_history_logs'
                     }
                     has_execution_results = any(k in final_state for k in execution_result_keys)
                     if has_execution_results or (final_state and '_' not in str(list(final_state.keys())[:1])):

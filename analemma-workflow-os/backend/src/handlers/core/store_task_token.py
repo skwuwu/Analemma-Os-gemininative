@@ -456,17 +456,17 @@ def lambda_handler(event, context):
             
             # --- 🆕 MOCK_MODE: 자동 Resume (시뮬레이터 E2E 테스트용) ---
             # MOCK_MODE가 활성화된 경우 사람의 승인을 모킹하여 자동으로 워크플로우 재개
-            # MOCK_MODE는 payload 직접, state_data 내부, 또는 환경변수에서 찾을 수 있음
-            # Reuse state_data defined earlier to avoid variable shadowing
+            # MOCK_MODE는 payload 직접, bag 내부, 또는 환경변수에서 찾을 수 있음
+            # [v3.20] state_data → bag 변경 (Kernel Protocol 표준)
             mock_mode_value = (
                 payload.get('MOCK_MODE') or 
-                state_data.get('MOCK_MODE') or 
+                bag.get('MOCK_MODE') or 
                 os.environ.get('MOCK_MODE', 'false')
             )
             mock_mode = str(mock_mode_value).lower() == 'true'
             mock_resume_result = None
             
-            logger.info(f"🔍 MOCK_MODE check: payload={payload.get('MOCK_MODE')}, state_data={state_data.get('MOCK_MODE')}, env={os.environ.get('MOCK_MODE')}, resolved={mock_mode}")
+            logger.info(f"🔍 MOCK_MODE check: payload={payload.get('MOCK_MODE')}, bag={bag.get('MOCK_MODE')}, env={os.environ.get('MOCK_MODE')}, resolved={mock_mode}")
             
             if mock_mode:
                 logger.info(f"🤖 MOCK_MODE detected - initiating auto-resume for HITP")

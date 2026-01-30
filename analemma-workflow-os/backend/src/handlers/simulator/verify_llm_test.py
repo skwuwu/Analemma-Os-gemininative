@@ -201,10 +201,13 @@ PROVIDER_SERVICE_NAME_MAP = {
 
 def verify_basic_llm_call(final_state: Dict, test_config: Dict) -> Tuple[bool, str]:
     """LI-A: 기본 LLM 호출 검증"""
-    # [Fix] Support multiple LLM output key patterns used across different workflows
+    # [v3.6] 모든 Stage에서 사용하는 LLM output_key 목록 통일
     llm_output_keys = [
-        'llm_output', 'llm_raw_output', 'vision_raw_output', 
-        'document_analysis_raw', 'final_report_raw', 'llm_result'
+        'llm_raw_output', 'llm_output', 'llm_result',
+        'parsed_summary', 'vision_raw_output', 
+        'document_analysis_raw', 'final_report_raw',
+        'llm_analysis_raw', 'image_analysis',
+        'item_result', 'quality_check_result'
     ]
     
     llm_output = None
@@ -1928,9 +1931,32 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # Step 2: Kernel Protocol로 StateBag 추출
     # open_state_bag은 state_data.bag → state_data → event 순서로 탐색
     final_state = open_state_bag(hydrated_event)
+    state_source = "open_state_bag(event)"
+    
+    # v3.6: 모든 Stage에서 사용하는 LLM output_key 목록
+    # Stage 1: llm_raw_output, parsed_summary
+    # Stage 2: item_result, quality_check_result
+    # Stage 3: vision_raw_output
+    # Stage 4: image_analysis
+    # Stage 5: document_analysis_raw, final_report_raw
+    # Stage 6: llm_analysis_raw
+    # Stage 7/8: llm_raw_output
+    LLM_OUTPUT_KEYS = [
+        'llm_raw_output', 'llm_output', 'llm_result',
+        'parsed_summary', 'vision_raw_output', 
+        'document_analysis_raw', 'final_report_raw',
+        'llm_analysis_raw', 'image_analysis',
+        'item_result', 'quality_check_result'
+    ]
+    
+    def _has_llm_output(state: dict) -> bool:
+        """StateBag에 LLM 관련 출력이 있는지 확인"""
+        if not isinstance(state, dict):
+            return False
+        return any(state.get(key) for key in LLM_OUTPUT_KEYS)
     
     # Step 3: test_result.output에서도 시도 (ASL 출력 구조)
-    if not final_state or not final_state.get('llm_raw_output'):
+    if not _has_llm_output(final_state):
         test_result = hydrated_event.get('test_result', {})
         output = test_result.get('output', {})
         if isinstance(output, str):
@@ -1939,15 +1965,28 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             except:
                 output = {}
         if isinstance(output, dict):
-            # output.final_state 또는 output 자체에서 추출
-            candidate = output.get('final_state', output)
-            if isinstance(candidate, dict):
-                candidate = _ensure_hydrated_state(candidate)
-                bag = open_state_bag(candidate)
-                if bag.get('llm_raw_output') or bag.get('parsed_summary') or bag.get('vision_raw_output'):
-                    final_state = bag
+            # v3.6: output.current_state에서 먼저 찾기 (실제 LLM 결과 위치)
+            # LLM 결과는 output.current_state에 저장됨
+            current_state = output.get('current_state', {})
+            if isinstance(current_state, dict):
+                current_state = _ensure_hydrated_state(current_state)
+                if _has_llm_output(current_state):
+                    final_state = current_state
+                    state_source = "test_result.output.current_state"
+            
+            # 여전히 못 찾았으면 output.final_state 또는 output 자체에서 시도
+            if not _has_llm_output(final_state):
+                candidate = output.get('final_state', output)
+                if isinstance(candidate, dict):
+                    candidate = _ensure_hydrated_state(candidate)
+                    bag = open_state_bag(candidate)
+                    if _has_llm_output(bag):
+                        final_state = bag
+                        state_source = "test_result.output.final_state"
     
-    logger.info(f"[v3.4] StateBag extracted, keys: {list(final_state.keys())[:10] if isinstance(final_state, dict) else 'N/A'}")
+    # 어떤 LLM 관련 키가 있는지 로깅
+    found_llm_keys = [k for k in LLM_OUTPUT_KEYS if isinstance(final_state, dict) and final_state.get(k)]
+    logger.info(f"[v3.6] StateBag from {state_source}, keys: {list(final_state.keys())[:10] if isinstance(final_state, dict) else 'N/A'}, found_llm_keys: {found_llm_keys}")
     
     # v2.1: Task Abstraction 전용 검증
     if verification_type == 'task_abstraction' or scenario_key == 'TASK_ABSTRACTION':
