@@ -753,6 +753,262 @@ execution.on('completed', (event) => {
 
 ---
 
+## 7. Task Manager API
+
+The Task Manager API provides business-friendly endpoints for managing and monitoring workflow executions.
+
+### 7.1 List Tasks
+
+```http
+GET /tasks?limit=20&status=in_progress&next_token=<token>
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | integer | 20 | Max items per page (1-100) |
+| `status` | string | - | Filter by status |
+| `next_token` | string | - | Pagination token |
+| `sort_by` | string | `created_at` | Sort field |
+| `sort_order` | string | `desc` | `asc` or `desc` |
+
+**Response:**
+```json
+{
+  "tasks": [
+    {
+      "task_id": "task_abc123",
+      "title": "Data Processing Job",
+      "status": "in_progress",
+      "progress": 45.5,
+      "created_at": "2026-01-14T10:00:00Z",
+      "updated_at": "2026-01-14T10:05:00Z"
+    }
+  ],
+  "next_token": "eyJrIjp7...",
+  "count": 20
+}
+```
+
+### 7.2 Get Task Details
+
+```http
+GET /tasks/{task_id}
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "task_id": "task_abc123",
+  "title": "Data Processing Job",
+  "description": "Processing customer data for Q4 report",
+  "status": "in_progress",
+  "progress": 45.5,
+  "current_step": "Analyzing data patterns...",
+  "created_at": "2026-01-14T10:00:00Z",
+  "updated_at": "2026-01-14T10:05:00Z",
+  "estimated_completion": "2026-01-14T10:15:00Z"
+}
+```
+
+### 7.3 Get Task Context
+
+```http
+GET /tasks/{task_id}/context
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "task_id": "task_abc123",
+  "context": {
+    "artifacts": [
+      {
+        "type": "data",
+        "name": "processed_records.json",
+        "preview": "1,234 records processed",
+        "size_bytes": 45678,
+        "download_url": "https://..."
+      }
+    ],
+    "agent_thoughts": [
+      {
+        "timestamp": "2026-01-14T10:05:00Z",
+        "thought": "Identified 3 anomalies in dataset",
+        "confidence": 0.92
+      }
+    ],
+    "business_metrics": {
+      "total_cost_usd": 0.045,
+      "tokens_used": 12500,
+      "execution_time_seconds": 300
+    }
+  }
+}
+```
+
+### 7.4 Cancel Task
+
+```http
+POST /tasks/{task_id}/cancel
+Authorization: Bearer <token>
+
+{
+  "reason": "User requested cancellation"
+}
+```
+
+**Response:**
+```json
+{
+  "task_id": "task_abc123",
+  "status": "cancelled",
+  "cancelled_at": "2026-01-14T10:06:00Z"
+}
+```
+
+### 7.5 Retry Failed Task
+
+```http
+POST /tasks/{task_id}/retry
+Authorization: Bearer <token>
+
+{
+  "from_checkpoint": "cp_003",
+  "modified_input": {}
+}
+```
+
+**Response:**
+```json
+{
+  "task_id": "task_abc123",
+  "new_execution_id": "exec_xyz789",
+  "status": "pending",
+  "retried_at": "2026-01-14T10:07:00Z"
+}
+```
+
+---
+
+## 8. Timeline API (Extended)
+
+Extended documentation for the Time Machine timeline endpoints.
+
+### 8.1 Timeline Event Types
+
+| Event Type | Description |
+|------------|-------------|
+| `execution_start` | Workflow execution began |
+| `segment_start` | Segment processing started |
+| `segment_end` | Segment processing completed |
+| `llm_call` | LLM API invocation |
+| `tool_call` | External tool/API call |
+| `checkpoint_created` | State checkpoint saved |
+| `hitp_triggered` | Human approval requested |
+| `hitp_resumed` | Execution resumed after approval |
+| `error` | Error occurred |
+| `self_healing` | Automatic error recovery |
+| `execution_end` | Workflow execution completed |
+
+### 8.2 Get Timeline with Filters
+
+```http
+GET /executions/{execution_id}/timeline?event_types=llm_call,error&segment_id=0
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `event_types` | string | Comma-separated event types |
+| `segment_id` | integer | Filter by segment |
+| `start_time` | ISO8601 | Filter events after this time |
+| `end_time` | ISO8601 | Filter events before this time |
+| `include_state` | boolean | Include full state in response |
+
+**Response:**
+```json
+{
+  "execution_id": "exec_xyz789",
+  "filtered": true,
+  "timeline": [
+    {
+      "event_id": "evt_001",
+      "timestamp": "2026-01-14T10:05:01.200Z",
+      "event_type": "llm_call",
+      "segment_id": 0,
+      "data": {
+        "model": "gemini-3-pro",
+        "input_tokens": 850,
+        "output_tokens": 400,
+        "duration_ms": 1200,
+        "cost_usd": 0.00125
+      }
+    }
+  ],
+  "summary": {
+    "total_events": 1,
+    "duration_ms": 5000
+  }
+}
+```
+
+### 8.3 Get Checkpoint State
+
+```http
+GET /executions/{execution_id}/checkpoints/{checkpoint_id}
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "checkpoint_id": "cp_003",
+  "execution_id": "exec_xyz789",
+  "segment_id": 2,
+  "created_at": "2026-01-14T10:05:05Z",
+  "state": {
+    "variables": {...},
+    "results": {...}
+  },
+  "state_size_bytes": 12500,
+  "s3_path": "s3://bucket/checkpoints/cp_003.json"
+}
+```
+
+### 8.4 Resume from Checkpoint
+
+```http
+POST /executions/{execution_id}/checkpoints/{checkpoint_id}/resume
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "modified_state": {
+    "retry_count": 0
+  },
+  "skip_failed_segment": false
+}
+```
+
+**Response:**
+```json
+{
+  "new_execution_id": "exec_abc456",
+  "resumed_from": "cp_003",
+  "status": "RUNNING",
+  "started_at": "2026-01-14T10:10:00Z"
+}
+```
+
+---
+
 ## Appendix: JSONL Stream Format
 
 All streaming endpoints return **JSONL** (JSON Lines) format:
@@ -791,4 +1047,4 @@ while (true) {
 
 ---
 
-> [← Back to Main README](../README.md)
+> [<- Back to Main README](../README.md)

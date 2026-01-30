@@ -631,20 +631,291 @@ if token_count > 32000:
 
 ---
 
+## 11. Instruction Distiller
+
+The Instruction Distiller is an **intelligent learning system** that extracts implicit user preferences from HITL corrections and automatically applies them to future executions.
+
+### 11.1 Overview
+
+When a user modifies an AI-generated output during HITL review, the system analyzes the differences between the original and corrected versions to extract generalizable instructions.
+
+```
+HITL Correction Flow:
+                                                    
+    Original Output ──────────────────────────────┐
+         │                                        │
+         ▼                                        ▼
+    User Corrects ─────────────────────> Diff Analysis
+         │                                        │
+         ▼                                        ▼
+    Corrected Output                  Instruction Extraction
+                                              │
+                                              ▼
+                                    DistilledInstructions DB
+                                              │
+                                              ▼
+                                    Future Executions Apply
+```
+
+### 11.2 Instruction Categories
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| `style` | Writing style preferences | "Use active voice instead of passive" |
+| `content` | Content requirements | "Always include source citations" |
+| `format` | Output formatting rules | "Use bullet points for lists" |
+| `tone` | Tone and voice guidelines | "Maintain professional tone" |
+| `prohibition` | Things to avoid | "Never use emoji in formal documents" |
+
+### 11.3 Weight Management
+
+Instructions have dynamic weights that adjust based on usage and feedback:
+
+```
+Weight Lifecycle:
+                                                    
+    New Instruction ──────────────────> Weight: 1.0
+         │
+         ▼ (User corrects again)
+    Weight Decay ─────────────────────> Weight: 0.7
+         │
+         ▼ (User corrects again)
+    Further Decay ────────────────────> Weight: 0.4
+         │
+         ▼ (Below threshold)
+    Deactivation ─────────────────────> Weight: 0.1 (archived)
+```
+
+**Weight Rules:**
+- Initial weight: 1.0
+- Decay per re-correction: 0.3
+- Minimum active weight: 0.1
+- Maximum instructions per node: 10
+
+### 11.4 Conflict Resolution
+
+When new instructions conflict with existing ones, the system automatically detects and resolves conflicts:
+
+| Conflict Type | Description | Resolution Strategy |
+|---------------|-------------|---------------------|
+| `contradiction` | Opposite instructions | Keep higher-weight instruction |
+| `redundancy` | Duplicate meanings | Merge into single instruction |
+| `ambiguity` | Unclear overlap | LLM-based clarification |
+
+### 11.5 Instruction Compression
+
+When instruction count exceeds the limit, the system compresses them:
+
+```
+Compression Process:
+                                                    
+    10+ Instructions ─────────────────> LLM Analysis
+         │
+         ▼
+    Semantic Grouping ────────────────> Cluster by meaning
+         │
+         ▼
+    Core Extraction ──────────────────> 3 essential instructions
+         │
+         ▼
+    Validation ───────────────────────> Meaning preserved check
+```
+
+### 11.6 Few-Shot Learning
+
+High-quality correction examples are stored for few-shot prompting:
+
+| Criteria | Threshold |
+|----------|-----------|
+| Minimum quality score | 0.7 |
+| Maximum example length | 500 characters |
+| Examples per instruction | 3 |
+
+---
+
+## 12. Task Manager
+
+The Task Manager provides a **business-friendly abstraction layer** over technical workflow executions, designed for end-user visibility and control.
+
+### 12.1 Overview
+
+```
+Technical Layer                      Business Layer
+                                                    
+    Execution Log ───────────────────> Task Context
+    Step Functions Status ───────────> Task Status
+    S3 Artifacts ────────────────────> Artifact Previews
+    Lambda Logs ─────────────────────> Agent Thoughts
+```
+
+### 12.2 Task Context Model
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `task_id` | string | Unique task identifier |
+| `status` | TaskStatus | Business-friendly status |
+| `title` | string | Human-readable task name |
+| `description` | string | Task description |
+| `progress` | float | Completion percentage (0-100) |
+| `artifacts` | ArtifactPreview[] | Output previews |
+| `agent_thoughts` | AgentThought[] | AI reasoning stream |
+| `business_metrics` | dict | Cost, time, quality metrics |
+
+### 12.3 Task Status Mapping
+
+| Technical Status | Task Status | Display |
+|------------------|-------------|---------|
+| `RUNNING` | `in_progress` | "In Progress" |
+| `SUCCEEDED` | `completed` | "Completed" |
+| `FAILED` | `failed` | "Failed" |
+| `TIMED_OUT` | `failed` | "Timed Out" |
+| `ABORTED` | `cancelled` | "Cancelled" |
+| `PENDING` | `pending` | "Pending" |
+| `WAITING_FOR_CALLBACK` | `awaiting_input` | "Awaiting Input" |
+
+### 12.4 Artifact Types
+
+| Type | Description | Preview Strategy |
+|------|-------------|------------------|
+| `text` | Text documents | First 500 characters |
+| `code` | Source code | Syntax-highlighted snippet |
+| `image` | Generated images | Thumbnail URL |
+| `data` | Structured data | Schema summary |
+| `report` | Analysis reports | Executive summary |
+
+### 12.5 API Endpoints
+
+```
+GET  /tasks                    List all tasks (paginated)
+GET  /tasks/{task_id}          Get task details
+GET  /tasks/{task_id}/context  Get full task context
+POST /tasks/{task_id}/cancel   Cancel running task
+POST /tasks/{task_id}/retry    Retry failed task
+```
+
+### 12.6 Real-time Updates
+
+Task Manager integrates with WebSocket for live updates:
+
+```json
+{
+  "type": "task_update",
+  "task_id": "task_abc123",
+  "changes": {
+    "status": "in_progress",
+    "progress": 45.5,
+    "current_step": "Analyzing data..."
+  }
+}
+```
+
+---
+
+## 13. Scheduled Workflows (Cron Scheduler)
+
+The Cron Scheduler enables **time-based automatic workflow execution** using EventBridge rules.
+
+### 13.1 Overview
+
+```
+Scheduling Architecture:
+                                                    
+    Cron Expression ──────────────────> EventBridge Rule
+         │                                      │
+         ▼                                      ▼
+    Workflows Table (GSI) ────────────> Scheduler Lambda
+         │                                      │
+         ▼                                      ▼
+    Due Workflows ────────────────────> Step Functions Start
+```
+
+### 13.2 Workflow Scheduling Configuration
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schedule_enabled` | boolean | Enable/disable scheduling |
+| `cron_expression` | string | Standard cron syntax |
+| `next_run_at` | timestamp | Unix timestamp of next execution |
+| `last_run_at` | timestamp | Last execution timestamp |
+| `timezone` | string | Timezone for cron evaluation |
+
+### 13.3 Cron Expression Format
+
+```
+┌───────────── minute (0 - 59)
+│ ┌───────────── hour (0 - 23)
+│ │ ┌───────────── day of month (1 - 31)
+│ │ │ ┌───────────── month (1 - 12)
+│ │ │ │ ┌───────────── day of week (0 - 6)
+│ │ │ │ │
+* * * * *
+```
+
+**Examples:**
+- `0 9 * * 1-5` - Every weekday at 9:00 AM
+- `*/15 * * * *` - Every 15 minutes
+- `0 0 1 * *` - First day of every month at midnight
+
+### 13.4 Scheduler Lambda
+
+The scheduler runs on a fixed interval (default: every minute) and:
+
+1. Queries `ScheduledWorkflowsIndex` GSI for due workflows
+2. Filters workflows where `next_run_at <= current_time`
+3. Starts Step Functions execution for each
+4. Updates `next_run_at` based on cron expression
+
+### 13.5 Parallel Execution Scheduler
+
+For parallel workflow branches, the system uses an intelligent scheduling strategy:
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `SPEED_OPTIMIZED` | All branches in parallel | Time-critical workflows |
+| `COST_OPTIMIZED` | Batched execution | Budget-constrained workflows |
+| `BALANCED` | Dynamic batching based on resources | Default strategy |
+
+### 13.6 Resource-Aware Scheduling
+
+The scheduler estimates resource requirements before execution:
+
+```
+Resource Estimation:
+                                                    
+    Branch Analysis ──────────────────> Token estimation
+         │                                      │
+         ▼                                      ▼
+    Memory Calculation ───────────────> Batch sizing
+         │                                      │
+         ▼                                      ▼
+    Concurrency Check ────────────────> Guardrail enforcement
+```
+
+| Resource | Limit | Enforcement |
+|----------|-------|-------------|
+| Memory per batch | 512 MB | Split into smaller batches |
+| Tokens per batch | 100,000 | Sequential batch execution |
+| Concurrent executions | 10 | Queue excess workflows |
+
+---
+
 ## Summary: Feature Matrix
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| Co-design Assistant | Natural language workflow editing | ✅ Available |
-| Agentic Designer | Full workflow generation | ✅ Available |
-| HITP | Human-in-the-Loop pause points | ✅ Available |
-| Time Machine | Checkpoint debugging | ✅ Available |
-| Glass-Box | AI transparency logging | ✅ Available |
-| Self-Healing | Automatic error recovery | ✅ Available |
-| Mission Simulator | Stress testing suite | ✅ Available |
-| Skill Repository | Reusable components | ✅ Available |
-| Real-time Monitoring | WebSocket + CloudWatch | ✅ Available |
-| Model Router | Intelligent LLM selection | ✅ Available |
+| Co-design Assistant | Natural language workflow editing | Available |
+| Agentic Designer | Full workflow generation | Available |
+| HITP | Human-in-the-Loop pause points | Available |
+| Time Machine | Checkpoint debugging | Available |
+| Glass-Box | AI transparency logging | Available |
+| Self-Healing | Automatic error recovery | Available |
+| Mission Simulator | Stress testing suite | Available |
+| Skill Repository | Reusable components | Available |
+| Real-time Monitoring | WebSocket + CloudWatch | Available |
+| Model Router | Intelligent LLM selection | Available |
+| Instruction Distiller | Learning from HITL corrections | Available |
+| Task Manager | Business-friendly task abstraction | Available |
+| Cron Scheduler | Time-based workflow execution | Available |
 
 ---
 

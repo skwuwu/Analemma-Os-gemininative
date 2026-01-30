@@ -22,7 +22,7 @@ Born from the need to handle massive software engineering tasks (1M+ LOC reposit
 
 ---
 
-## 🌍 Strategic Cloud Philosophy
+## Strategic Cloud Philosophy
 
 ### Why Reference Implementation on AWS?
 Analemma-Os is designed to meet enterprises where they are. With **90% of Fortune 500** companies relying on AWS for critical infrastructure, proving **Immortal Reliability** on AWS is the strongest possible validation of our architecture.
@@ -40,20 +40,21 @@ While AWS is the *initial* state, **Google Cloud Platform (GCP)** is the *optima
 
 ---
 
-## 📚 Technical Whitepapers (Hackathon Resources)
+## Technical Whitepapers (Hackathon Resources)
 
 For a deep dive into the engineering marvels of Analemma-Os, please refer to our detailed whitepapers:
 
 | Document | Description |
 |----------|-------------|
-| [**🧠 Gemini Integration Strategy**](docs/GEMINI_INTEGRATION_WHITEPAPER.md) | **[MUST READ]** How we use Gemini 1.5 Pro to solve the "Context Explosion" problem. |
-| [**🏗️ Architecture Whitepaper**](docs/architecture.md) | Detailed explanation of the "State Bag", "No Data at Root", and "Hydration" patterns. |
-| [**🔮 Glassbox UX Strategy**](docs/architecture.md#7-glass-box-observability) | How we stream real-time agent thoughts via WebSocket despite strict pointers. |
-| [**☁️ GCP Migration & Security**](docs/GCP_MIGRATION_STRATEGY.md) | Technical analysis of portability to Google Cloud (Workflows/Cloud Run) and VPC security. |
+| [**Gemini Integration Strategy**](docs/GEMINI_INTEGRATION_WHITEPAPER.md) | **[MUST READ]** How we use Gemini 1.5 Pro to solve the "Context Explosion" problem. Includes Context Caching and Structured Output schemas. |
+| [**Architecture Whitepaper**](docs/architecture.md) | Detailed explanation of the "State Bag", "No Data at Root", and "Hydration" patterns. |
+| [**Features Guide**](docs/features.md) | Comprehensive guide to all features including Instruction Distiller, Task Manager, and Cron Scheduler. |
+| [**API Reference**](docs/api-reference.md) | REST API, WebSocket protocol, Task Manager API, and Timeline API documentation. |
+| [**GCP Migration & Security**](docs/GCP_MIGRATION_STRATEGY.md) | Technical analysis of portability to Google Cloud (Workflows/Cloud Run) and VPC security. |
 
 ---
 
-## 🔥 Why Gemini-Native?
+## Why Gemini-Native?
 
 Analemma OS is not just *using* Gemini—it's **architecturally dependent** on Gemini's unique capabilities:
 
@@ -85,19 +86,41 @@ Analemma is a **Deterministic Operating System** that treats time as a variable.
 - **Rewind & Replay**: Debuggers can "jump back" to any previous state, modify the prompt/code, and fork the reality from that exact moment.
 - **State Diffing**: Instantly visualize exactly what data changed between Step T and Step T+1.
 
-### 4. Guidance Distillation (Self-Healing)
+### 4. Intelligent Instruction Distiller (Self-Learning)
+The Kernel learns from every human correction to improve future outputs.
+- **HITL Diff Analysis**: When users modify AI outputs, Gemini analyzes the differences to extract implicit preferences.
+- **Weighted Instructions**: Each distilled instruction has a dynamic weight (1.0 to 0.1) based on usage frequency and re-correction patterns.
+- **Conflict Resolution**: Automatically detects and resolves contradictory, redundant, or ambiguous instructions.
+- **Instruction Compression**: When instruction count exceeds limits, LLM compresses 10+ rules into 3 essential guidelines.
+- **Few-Shot Learning**: High-quality correction examples are stored for context-aware prompting.
+
+### 5. Self-Healing Error Recovery
 The Kernel acts as a "Senior Engineer" watching over the agents.
 - **Error Distillation**: When an agent fails, Gemini 1.5 Pro analyzes the logs and distills a specific "Fix Instruction".
 - **Dynamic Injection**: This guidance is injected into the retry context, allowing the agent to "learn" from the error instantly without human intervention.
+- **Sandboxed Advice**: Fix instructions are wrapped in security markers to prevent prompt injection.
 
-### 5. Glassbox UX (Real-time Transparency)
+### 6. Task Manager (Business Abstraction Layer)
+Technical execution logs are transformed into business-friendly task views.
+- **Status Mapping**: Technical states (RUNNING, FAILED) are converted to user-friendly statuses (In Progress, Failed).
+- **Artifact Previews**: Large outputs are summarized with downloadable links.
+- **Agent Thoughts**: Real-time streaming of AI reasoning for transparency.
+- **Business Metrics**: Cost, time, and quality metrics calculated and displayed.
+
+### 7. Scheduled Workflows (Cron Scheduler)
+Time-based automatic workflow execution using EventBridge rules.
+- **Cron Expressions**: Standard cron syntax for flexible scheduling.
+- **Resource-Aware Scheduling**: Parallel branch execution optimized based on memory and token limits.
+- **Dynamic Batching**: COST_OPTIMIZED vs SPEED_OPTIMIZED strategies for different use cases.
+
+### 8. Glassbox UX (Real-time Transparency)
 Most AI agents are black boxes. Analemma provides a **Stream Hydration Layer**.
 - **Live Thought Streaming**: Users see the agent's "monologue" in real-time via WebSocket.
 - **Light Hydration**: Delivers rich UI updates (<128KB) derived from massive backend states.
 
 ---
 
-## 🧪 Mission Simulator (Chaos Engineering)
+## Mission Simulator (Chaos Engineering)
 
 Analemma-Os includes a built-in **Mission Simulator** that subjects the kernel to extreme conditions:
 - **Network Blackouts**: Simulates S3/API failures (Self-healing tests).
@@ -109,7 +132,7 @@ Analemma-Os includes a built-in **Mission Simulator** that subjects the kernel t
 
 ---
 
-## 🔬 LLM Simulator Test Scenarios
+## LLM Simulator Test Scenarios
 
 The **LLM Simulator** is a comprehensive test suite that validates the full spectrum of Analemma-Os capabilities with **real LLM calls** (Gemini 1.5 Pro/Flash). Each stage progressively tests more complex features:
 
@@ -223,7 +246,7 @@ The **LLM Simulator** is a comprehensive test suite that validates the full spec
 
 ---
 
-## ⚡ Quick Start (Enterprise Deployment)
+## Quick Start (Enterprise Deployment)
 
 For a production-ready environment, we recommend deploying via our built-in **GitHub Actions CI/CD Pipeline**. This ensures proper IAM role configuration, secret management, and architectural integrity.
 
@@ -257,7 +280,7 @@ Once deployed, the Action will output the **API Gateway URL** and **Cognito User
 curl -X GET https://<api-id>.execute-api.us-east-1.amazonaws.com/dev/health
 ```
 
-### 5. 🕹️ Test Drive: LLM Simulator (Real AI Agents)
+### 5. Test Drive: LLM Simulator (Real AI Agents)
 Want to see Gemini 1.5 Pro in action?
 
 1. Go to **AWS Step Functions Console**.
@@ -275,21 +298,19 @@ Want to see Gemini 1.5 Pro in action?
 
 ---
 
-## 🏆 Project Status
+## Project Status
 
 This project is a submission for the **Google Gemini 3 Hackathon**.
 It demonstrates that by combining **Serverless Infrastructure** with **Gemini's Infinite Context**, we can build the first true **Operating System for AI Agents**.
 
-### 📝 Submission Compliance & Originality
+### Submission Compliance & Originality
 I am fully aware of the new project eligibility rules.
 - **Base Research**: This project is founded on my private personal research into serverless agent control. It has **never been commercially deployed, publicly released, or submitted to any other competitions**.
 - **Gemini Transformation**: During the hackathon period, the codebase was heavily refactored to integrate **Gemini 1.5 Pro**. Key features like *Whole-State Reasoning* and *Visual Debugging* were newly implemented specifically for this event to leverage Gemini's native capabilities.
 
 ---
 
-## 🎖️ About the Author: Built under Constraints
-
-> *"Efficiency is the child of constraints."*
+## Built under Constraints
 
 This project was architected and developed during my active military service. With severely limited access to development environments and intermittent network connectivity, I could not focus on building a "flashy UI". Instead, I poured every available second into engineering the most robust, crash-proof **Kernel** possible.
 

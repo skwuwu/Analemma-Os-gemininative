@@ -203,17 +203,21 @@ def _convert_floats_to_decimals(obj):
     return obj
 
 
-def _mock_auto_resume(task_token: str, payload: dict, max_retries: int = 3) -> dict:
+def _mock_auto_resume(task_token: str, bag: dict, max_retries: int = 3) -> dict:
     """
-    MOCK_MODE에서 HITP 자동 승인 - 테스트 시뮬레이터용.
+    MOCK_MODE/AUTO_RESUME_HITP에서 HITP 자동 승인 - 테스트 시뮬레이터용.
     
     Step Functions의 waitForTaskToken 상태가 준비되기 전에
     send_task_success를 호출하면 InvalidToken 에러가 발생할 수 있으므로
     재시도 로직을 포함합니다.
     
+    [v3.22] MergeCallbackResult가 기대하는 스키마로 수정:
+    - user_response: HITL 응답 데이터
+    - segment_to_run: None이면 다음 세그먼트로 진행 (_increment_segment=True)
+    
     Args:
         task_token: Step Functions TaskToken
-        payload: 원본 이벤트 페이로드
+        bag: StateBag (open_state_bag으로 추출된 상태)
         max_retries: 최대 재시도 횟수 (레이스 컨디션 대응)
     
     Returns:
@@ -222,22 +226,20 @@ def _mock_auto_resume(task_token: str, payload: dict, max_retries: int = 3) -> d
     import logging
     logger = logging.getLogger()
     
-    # 자동 승인 페이로드 구성
+    # [v3.22] MergeCallbackResult가 기대하는 스키마로 resume_output 구성
+    # universal_sync_core.merge_callback 참조:
+    #   - user_response -> delta['last_hitp_response']
+    #   - segment_to_run = None -> _increment_segment = True (다음 세그먼트 진행)
     resume_output = {
-        "status": "COMPLETED",
-        "hitp_result": {
+        "status": "APPROVED",
+        "user_response": {
             "action": "APPROVED",
-            "comment": "Auto-approved by Mission Simulator (MOCK_MODE)",
-            "approved_at": int(time.time())
+            "comment": "Auto-approved by Simulator (AUTO_RESUME_HITP)",
+            "approved_at": int(time.time()),
+            "auto_resume": True
         },
-        # PrepareStateAfterPause가 필요로 하는 필드들 전달
-        "final_state": payload.get('current_state', {}),
-        "segment_to_run": payload.get('segment_to_run'),
-        "workflow_config": payload.get('workflow_config'),
-        "partition_map": payload.get('partition_map'),
-        "total_segments": payload.get('total_segments'),
-        "ownerId": payload.get('ownerId') or payload.get('owner_id'),
-        "workflowId": payload.get('workflowId')
+        # segment_to_run을 None으로 설정하면 _increment_segment=True로 처리됨
+        "segment_to_run": None
     }
     
     for attempt in range(max_retries):
@@ -253,38 +255,38 @@ def _mock_auto_resume(task_token: str, payload: dict, max_retries: int = 3) -> d
                 output=json.dumps(resume_output, ensure_ascii=False, default=str)
             )
             
-            logger.info(f"✅ MOCK_MODE: Auto-resumed HITP task successfully (attempt {attempt + 1})")
+            logger.info(f"[v3.22] Auto-resumed HITP task successfully (attempt {attempt + 1})")
             return {
-                "status": "MOCK_RESUMED",
+                "status": "AUTO_RESUMED",
                 "attempt": attempt + 1,
-                "hitp_result": resume_output.get("hitp_result")
+                "user_response": resume_output.get("user_response")
             }
             
         except sfn_client.exceptions.InvalidToken as e:
             # 토큰이 아직 유효하지 않음 - Step Functions가 대기 상태 진입 전
-            logger.warning(f"⚠️ InvalidToken on attempt {attempt + 1}: {e}")
+            logger.warning(f"InvalidToken on attempt {attempt + 1}: {e}")
             if attempt == max_retries - 1:
-                logger.error(f"❌ MOCK_MODE: Failed to auto-resume after {max_retries} attempts")
+                logger.error(f"[v3.22] Failed to auto-resume after {max_retries} attempts")
                 return {
-                    "status": "MOCK_RESUME_FAILED",
+                    "status": "AUTO_RESUME_FAILED",
                     "error": "InvalidToken after max retries",
                     "attempts": max_retries
                 }
         except sfn_client.exceptions.TaskTimedOut as e:
             # 이미 타임아웃됨
-            logger.warning(f"⚠️ Task already timed out: {e}")
+            logger.warning(f"Task already timed out: {e}")
             return {
-                "status": "MOCK_RESUME_SKIPPED",
+                "status": "AUTO_RESUME_SKIPPED",
                 "reason": "Task already timed out"
             }
         except Exception as e:
-            logger.error(f"❌ MOCK_MODE: Unexpected error in auto-resume: {e}")
+            logger.error(f"[v3.22] Unexpected error in auto-resume: {e}")
             return {
-                "status": "MOCK_RESUME_FAILED",
+                "status": "AUTO_RESUME_FAILED",
                 "error": str(e)
             }
     
-    return {"status": "MOCK_RESUME_FAILED", "error": "Unknown error"}
+    return {"status": "AUTO_RESUME_FAILED", "error": "Unknown error"}
 
 def lambda_handler(event, context):
     """
@@ -494,7 +496,7 @@ def lambda_handler(event, context):
                 logger.info(f"🤖 {resume_mode} detected - initiating auto-resume for HITP")
                 mock_resume_result = _mock_auto_resume(
                     task_token=task_token,
-                    payload=payload,
+                    bag=bag,  # [v3.22] payload -> bag (StateBag)
                     max_retries=3
                 )
                 logger.info(f"🤖 Auto-resume result: {mock_resume_result}")
