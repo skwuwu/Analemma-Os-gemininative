@@ -2216,6 +2216,9 @@ class SegmentRunnerService:
                     )
                 else:
                     # 기존 로직: 직접 실행
+                    logger.info(f"[v3.27 Debug] Calling run_workflow with segment_config: "
+                               f"nodes={len(segment_config.get('nodes', []))}, "
+                               f"node_ids={[n.get('id') for n in segment_config.get('nodes', [])]}")
                     result_state = run_workflow(
                         config_json=segment_config,
                         initial_state=initial_state,
@@ -2223,6 +2226,8 @@ class SegmentRunnerService:
                         user_api_keys={},
                         run_config={"user_id": auth_user_id}
                     )
+                    logger.info(f"[v3.27 Debug] run_workflow returned state with keys: "
+                               f"{list(result_state.keys() if isinstance(result_state, dict) else [])[: 15]}")
                 
                 # [Guard] [v3.6] Immortal Kernel: Node Result Normalization
                 from src.common.statebag import ensure_state_bag
@@ -3764,8 +3769,12 @@ class SegmentRunnerService:
                     # run_workflow expects: {nodes, edges, ...}
                     if isinstance(segment, dict) and 'segment_config' in segment:
                         extracted_config = segment['segment_config']
-                        logger.info(f"[v3.27] Extracted segment_config from manifest for segment {segment_id}")
+                        logger.info(f"[v3.27] ✓ Extracted segment_config from manifest for segment {segment_id}")
+                        logger.info(f"[v3.27] Config has {len(extracted_config.get('nodes', []))} nodes: "
+                                   f"{[n.get('id') for n in extracted_config.get('nodes', [])]}")
                         return extracted_config
+                    logger.warning(f"[v3.27] ✗ No segment_config key found in manifest segment {segment_id}, "
+                                 f"available keys: {list(segment.keys() if isinstance(segment, dict) else [])}")
                     return segment
             elif isinstance(partition_map, dict):
                 # dict인 경우: 문자열 키로 접근
