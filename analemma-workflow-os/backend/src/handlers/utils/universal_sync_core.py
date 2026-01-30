@@ -955,15 +955,14 @@ def universal_sync_core(
     updated_state = merge_logic(base_state, normalized_delta, context)
     
     # Step 3: 공통 필드 업데이트 (루프 카운터, 세그먼트)
-    # 🛡️ [Fix] 루프 카운터 스마트 증가
-    # 무조건 증가시키면 한 세그먼트에서 카운터가 폭증하는 버그 발생
-    # action='sync'일 때만 증가하거나, 명시적 플래그가 있을 때만 증가
-    should_increment_loop = (
-        action == 'sync' or 
-        normalized_delta.get('_increment_loop', False)
-    )
-    if should_increment_loop and action != 'init':
-        updated_state['loop_counter'] = int(updated_state.get('loop_counter', 0)) + 1
+    # 🛡️ [v3.14 Fix] loop_counter 증가는 ASL IncrementLoopCounter에서만 수행
+    # USC에서 중복 증가하면 무한 루프 방지 로직이 깨짐
+    # should_increment_loop 로직 제거 - ASL이 loop_counter 증가 담당
+    # 
+    # REMOVED:
+    # should_increment_loop = (action == 'sync' or normalized_delta.get('_increment_loop', False))
+    # if should_increment_loop and action != 'init':
+    #     updated_state['loop_counter'] = int(updated_state.get('loop_counter', 0)) + 1
     
     # 세그먼트 증가 (플래그가 있는 경우)
     if normalized_delta.get('_increment_segment', False):
