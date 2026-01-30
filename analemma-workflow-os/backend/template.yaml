@@ -2381,6 +2381,13 @@ Resources:
             Resource: !Sub
               - "arn:aws:execute-api:${AWS::Region}:${AccountId}:${WebsocketApi}/*/@connections/*"
               - AccountId: !Ref "AWS::AccountId"
+        # AUTO_RESUME_HITP: Allow StoreTaskToken to call SendTaskSuccess (v3.24)
+        - Statement:
+          - Effect: Allow
+            Action:
+              - states:SendTaskSuccess
+              - states:SendTaskFailure
+            Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:WorkflowDistributedOrchestrator-${StageName}"
 
   # --- Scheduler Function (EventBridge Scheduled Trigger) ---
   SchedulerFunction:
