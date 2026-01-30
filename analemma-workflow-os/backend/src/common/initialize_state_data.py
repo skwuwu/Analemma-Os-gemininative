@@ -444,6 +444,13 @@ def lambda_handler(event, context):
     bag['last_update_time'] = current_time
     bag['state_durations'] = {}
     
+    # [v3.23] 시뮬레이터 플래그를 bag 최상위로 복사
+    # store_task_token.py가 bag.get('AUTO_RESUME_HITP') 조회
+    if raw_input.get('AUTO_RESUME_HITP'):
+        bag['AUTO_RESUME_HITP'] = raw_input['AUTO_RESUME_HITP']
+    if raw_input.get('MOCK_MODE'):
+        bag['MOCK_MODE'] = raw_input['MOCK_MODE']
+    
     # 5. Segment Manifest & Pointer Strategy
     # Segment manifest is critical for Map execution.
     # We offload the FULL manifest to S3, but pass a LIST OF POINTERS to Step Functions

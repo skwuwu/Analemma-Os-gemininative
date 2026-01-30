@@ -261,18 +261,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         execution_name = f"llm-{short_sim_id}-{safe_scenario}-{random_suffix}"
         
         # Prepare payload
-        # ⚠️ AUTO_RESUME_HITP는 initial_state 안에 넣어야 함!
-        # ASL WaitForCallback이 store_task_token에 state_data.bag만 전달하기 때문
+        # [v3.23] AUTO_RESUME_HITP는 payload 최상위에 설정
+        # initialize_state_data.py가 raw_input에서 bag으로 복사함
         payload = {
             'workflowId': f'llm-test-{scenario_key.lower()}',
             'ownerId': 'system',
             'user_id': 'system',
             'MOCK_MODE': MOCK_MODE,  # 🚨 FALSE - Real LLM calls!
+            'AUTO_RESUME_HITP': AUTO_RESUME_HITP,  # [v3.23] payload 최상위에 설정
             'initial_state': {
-                'test_keyword': test_keyword,
-                'llm_test_scenario': scenario_key,
                 'llm_execution_id': execution_name,
-                'AUTO_RESUME_HITP': AUTO_RESUME_HITP,  # [v3.21] HITP 자동 승인 (StateBag에 포함)
                 **input_data
             },
             'idempotency_key': f"llm#{scenario_key}#{execution_name}",
