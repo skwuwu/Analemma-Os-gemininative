@@ -2759,8 +2759,6 @@ class SegmentRunnerService:
                                context=event, caller='ExecuteSegment:FinalStateResolve')
         
         logger.debug(f"[Deep Lookup] initial_state source: {resolved_source}, "
-                    f"bag_in_state_data={bag_in_state_data is not None}, "
-                    f"state_data keys={list(state_data.keys())[:5] if state_data else []}, "
                     f"initial_state keys={list(initial_state.keys())[:5] if isinstance(initial_state, dict) else 'N/A'}")
         
         # [Critical Fix] S3 Offload Recovery: check __s3_offloaded flag
