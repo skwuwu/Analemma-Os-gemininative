@@ -1945,7 +1945,31 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         nested_state = final_state.get('final_state', {})
         if isinstance(nested_state, dict) and nested_state:
             final_state = nested_state
-    
+
+    # ========================================
+    # v3.1: current_state 자동 추출 (Kernel Protocol 지원)
+    # ========================================
+    # ASL v3.13 Kernel Protocol에서 노드 실행 결과는 final_state.current_state에 저장됨
+    # 검증 함수는 llm_raw_output, vision_raw_output 등을 최상위에서 찾으므로
+    # current_state 내용을 final_state 최상위로 평탄화
+    if isinstance(final_state, dict) and 'current_state' in final_state:
+        current_state = final_state.get('current_state', {})
+        if isinstance(current_state, dict) and current_state:
+            # current_state 내용을 final_state 최상위로 병합 (current_state가 우선)
+            # 단, _status, _segment 등 제어 필드는 유지
+            merged_state = final_state.copy()
+            for key, value in current_state.items():
+                # 이미 최상위에 존재하고 의미있는 값이면 덮어쓰지 않음
+                if key not in merged_state or merged_state.get(key) is None:
+                    merged_state[key] = value
+                # current_state의 LLM 결과 필드는 항상 우선 (덮어쓰기)
+                elif key in ('llm_raw_output', 'parsed_summary', 'vision_raw_output', 
+                             'vision_results', 'partition_results', 'branch_results',
+                             'test_results', 'slop_detection_results'):
+                    merged_state[key] = value
+            final_state = merged_state
+            logger.info(f"[v3.1] Flattened current_state keys: {list(current_state.keys())[:10]}")
+
     # ========================================
     # v3.0: S3 Offload Hydration (Recursive)
     # ========================================

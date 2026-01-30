@@ -16,6 +16,24 @@ except ImportError:
     dynamodb = boto3.resource('dynamodb')
     sfn_client = boto3.client('stepfunctions')
 
+# [v3.17] Kernel Protocol 사용 - 안전한 state bag 추출
+try:
+    from src.common.kernel_protocol import open_state_bag
+    KERNEL_PROTOCOL_AVAILABLE = True
+except ImportError:
+    KERNEL_PROTOCOL_AVAILABLE = False
+    def open_state_bag(event):
+        """Fallback: 기본 추출 로직"""
+        if not isinstance(event, dict):
+            return {}
+        state_data = event.get('state_data', {})
+        if isinstance(state_data, dict):
+            bag = state_data.get('bag')
+            if isinstance(bag, dict):
+                return bag
+            return state_data
+        return event
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -301,50 +319,48 @@ def lambda_handler(event, context):
             except (json.JSONDecodeError, ValueError):
                 payload = {}
 
-        # If caller used state-bag pattern, flatten state_data into payload
-        if isinstance(payload, dict) and isinstance(payload.get('state_data'), dict):
-            sd = payload.get('state_data') or {}
-            for k, v in sd.items():
-                if k not in payload:
-                    payload[k] = v
-
         try:
+            # ========================================
+            # [v3.17] Kernel Protocol로 안전한 State Bag 추출
+            # ========================================
+            # open_state_bag은 어떤 구조로 오든 실제 데이터를 추출:
+            # - state_data.bag (v3.13 표준)
+            # - state_data (평탄화)
+            # - event 자체 (legacy)
+            bag = open_state_bag(payload)
+            
+            logger.info(f"[v3.17] Kernel Protocol: bag keys={list(bag.keys())[:10]}")
+            
+            # TaskToken은 payload 최상위에서만 올 수 있음 (SFN이 직접 주입)
             task_token = payload.get('TaskToken') or payload.get('taskToken')
             
-            # [Critical Fix v3.15] state_data에서 fallback으로 값 추출
-            # ASL이 state_data만 전달하고 개별 필드는 안 보낼 수 있음
-            state_data = payload.get('state_data') or {}
-            if not isinstance(state_data, dict):
-                state_data = {}
-            
+            # 나머지 필드는 bag에서 추출 (payload fallback 포함)
             conversation_id = (
                 payload.get('conversation_id') or 
                 payload.get('conversationId') or
-                state_data.get('conversation_id') or
-                state_data.get('conversationId')
+                bag.get('conversation_id') or
+                bag.get('conversationId')
             )
             
-            # execution_id는 SFN input에서 파싱 (body가 아닌)
-            # (SFN이 conversation_id를 execution_id로 사용함)
             execution_id = (
                 payload.get('execution_id') or 
                 payload.get('executionId') or 
-                state_data.get('execution_id') or
+                bag.get('execution_id') or
                 conversation_id
             )
             
-            # [Critical Fix v3.15] ownerId도 state_data에서 fallback
             owner_id = (
                 payload.get('ownerId') or 
                 payload.get('owner_id') or
-                state_data.get('ownerId') or
-                state_data.get('owner_id')
+                bag.get('ownerId') or
+                bag.get('owner_id')
             )
-
             
             # 필수 값 검증
             if not task_token or not conversation_id or not owner_id:
-                logger.error(f"Missing required fields: task_token={bool(task_token)}, conversation_id={bool(conversation_id)}, owner_id={bool(owner_id)}")
+                logger.error(f"Missing required fields: task_token={bool(task_token)}, "
+                           f"conversation_id={bool(conversation_id)}, owner_id={bool(owner_id)}, "
+                           f"bag_keys={list(bag.keys())[:15]}")
                 raise ValueError('Missing TaskToken, conversation_id or ownerId')
 
             now = int(time.time())
@@ -354,27 +370,26 @@ def lambda_handler(event, context):
             # Store the full workflow_config and other state so resume can reconstruct
             # the execution context reliably. Previously only 'workflow_name' was
             # stored which caused resume to miss required fields like workflow_config.
-            # 🚨 [Critical Fix] state_data에서도 fallback으로 값을 가져옴
-            state_data = payload.get('state_data') or {}
+            # [v3.17] bag 사용 (Kernel Protocol)
             # Build context_info with None safety checks
-            workflow_config_source = payload.get('workflow_config') or state_data.get('workflow_config') or {}
+            workflow_config_source = payload.get('workflow_config') or bag.get('workflow_config') or {}
             context_info = {
                 'workflow_config': workflow_config_source if isinstance(workflow_config_source, dict) else None,
-                'workflowId': payload.get('workflowId') or state_data.get('workflowId'),
+                'workflowId': payload.get('workflowId') or bag.get('workflowId'),
                 'workflow_name': workflow_config_source.get('name') if isinstance(workflow_config_source, dict) else None,
-                'segment_to_run': payload.get('segment_to_run') if payload.get('segment_to_run') is not None else state_data.get('segment_to_run'),
-                'total_segments': payload.get('total_segments') or state_data.get('total_segments'),
-                'partition_map': payload.get('partition_map') or state_data.get('partition_map'),
-                'current_state': payload.get('current_state') or state_data.get('current_state'),
+                'segment_to_run': payload.get('segment_to_run') if payload.get('segment_to_run') is not None else bag.get('segment_to_run'),
+                'total_segments': payload.get('total_segments') or bag.get('total_segments'),
+                'partition_map': payload.get('partition_map') or bag.get('partition_map'),
+                'current_state': payload.get('current_state') or bag.get('current_state'),
                 # preserve state history if present so resume can reconstruct past snapshots
-                'state_history': payload.get('state_history') or state_data.get('state_history'),
-                'state_s3_path': payload.get('state_s3_path') or state_data.get('state_s3_path'),
-                'idempotency_key': payload.get('idempotency_key') or state_data.get('idempotency_key'),
+                'state_history': payload.get('state_history') or bag.get('state_history'),
+                'state_s3_path': payload.get('state_s3_path') or bag.get('state_s3_path'),
+                'idempotency_key': payload.get('idempotency_key') or bag.get('idempotency_key'),
                 'execution_name': payload.get('execution_name'),
                 # 🚨 [Critical Fix] 추가 필드 보존
                 'ownerId': owner_id,
-                'max_concurrency': payload.get('max_concurrency') or state_data.get('max_concurrency'),
-                'distributed_mode': payload.get('distributed_mode') or state_data.get('distributed_mode'),
+                'max_concurrency': payload.get('max_concurrency') or bag.get('max_concurrency'),
+                'distributed_mode': payload.get('distributed_mode') or bag.get('distributed_mode'),
             }
             if context and hasattr(context, 'aws_request_id'):
                 context_info['request_id'] = context.aws_request_id
